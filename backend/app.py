@@ -200,6 +200,9 @@ def create_ideas(req: IdeasRequest, request: Request):
             make_messages, _validate_ideas, model=_model or DEFAULT_MODEL, temperature=0.7)
     except (AIFatalError, AIRetryableError, AIConfigError) as e:
         raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
     return {
         "ideas": [i.model_dump() for i in ideas],
         "attempts": meta["attempts"],
@@ -222,6 +225,9 @@ def create_storyboard(req: StoryboardRequest, request: Request):
             make_messages, validate_dict, model=_model or DEFAULT_MODEL, temperature=0.3)
     except (AIFatalError, AIRetryableError, AIConfigError) as e:
         raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
     return {
         "storyboard": sb.model_dump(),
         "attempts": meta["attempts"],
@@ -265,6 +271,9 @@ def regenerate_shot(req: RegenShotRequest):
             make_messages, _validate_shot, model=_model or DEFAULT_MODEL, temperature=0.4)
     except (AIFatalError, AIRetryableError, AIConfigError) as e:
         raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
 
     if new_shot.shot_number != req.shot_number:
         raise HTTPException(status_code=502, detail="模型返回了错误的镜头序号，已丢弃该结果")
@@ -300,6 +309,9 @@ def check_risk(req: RiskCheckRequest, request: Request):
             product_info=pinfo)
     except (AIFatalError, AIRetryableError, AIConfigError) as e:
         raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"风险复核失败: {e}")
     # V5+: 事实 grounding 规则层（确定性，不消耗 API）
@@ -404,6 +416,9 @@ def check_feasibility(req: FeasibilityCheckRequest, request: Request):
             make_messages,
             lambda d: _validate_feasibility(d, shot_numbers),
             model=_model or DEFAULT_MODEL, temperature=0.3)
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
     except (AIFatalError, AIRetryableError, AIConfigError) as e:
         # 模型失败：只返回规则结果，明确标记未完成
         results = []
