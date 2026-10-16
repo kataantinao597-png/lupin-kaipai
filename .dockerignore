@@ -1,0 +1,12 @@
+venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+*.log
+.env
+demo/
+e2e/
+tests/
+competition-pack/
+PROGRESS.md

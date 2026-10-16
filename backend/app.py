@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import tempfile
 from pydantic import BaseModel, Field
 
-from .ai_service import AIService, AIConfigError, AIFatalError, DEFAULT_MODEL
+from .ai_service import AIService, AIConfigError, AIFatalError, AIRetryableError, DEFAULT_MODEL
 from .schemas import Idea, Storyboard
 from .validator import validate_dict
 from .prompts import build_idea_messages, build_storyboard_messages, build_regen_shot_messages
@@ -198,7 +198,7 @@ def create_ideas(req: IdeasRequest, request: Request):
     try:
         ideas, meta = svc.generate_with_retry(
             make_messages, _validate_ideas, model=_model or DEFAULT_MODEL, temperature=0.7)
-    except AIFatalError as e:
+    except (AIFatalError, AIRetryableError, AIConfigError) as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {
         "ideas": [i.model_dump() for i in ideas],
@@ -220,7 +220,7 @@ def create_storyboard(req: StoryboardRequest, request: Request):
     try:
         sb, meta = svc.generate_with_retry(
             make_messages, validate_dict, model=_model or DEFAULT_MODEL, temperature=0.3)
-    except AIFatalError as e:
+    except (AIFatalError, AIRetryableError, AIConfigError) as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {
         "storyboard": sb.model_dump(),
@@ -263,7 +263,7 @@ def regenerate_shot(req: RegenShotRequest):
     try:
         new_shot, meta = svc.generate_with_retry(
             make_messages, _validate_shot, model=_model or DEFAULT_MODEL, temperature=0.4)
-    except AIFatalError as e:
+    except (AIFatalError, AIRetryableError, AIConfigError) as e:
         raise HTTPException(status_code=502, detail=str(e))
 
     if new_shot.shot_number != req.shot_number:
@@ -298,7 +298,7 @@ def check_risk(req: RiskCheckRequest, request: Request):
             evidence=req.evidence_materials,
             input_claims=req.selling_points,
             product_info=pinfo)
-    except AIFatalError as e:
+    except (AIFatalError, AIRetryableError, AIConfigError) as e:
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"风险复核失败: {e}")
@@ -404,7 +404,7 @@ def check_feasibility(req: FeasibilityCheckRequest, request: Request):
             make_messages,
             lambda d: _validate_feasibility(d, shot_numbers),
             model=_model or DEFAULT_MODEL, temperature=0.3)
-    except AIFatalError as e:
+    except (AIFatalError, AIRetryableError, AIConfigError) as e:
         # 模型失败：只返回规则结果，明确标记未完成
         results = []
         for num in shot_numbers:
