@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>鲁品开拍 · 山东农产品短视频拍摄方案工具</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">🎬 鲁品开拍</div>
+  <nav class="steps">
+    <button data-view="v0" class="step active">作品</button>
+    <button data-view="v1" class="step">1 产品信息</button>
+    <button data-view="v2" class="step">2 创意方向</button>
+    <button data-view="v3" class="step">3 分镜编辑</button>
+    <button data-view="v4" class="step">4 风险与导出</button>
+    <button data-view="v5" class="step">5 现场拍摄</button>
+  </nav>
+</header>
+
+<main>
+  <!-- V4: 作品管理工作台 -->
+  <section id="v0" class="view active">
+    <h2>📁 作品管理 <span id="save_status" class="save-status saved">✓ 已保存</span></h2>
+    <div class="actions">
+      <button id="btn_new_work" class="primary">＋ 新建作品</button>
+      <button id="btn_api_settings" class="ghost">⚙️ 模型配置</button>
+    </div>
+    <div id="api_settings_panel" class="hidden card">
+      <h3>模型 API 配置</h3>
+      <p class="muted">用于 AI 生成（创意/分镜/可行性/风险检查）。Key 仅保存在当前浏览器标签页内存中，关闭标签页即清除，不会写入服务器或本地持久存储。</p>
+      <div class="form-grid">
+        <label class="wide">API Base URL<input id="cfg_base" placeholder="如：https://api.openai.com/v1（留空用默认）"></label>
+        <label class="wide">API Key<input id="cfg_key" type="password" placeholder="sk-..." autocomplete="off"></label>
+        <label>模型名称<input id="cfg_model" placeholder="如：gpt-4o（留空用默认）"></label>
+      </div>
+      <div class="actions">
+        <button id="btn_save_cfg" class="primary">保存到当前会话</button>
+        <button id="btn_clear_cfg" class="ghost danger">清除配置</button>
+      </div>
+      <p id="cfg_status" class="muted"></p>
+    </div>
+    <div id="works_list" class="cards"></div>
+    <div id="stage_panel" class="stage-panel"></div>
+  </section>
+
+  <!-- 视图1：产品表单 -->
+  <section id="v1" class="view">
+    <div class="view-header">
+      <button class="ghost small" onclick="showView('v0')">← 作品</button>
+      <h2>产品资料与拍摄条件</h2>
+      <span id="save_status_v1" class="save-status saved"></span>
+    </div>
+    <div class="form-grid">
+      <label>产品名称 *<input id="f_name" placeholder="如：烟台红富士苹果"></label>
+      <label>价格<input id="f_price" placeholder="如：10斤装 39.9元"></label>
+      <label class="wide">产品信息<textarea id="f_desc" rows="2" placeholder="产地、品种、种植方式等"></textarea></label>
+      <label class="wide">卖点（每行一条）<textarea id="f_points" rows="3" placeholder="脆甜多汁&#10;果园现摘现发"></textarea></label>
+      <label class="wide">目标受众<input id="f_audience" placeholder="如：25-40岁宝妈"></label>
+      <label class="wide">证明材料（检测报告/证书等，没有可空）<textarea id="f_evidence" rows="2" placeholder="如：有机认证证书编号…"></textarea></label>
+      <label>拍摄设备<select id="f_device"><option>手机</option><option>相机</option><option>摄像机</option></select></label>
+      <label>拍摄人数<input id="f_people" type="number" min="1" value="1"></label>
+      <label>拍摄场景<input id="f_location" placeholder="如：果园、厨房"></label>
+      <label>灯光条件<input id="f_lighting" placeholder="如：自然光"></label>
+      <label>目标时长（秒）<input id="f_duration" type="number" min="10" value="60"></label>
+      <label class="wide">限制说明<textarea id="f_note" rows="2" placeholder="如：只有一部手机、独自一人、无专业灯光"></textarea></label>
+    </div>
+    <div class="actions">
+      <button id="btn_ideas" class="primary">生成 3 个创意方向 →</button>
+      <button id="btn_fill_demo" class="ghost">填入演示案例（烟台苹果）</button>
+    </div>
+    <div id="err1" class="error"></div>
+
+    <h3>📚 产品事实库 <span class="muted">（已确认事实将用于 AI 生成）</span></h3>
+    <div id="facts_list" class="cards"></div>
+    <div class="actions">
+      <button id="btn_add_fact" class="ghost">＋ 添加事实</button>
+    </div>
+    <div id="fact_editor" class="hidden card">
+      <h4 id="fact_editor_title">添加事实</h4>
+      <div class="form-grid">
+        <label class="wide">事实内容 *<textarea id="fact_content" rows="2" placeholder="如：章丘大葱产自山东济南章丘区"></textarea></label>
+        <label>分类<select id="fact_category">
+          <option>产地</option><option>品种</option><option>口感</option><option>工艺</option>
+          <option>规格</option><option>保存方式</option><option>认证</option><option>其他</option>
+        </select></label>
+        <label>状态<select id="fact_status">
+          <option value="confirmed">已确认</option><option value="pending">待核实</option>
+        </select></label>
+        <label class="wide">来源/证明材料<input id="fact_source" placeholder="如：检测报告编号、实地拍摄"></label>
+        <label><input type="checkbox" id="fact_allow" checked> 允许用于内容生成</label>
+      </div>
+      <div class="actions">
+        <button id="btn_save_fact" class="primary">保存</button>
+        <button id="btn_cancel_fact" class="ghost">取消</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 视图2：创意方向 -->
+  <section id="v2" class="view">
+    <h2>选择创意方向</h2>
+    <div id="ideas" class="cards"></div>
+    <div class="actions">
+      <button id="btn_back1" class="ghost">← 返回修改产品信息</button>
+      <button id="btn_regen_ideas" class="ghost">重新生成方向</button>
+    </div>
+    <div id="err2" class="error"></div>
+  </section>
+
+  <!-- 视图3：分镜编辑器 -->
+  <section id="v3" class="view">
+    <h2>分镜编辑器 <span id="sb_meta" class="muted"></span></h2>
+    <div id="validate_bar" class="validate-bar"></div>
+    <div id="shots" class="cards"></div>
+    <div class="actions">
+      <button id="btn_back2" class="ghost">← 返回重选方向</button>
+      <button id="btn_feasibility" class="ghost">检查拍摄可行性</button>
+      <button id="btn_shoot_mode" class="ghost">📷 进入现场拍摄模式</button>
+      <button id="btn_goto_risk" class="primary">风险检查与导出 →</button>
+    </div>
+    <div id="feasibility_panel" class="hidden"></div>
+    <div id="err3" class="error"></div>
+  </section>
+
+  <!-- 视图4：风险与导出 -->
+  <section id="v4" class="view">
+    <h2>风险检查与导出</h2>
+    <div class="actions">
+      <button id="btn_risk" class="primary">运行风险检查</button>
+    </div>
+    <div id="err4" class="error"></div>
+    <h3>宣传事实风险提示 <span class="muted">（勾选 = 人工已确认）</span></h3>
+    <div id="risks" class="cards"><p class="muted">尚未运行风险检查。</p></div>
+    <h3>素材准备清单</h3>
+    <ul id="materials" class="checklist"></ul>
+    <h3>用户待确认事项</h3>
+    <ul id="pendings" class="checklist"></ul>
+    <div class="actions">
+      <button id="btn_back3" class="ghost">← 返回分镜编辑</button>
+      <button id="btn_export" class="primary">生成 DOCX 拍摄执行单</button>
+    </div>
+    <p class="disclaimer">说明：风险提示仅为"依据缺失"提醒，由人工核实确认。本工具不保证广告合规。</p>
+  </section>
+
+  <!-- 视图5：现场拍摄模式 -->
+  <section id="v5" class="view">
+    <h2>📷 现场拍摄 <span id="shoot_meta" class="muted"></span></h2>
+    <div id="shoot_stats" class="stats-bar"></div>
+    <div class="filter-bar">
+      <button data-filter="all" class="filter-btn active">全部</button>
+      <button data-filter="todo" class="filter-btn">待拍摄</button>
+      <button data-filter="done" class="filter-btn">已拍摄</button>
+      <button data-filter="reshoot" class="filter-btn">需要补拍</button>
+      <button id="btn_filter_todo_only" class="ghost small">只看未完成</button>
+    </div>
+    <div id="shoot_cards" class="cards"></div>
+    <div class="actions">
+      <button id="btn_back_shoot" class="ghost">← 返回分镜编辑</button>
+      <button id="btn_export_checklist" class="primary">导出拍摄清单 DOCX</button>
+    </div>
+    <div id="err5" class="error"></div>
+  </section>
+</main>
+
+<div id="loading" class="loading hidden"><div class="spinner"></div><div id="loading_text">处理中…</div></div>
+
+<script src="/static/js/core.js"></script>
+<script src="/static/js/product.js"></script>
+<script src="/static/js/ideas.js"></script>
+<script src="/static/js/storyboard.js"></script>
+<script src="/static/js/risk.js"></script>
+<script src="/static/js/feasibility.js"></script>
+<script src="/static/js/shoot.js"></script>
+<script src="/static/js/works.js"></script>
+<script src="/static/js/workbench.js"></script>
+<script src="/static/js/facts.js"></script>
+</body>
+</html>

@@ -1,0 +1,146 @@
+[
+  {
+    "case": "A烟台苹果",
+    "name": "ideas=3个",
+    "pass": true,
+    "detail": "HTTP200"
+  },
+  {
+    "case": "A烟台苹果",
+    "name": "storyboard生成",
+    "pass": true,
+    "detail": "HTTP200"
+  },
+  {
+    "case": "A烟台苹果",
+    "name": "总时长误差≤2s",
+    "pass": true,
+    "detail": "60.0s/60.0s"
+  },
+  {
+    "case": "A烟台苹果",
+    "name": "单人手机约束",
+    "pass": true,
+    "detail": "无违规"
+  },
+  {
+    "case": "A烟台苹果",
+    "name": "序号连续",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "case": "A烟台苹果",
+    "name": "validate通过",
+    "pass": true,
+    "detail": "HTTP200"
+  },
+  {
+    "case": "A烟台苹果",
+    "name": "risk-check可用",
+    "pass": true,
+    "detail": "0条"
+  },
+  {
+    "case": "A烟台苹果",
+    "name": "export下载docx",
+    "pass": true,
+    "detail": "39962B"
+  },
+  {
+    "case": "B章丘大葱",
+    "name": "ideas=3个",
+    "pass": true,
+    "detail": "HTTP200"
+  },
+  {
+    "case": "B章丘大葱",
+    "name": "storyboard生成",
+    "pass": true,
+    "detail": "HTTP200"
+  },
+  {
+    "case": "B章丘大葱",
+    "name": "总时长误差≤2s",
+    "pass": true,
+    "detail": "45.0s/45.0s"
+  },
+  {
+    "case": "B章丘大葱",
+    "name": "单人手机约束",
+    "pass": true,
+    "detail": "无违规"
+  },
+  {
+    "case": "B章丘大葱",
+    "name": "序号连续",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "case": "B章丘大葱",
+    "name": "validate通过",
+    "pass": true,
+    "detail": "HTTP200"
+  },
+  {
+    "case": "B章丘大葱",
+    "name": "risk-check可用",
+    "pass": true,
+    "detail": "5条"
+  },
+  {
+    "case": "B章丘大葱",
+    "name": "export下载docx",
+    "pass": true,
+    "detail": "40064B"
+  },
+  {
+    "case": "C德州扒鸡",
+    "name": "ideas=3个",
+    "pass": true,
+    "detail": "HTTP200"
+  },
+  {
+    "case": "C德州扒鸡",
+    "name": "storyboard生成",
+    "pass": true,
+    "detail": "HTTP200"
+  },
+  {
+    "case": "C德州扒鸡",
+    "name": "总时长误差≤2s",
+    "pass": true,
+    "detail": "60.0s/60.0s"
+  },
+  {
+    "case": "C德州扒鸡",
+    "name": "单人手机约束",
+    "pass": true,
+    "detail": "无违规"
+  },
+  {
+    "case": "C德州扒鸡",
+    "name": "序号连续",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "case": "C德州扒鸡",
+    "name": "validate通过",
+    "pass": true,
+    "detail": "HTTP200"
+  },
+  {
+    "case": "C德州扒鸡",
+    "name": "风险数据被标出",
+    "pass": true,
+    "detail": "5条"
+  },
+  {
+    "case": "C德州扒鸡",
+    "name": "export下载docx",
+    "pass": true,
+    "detail": "40135B"
+  }
+]

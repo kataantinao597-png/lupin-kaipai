@@ -1,0 +1,187 @@
+"""鲁品开拍 - 宣传事实风险检查（三层：规则初检 + 模型复核 + 人工确认）。
+
+不声称广告合规保证；只做"依据缺失"提示，最终由人工确认。
+"""
+import json
+from typing import Dict, List
+
+# 第一层：关键词表（按类别组织；命中 -> 初检 flag）
+RISK_WORDS = {
+    # (关键词, 等级, 原因)
+    "极限词": [
+        ("最", "高", "极限词'最'需具体依据"), ("第一", "高", "极限词'第一'需权威数据支撑"),
+        ("首家", "高", "'首家'需可验证的事实依据"), ("首选", "高", "'首选'属主观极限表述"),
+        ("顶级", "高", "'顶级'需明确评判标准"), ("极致", "高", "极限表述"),
+        ("之王", "高", "极限表述"), ("国家级", "高", "'国家级'需官方认定文件"),
+        ("世界级", "高", "'世界级'需权威依据"), ("百分之百", "高", "绝对化表述"),
+        ("100%", "高", "绝对化表述"), ("零风险", "高", "绝对化表述"),
+        ("无任何副作用", "高", "绝对化安全宣称"),
+    ],
+    "销量宣称": [
+        ("销量第一", "高", "销量排名需第三方权威数据"), ("全国销量第一", "高", "销量排名需第三方权威数据"),
+        ("全网第一", "高", "销量排名需第三方权威数据"), ("月销过万", "中", "销量数据需销售记录支撑"),
+        ("爆卖", "中", "销量表述需数据支撑"),
+    ],
+    "功效宣称": [
+        ("降血压", "高", "功效宣称需科学依据/批文"), ("降血糖", "高", "功效宣称需科学依据/批文"),
+        ("降血脂", "高", "功效宣称需科学依据/批文"), ("减肥", "高", "功效宣称需科学依据"),
+        ("瘦身", "高", "功效宣称需科学依据"), ("排毒", "高", "功效宣称缺乏公认依据"),
+        ("抗癌", "高", "医疗功效宣称风险极高"), ("治疗", "高", "医疗功效宣称风险极高"),
+        ("治愈", "高", "医疗功效宣称风险极高"), ("根治", "高", "医疗功效宣称风险极高"),
+        ("包治百病", "高", "虚假功效宣称"), ("增强免疫", "中", "功效暗示需依据"),
+        ("养颜", "中", "功效暗示需依据"),
+    ],
+    "认证宣称": [
+        ("有机", "中", "'有机'需有机认证证书"), ("绿色食品", "中", "需绿色食品认证"),
+        ("无公害", "中", "需无公害认证"), ("地理标志", "中", "需地理标志证明"),
+        ("驰名商标", "中", "需驰名商标认定"), ("老字号", "中", "'老字号'需官方认定或历史依据"),
+        ("祖传", "中", "'祖传'需可说明的传承依据"), ("秘方", "中", "'秘方'表述需谨慎"),
+    ],
+    "农残安全": [
+        ("零农残", "中", "'零农残'需检测报告"), ("无农药", "中", "'无农药'需检测报告"),
+        ("无添加", "中", "'无添加'需配料表/检测支撑"), ("零添加", "中", "'零添加'需配料表/检测支撑"),
+        ("纯天然", "中", "'纯天然'需依据且易引误解"),
+    ],
+}
+
+# 委婉功效暗示模式（规则层抓不到，交给模型复核重点识别）
+HINT_PATTERNS = ["更轻松", "更健康", "身体好", "气色好", "睡得香", "有精神"]
+
+
+def rule_scan(text: str, where: str = "") -> List[Dict]:
+    """第一层：关键词扫描。返回 flag 列表。"""
+    flags = []
+    for _cat, words in RISK_WORDS.items():
+        for kw, level, reason in words:
+            if kw in text:
+                flags.append({
+                    "text": kw, "level": level,
+                    "reason": f"{reason}（出现位置：{where}）",
+                    "source": "规则初检", "confirmed": False,
+                })
+    return flags
+
+
+REVIEW_PROMPT_TMPL = """你是短视频广告文案风险复核员。请审查以下旁白/字幕文案，找出**缺乏事实依据**的产品宣传。
+
+用户输入的产品信息（视为用户自己的主张，文案与之相符的不标风险）：
+{product_info}
+
+用户已提供的证明材料：{evidence}
+
+文案（逐条）：
+{lines}
+
+只关注**产品本身的事实宣传**：产地、品种、价格、销量、认证、农残、安全、功效。
+不要标记拍摄手法类表述（如"实拍""不加滤镜""现场原声"），那是制作承诺不是产品宣传。
+
+请特别注意以下**委婉功效暗示**（即使没有明显关键词也要标出）：
+- 暗示食用后身体变好：如"身体更轻松""气色更好""每天吃一只，整个人都精神了"
+- 暗示治疗/保健效果：如"坚持吃对血压好""老毛病都少了"
+
+判定规则：
+- 文案中的品种/规格/价格等事实如果与"用户输入的产品信息"一致 → 视为用户主张，**不标风险**
+- 只标记文案中**超出用户输入**的、缺乏依据的说法，按以下分类：
+  B. 用户提出但缺乏证明的宣传说法
+  D. 需要用户补充证据的信息
+- C类（无法核实）仅用于功效/医疗类暗示
+
+只输出 JSON：{{"flags": [{{"text": "涉及的原文片段", "level": "高/中/低", "reason": "原因（含分类B/D）"}}]}}
+没有风险则输出 {{"flags": []}}。不要输出其他文字。"""
+
+
+def model_review(ai_service, lines: List[str], evidence: str = "",
+                   product_info: str = "") -> List[Dict]:
+    """第二层：模型复核。lines 为待审文案列表。"""
+    prompt = REVIEW_PROMPT_TMPL.format(
+        product_info=product_info or "（未提供）",
+        evidence=evidence or "（用户未提供证明材料）",
+        lines="\n".join(f"{i+1}. {ln}" for i, ln in enumerate(lines)),
+    )
+    content, _usage = ai_service.chat(
+        [{"role": "user", "content": prompt}],
+        temperature=0.2, json_object=True,
+    )
+    data = json.loads(content)
+    flags = []
+    for f in data.get("flags", []):
+        flags.append({
+            "text": f.get("text", ""), "level": f.get("level", "中"),
+            "reason": f.get("reason", ""), "source": "模型复核", "confirmed": False,
+        })
+    return flags
+
+
+def dedup(flags: List[Dict]) -> List[Dict]:
+    seen = set()
+    out = []
+    for f in flags:
+        key = (f["text"], f["level"])
+        if key not in seen:
+            seen.add(key)
+            out.append(f)
+    return out
+
+
+def risk_check_storyboard(ai_service, sb: dict, evidence: str = "",
+                          input_claims: List[str] | None = None,
+                          product_info: str = "") -> Dict:
+    """对分镜的旁白/字幕 + 用户原始卖点做三层检查（前两层自动，第三层人工确认由前端完成）。
+
+    input_claims: 用户输入的卖点/产品信息原文，用于发现"输入即带风险"的情况。
+    返回 {"flags": [...], "scanned_shots": n}。
+    """
+    lines = []
+    for s in sb.get("shots", []):
+        n = s.get("shot_number")
+        lines.append(f"[镜头{n}旁白] {s.get('voiceover', '')}")
+        lines.append(f"[镜头{n}字幕] {s.get('subtitle', '')}")
+    flags: List[Dict] = []
+    for ln in lines:
+        where = ln.split("]")[0].strip("[")
+        flags.extend(rule_scan(ln, where))
+    for claim in input_claims or []:
+        for f in rule_scan(claim, "用户输入卖点"):
+            f["reason"] += "；注意：该说法来自用户输入，请确认是否有证明材料"
+            flags.append(f)
+    flags.extend(model_review(ai_service, lines, evidence, product_info))
+    return {"flags": dedup(flags), "scanned_shots": len(sb.get("shots", []))}
+
+
+# ---------- V5+: 事实 grounding 规则层 ----------
+
+def check_fact_grounding(sb_dict: dict, facts: list) -> list:
+    """规则层：检查旁白/字幕中的事实宣称是否有事实依据。
+    
+    返回 [{"shot_number": n, "text": 涉及文案, "level": "中", "reason": 原因}]
+    不依赖模型，确定性检查。
+    """
+    fact_ids = {f.get("id") for f in (facts or []) if f.get("id")}
+    flags = []
+    for s in sb_dict.get("shots", []):
+        num = s.get("shot_number")
+        text = f"{s.get('voiceover','')} {s.get('subtitle','')}"
+        refs = s.get("fact_refs") or []
+        # 1. 引用的事实ID不存在
+        bad_refs = [r for r in refs if r not in fact_ids]
+        if bad_refs:
+            flags.append({
+                "shot_number": num,
+                "text": f"引用了不存在的事实ID: {','.join(bad_refs)}",
+                "level": "中",
+                "reason": "事实引用无效，请核实",
+            })
+        # 2. 含高风险宣称但无事实引用
+        has_risky_claim = any(
+            kw in text
+            for cat in RISK_WORDS.values()
+            for kw, _, _ in cat
+        )
+        if has_risky_claim and not refs:
+            flags.append({
+                "shot_number": num,
+                "text": text[:60],
+                "level": "中",
+                "reason": "含产品事实宣称但未关联已确认事实，请核实依据",
+            })
+    return flags

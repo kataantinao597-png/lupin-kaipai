@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<base href="http://127.0.0.1:8931/">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>鲁品开拍 · 山东农产品短视频拍摄方案工具</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">🎬 鲁品开拍</div>
+  <nav class="steps">
+    <button data-view="v1" class="step active">1 产品信息</button>
+    <button data-view="v2" class="step">2 创意方向</button>
+    <button data-view="v3" class="step">3 分镜编辑</button>
+    <button data-view="v4" class="step">4 风险与导出</button>
+  </nav>
+</header>
+
+<main>
+  <!-- 视图1：产品表单 -->
+  <section id="v1" class="view active">
+    <h2>产品资料与拍摄条件</h2>
+    <div class="form-grid">
+      <label>产品名称 *<input id="f_name" placeholder="如：烟台红富士苹果"></label>
+      <label>价格<input id="f_price" placeholder="如：10斤装 39.9元"></label>
+      <label class="wide">产品信息<textarea id="f_desc" rows="2" placeholder="产地、品种、种植方式等"></textarea></label>
+      <label class="wide">卖点（每行一条）<textarea id="f_points" rows="3" placeholder="脆甜多汁&#10;果园现摘现发"></textarea></label>
+      <label class="wide">目标受众<input id="f_audience" placeholder="如：25-40岁宝妈"></label>
+      <label class="wide">证明材料（检测报告/证书等，没有可空）<textarea id="f_evidence" rows="2" placeholder="如：有机认证证书编号…"></textarea></label>
+      <label>拍摄设备<select id="f_device"><option>手机</option><option>相机</option><option>摄像机</option></select></label>
+      <label>拍摄人数<input id="f_people" type="number" min="1" value="1"></label>
+      <label>拍摄场景<input id="f_location" placeholder="如：果园、厨房"></label>
+      <label>灯光条件<input id="f_lighting" placeholder="如：自然光"></label>
+      <label>目标时长（秒）<input id="f_duration" type="number" min="10" value="60"></label>
+      <label class="wide">限制说明<textarea id="f_note" rows="2" placeholder="如：只有一部手机、独自一人、无专业灯光"></textarea></label>
+    </div>
+    <div class="actions">
+      <button id="btn_ideas" class="primary">生成 3 个创意方向 →</button>
+      <button id="btn_fill_demo" class="ghost">填入演示案例（烟台苹果）</button>
+    </div>
+    <div id="err1" class="error"></div>
+  </section>
+
+  <!-- 视图2：创意方向 -->
+  <section id="v2" class="view">
+    <h2>选择创意方向</h2>
+    <div id="ideas" class="cards"></div>
+    <div class="actions">
+      <button id="btn_back1" class="ghost">← 返回修改产品信息</button>
+      <button id="btn_regen_ideas" class="ghost">重新生成方向</button>
+    </div>
+    <div id="err2" class="error"></div>
+  </section>
+
+  <!-- 视图3：分镜编辑器 -->
+  <section id="v3" class="view">
+    <h2>分镜编辑器 <span id="sb_meta" class="muted"></span></h2>
+    <div id="validate_bar" class="validate-bar"></div>
+    <div id="shots" class="cards"></div>
+    <div class="actions">
+      <button id="btn_back2" class="ghost">← 返回重选方向</button>
+      <button id="btn_goto_risk" class="primary">风险检查与导出 →</button>
+    </div>
+    <div id="err3" class="error"></div>
+  </section>
+
+  <!-- 视图4：风险与导出 -->
+  <section id="v4" class="view">
+    <h2>风险检查与导出</h2>
+    <div class="actions">
+      <button id="btn_risk" class="primary">运行风险检查</button>
+    </div>
+    <div id="err4" class="error"></div>
+    <h3>宣传事实风险提示 <span class="muted">（勾选 = 人工已确认）</span></h3>
+    <div id="risks" class="cards"><p class="muted">尚未运行风险检查。</p></div>
+    <h3>素材准备清单</h3>
+    <ul id="materials" class="checklist"></ul>
+    <h3>用户待确认事项</h3>
+    <ul id="pendings" class="checklist"></ul>
+    <div class="actions">
+      <button id="btn_back3" class="ghost">← 返回分镜编辑</button>
+      <button id="btn_export" class="primary">生成 DOCX 拍摄执行单</button>
+    </div>
+    <p class="disclaimer">说明：风险提示仅为"依据缺失"提醒，由人工核实确认。本工具不保证广告合规。</p>
+  </section>
+</main>
+
+<div id="loading" class="loading hidden"><div class="spinner"></div><div id="loading_text">处理中…</div></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
