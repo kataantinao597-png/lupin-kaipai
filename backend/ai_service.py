@@ -57,6 +57,10 @@ class AIService:
             self.endpoint = raw
         else:
             self.endpoint = raw + "/chat/completions"
+        # deepkey 兜底：根域名缺少 /v1 时自动补上
+        self.endpoint = self.endpoint.replace(
+            "https://deepkey.top/chat/completions",
+            "https://deepkey.top/v1/chat/completions")
         self.session = requests.Session()
         self.total_tokens = 0
         self.call_count = 0
