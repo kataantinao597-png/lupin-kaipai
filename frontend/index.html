@@ -8,24 +8,24 @@
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">🎬 鲁品开拍</div>
+  <div class="brand">鲁品开拍<small>山东农产品短视频工具</small></div>
   <nav class="steps">
-    <button data-view="v0" class="step active">作品</button>
-    <button data-view="v1" class="step">1 产品信息</button>
-    <button data-view="v2" class="step">2 创意方向</button>
-    <button data-view="v3" class="step">3 分镜编辑</button>
-    <button data-view="v4" class="step">4 风险与导出</button>
-    <button data-view="v5" class="step">5 现场拍摄</button>
+    <button data-view="v0" class="step active"><span class="n">✦</span><span class="lbl">作品</span></button>
+    <button data-view="v1" class="step"><span class="n">1</span><span class="lbl">产品信息</span></button>
+    <button data-view="v2" class="step"><span class="n">2</span><span class="lbl">创意方向</span></button>
+    <button data-view="v3" class="step"><span class="n">3</span><span class="lbl">分镜编辑</span></button>
+    <button data-view="v4" class="step"><span class="n">4</span><span class="lbl">风险与导出</span></button>
+    <button data-view="v5" class="step"><span class="n">5</span><span class="lbl">现场拍摄</span></button>
   </nav>
 </header>
 
 <main>
   <!-- V4: 作品管理工作台 -->
   <section id="v0" class="view active">
-    <h2>📁 作品管理 <span id="save_status" class="save-status saved">✓ 已保存</span></h2>
+    <h2>作品管理 <span id="save_status" class="save-status saved">✓ 已保存</span></h2>
     <div class="actions">
       <button id="btn_new_work" class="primary">＋ 新建作品</button>
-      <button id="btn_api_settings" class="ghost">⚙️ 模型配置</button>
+      <button id="btn_api_settings" class="ghost">模型配置</button>
     </div>
     <div id="api_settings_panel" class="hidden card">
       <h3>模型 API 配置</h3>
@@ -72,7 +72,7 @@
     </div>
     <div id="err1" class="error"></div>
 
-    <h3>📚 产品事实库 <span class="muted">（已确认事实将用于 AI 生成）</span></h3>
+    <h3>产品事实库 <span class="muted">（已确认事实将用于 AI 生成）</span></h3>
     <div id="facts_list" class="cards"></div>
     <div class="actions">
       <button id="btn_add_fact" class="ghost">＋ 添加事实</button>
@@ -117,7 +117,7 @@
     <div class="actions">
       <button id="btn_back2" class="ghost">← 返回重选方向</button>
       <button id="btn_feasibility" class="ghost">检查拍摄可行性</button>
-      <button id="btn_shoot_mode" class="ghost">📷 进入现场拍摄模式</button>
+      <button id="btn_shoot_mode" class="ghost">进入现场拍摄模式</button>
       <button id="btn_goto_risk" class="primary">风险检查与导出 →</button>
     </div>
     <div id="feasibility_panel" class="hidden"></div>
@@ -146,7 +146,7 @@
 
   <!-- 视图5：现场拍摄模式 -->
   <section id="v5" class="view">
-    <h2>📷 现场拍摄 <span id="shoot_meta" class="muted"></span></h2>
+    <h2>现场拍摄 <span id="shoot_meta" class="muted"></span></h2>
     <div id="shoot_stats" class="stats-bar"></div>
     <div class="filter-bar">
       <button data-filter="all" class="filter-btn active">全部</button>

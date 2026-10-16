@@ -29,9 +29,9 @@ function renderWorks() {
       const shots = (sb && sb.shots ? sb.shots.length : 0);
       const active = w.id === works.activeId;
       return `<div class="card ${active ? "active-work" : ""}">
-        <div class="shot-head">
-          <span class="num">${esc(w.name)}</span>
-          ${active ? '<span class="badge">当前</span>' : ""}
+        <div class="work-head">
+          <h4>${esc(w.name)}</h4>
+          ${active ? '<span class="badge lock">当前</span>' : ""}
         </div>
         <div class="row"><span class="k">产品</span><span>${esc((d.product || {}).product_name || "未填写")}</span></div>
         <div class="row"><span class="k">分镜</span><span>${shots ? shots + " 镜头" : "未生成"}</span></div>
