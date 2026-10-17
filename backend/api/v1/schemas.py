@@ -53,6 +53,9 @@ class WorkCreate(BaseModel):
 class WorkUpdate(BaseModel):
     title: Optional[str] = Field(default=None, max_length=256)
     data: Optional[dict[str, Any]] = None
+    status: Optional[str] = Field(default=None, description="draft|active|archived")
+    # 088：提供时做乐观锁检查，不匹配返回 409；不提供则保持兼容直接更新
+    version: Optional[int] = Field(default=None, description="乐观锁版本号")
 
 
 class WorkOut(BaseModel):
@@ -61,5 +64,22 @@ class WorkOut(BaseModel):
     owner_id: str
     title: str
     data: dict[str, Any]
+    status: str = "draft"
+    version: int = 1
     created_at: datetime
     updated_at: datetime
+
+
+# ---- 作品历史版本（091） ----
+class WorkVersionOut(BaseModel):
+    id: str
+    work_id: str
+    version_no: int
+    title: str
+    created_by: str
+    created_at: datetime
+
+
+# ---- 回收站（092）：复用 WorkOut，加 deleted_at ----
+class TrashWorkOut(WorkOut):
+    deleted_at: Optional[datetime] = None

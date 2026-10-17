@@ -4,3 +4,6 @@ __pycache__/
 .DS_Store
 *.log
 .env
+backend/data/
+*.db
+*.sqlite
