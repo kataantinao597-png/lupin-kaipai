@@ -59,6 +59,11 @@ def validate_business(sb: Storyboard) -> List[str]:
     if sorted(nums) != list(range(1, len(nums) + 1)):
         errors.append(f"[规则] shot_number 不连续，应为 1..{len(nums)}，实际: {sorted(nums)}")
 
+    # 1b. 镜头数量上限：防止模型失控生成过多镜头（服务端最终校验，不只靠前端）
+    MAX_SHOTS = 60
+    if len(shots) > MAX_SHOTS:
+        errors.append(f"[规则] 镜头数量 {len(shots)} 超过上限 {MAX_SHOTS}，请精简分镜")
+
     # 2. 总时长误差 ≤ 2 秒
     total = sum(s.duration_seconds for s in shots)
     if abs(total - sb.target_duration_seconds) > 2:
@@ -66,6 +71,14 @@ def validate_business(sb: Storyboard) -> List[str]:
             f"[规则] 总时长 {total}s 与目标 {sb.target_duration_seconds}s "
             f"误差 {abs(total - sb.target_duration_seconds):.1f}s，超过 2s 上限"
         )
+
+    # 2b. 单镜头时长不能超过目标总时长（服务端最终校验）
+    for s in shots:
+        if s.duration_seconds > sb.target_duration_seconds:
+            errors.append(
+                f"[规则] 镜头 {s.shot_number}: 单镜头时长 {s.duration_seconds}s "
+                f"超过目标总时长 {sb.target_duration_seconds}s"
+            )
 
     # 3. 单人手机拍摄约束
     if sb.shoot.device == "手机" and sb.shoot.people == 1:

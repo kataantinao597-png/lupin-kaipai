@@ -9,7 +9,10 @@ from typing import Callable, Dict, List, Optional, Tuple
 BASE_URL = os.environ.get("LUPIN_API_BASE", "https://deepkey.top/v1/chat/completions")
 DEFAULT_MODEL = os.environ.get("LUPIN_MODEL", "gpt-6-luna")
 MAX_RETRIES = 3
-TIMEOUT = 120
+# 超时分级：连接超时（建连失败）/ 读取超时（服务端响应慢）/ 整体任务超时（含重试退避）
+CONNECT_TIMEOUT = 15
+READ_TIMEOUT = 120
+TOTAL_TIMEOUT = 600
 
 CONFIG_PATH = "/home/hatch/.omp/agent/models.yml"
 
@@ -103,6 +106,7 @@ class AIService:
         self.session = requests.Session()
         self.total_tokens = 0
         self.call_count = 0
+        self.model = os.environ.get("LUPIN_MODEL", DEFAULT_MODEL)
 
     def _post(self, payload: dict) -> dict:
         """单次 HTTP 调用，带错误映射。
@@ -110,11 +114,18 @@ class AIService:
         """
         try:
             r = self.session.post(
-                self.endpoint, json=payload, timeout=TIMEOUT,
+                self.endpoint, json=payload,
+                timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
                 headers={"Authorization": f"Bearer {self.api_key}"},
             )
+        except requests.ConnectTimeout:
+            raise AIRetryableError(
+                f"连接超时（{CONNECT_TIMEOUT}s）：无法连接到模型服务，请检查网络或 API 地址")
+        except requests.ReadTimeout:
+            raise AIRetryableError(
+                f"读取超时（{READ_TIMEOUT}s）：模型服务响应过慢，请稍后重试")
         except requests.Timeout:
-            raise AIRetryableError("请求超时（120s）")
+            raise AIRetryableError("请求超时：模型服务未在预期时间内响应")
         except requests.RequestException as e:
             raise AIRetryableError(f"网络错误: {type(e).__name__}")
         if r.status_code == 200:
@@ -176,7 +187,14 @@ class AIService:
         attempts = 0
         usage_list: List[dict] = []
         last_errors: List[str] = []
+        start_ts = time.time()
         for n in range(1, MAX_RETRIES + 2):  # 1 次初试 + 最多 3 次重试
+            elapsed = time.time() - start_ts
+            if elapsed > TOTAL_TIMEOUT:
+                raise AIFatalError(
+                    f"整体任务超时（{TOTAL_TIMEOUT}s，已用 {elapsed:.0f}s）："
+                    "模型多次重试仍未返回合法结果，请稍后重试或简化输入。"
+                )
             attempts = n
             messages = make_messages(feedback)
             content, usage = chat(messages)
@@ -200,4 +218,3 @@ class AIService:
             f"最后一次的校验问题：{'; '.join(last_errors[:5])}。"
             "建议：简化产品描述或缩短目标时长后重试。"
         )
-        self.model = os.environ.get("LUPIN_MODEL", DEFAULT_MODEL)

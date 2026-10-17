@@ -1,15 +1,38 @@
 """阶段 0.3：DOCX 导出优化验证。生成后回读检查：
 表头跨页重复(tblHeader)、行不跨页断开(cantSplit)、内容完整、中文正常。"""
 import json
+import os
 import sys
 from docx import Document
 from docx.oxml.ns import qn
 
-sys.path.insert(0, "/home/hatch/workspace/lupin-kaipai")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+
+def _skip(msg):
+    print(f"[跳过] {msg}")
+    if "pytest" in sys.modules:
+        import pytest
+        pytest.skip(msg, allow_module_level=True)
+    sys.exit(0)
+
+
+EXP = os.path.join(
+    os.path.dirname(ROOT), "goals",
+    "shandong-ai-model-innovation-contest-registration",
+    "experiments", "exp-2026-10-16",
+)
+# 兼容旧的绝对路径布局（原开发者机器）
+if not os.path.isdir(EXP) and os.path.isdir(
+        "/home/hatch/workspace/goals/shandong-ai-model-innovation-contest-registration/experiments/exp-2026-10-16"):
+    EXP = "/home/hatch/workspace/goals/shandong-ai-model-innovation-contest-registration/experiments/exp-2026-10-16"
+if not os.path.isdir(EXP):
+    _skip(f"缺少实验数据目录，无法运行导出验证：{EXP}")
 
 from backend.exporter import export_docx
 
-EXP = "/home/hatch/workspace/goals/shandong-ai-model-innovation-contest-registration/experiments/exp-2026-10-16"
 OUT = "/tmp/test_shooting_plan.docx"
 results = []
 

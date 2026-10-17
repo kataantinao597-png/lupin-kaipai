@@ -3,7 +3,9 @@
 不声称广告合规保证；只做"依据缺失"提示，最终由人工确认。
 """
 import json
-from typing import Dict, List
+from typing import Dict, List, Optional
+
+from .ai_service import DEFAULT_MODEL, parse_json_content
 
 # 第一层：关键词表（按类别组织；命中 -> 初检 flag）
 RISK_WORDS = {
@@ -91,8 +93,11 @@ REVIEW_PROMPT_TMPL = """你是短视频广告文案风险复核员。请审查�
 
 
 def model_review(ai_service, lines: List[str], evidence: str = "",
-                   product_info: str = "") -> List[Dict]:
-    """第二层：模型复核。lines 为待审文案列表。"""
+                   product_info: str = "", model: Optional[str] = None) -> List[Dict]:
+    """第二层：模型复核。lines 为待审文案列表。
+
+    model: 用户选择的模型；为空则使用服务默认模型。
+    """
     prompt = REVIEW_PROMPT_TMPL.format(
         product_info=product_info or "（未提供）",
         evidence=evidence or "（用户未提供证明材料）",
@@ -100,11 +105,16 @@ def model_review(ai_service, lines: List[str], evidence: str = "",
     )
     content, _usage = ai_service.chat(
         [{"role": "user", "content": prompt}],
+        model=model or DEFAULT_MODEL,
         temperature=0.2, json_object=True,
     )
-    data = json.loads(content)
+    # 统一 JSON 解析：兼容模型输出 markdown 代码围栏/前后杂文本
+    data = parse_json_content(content)
+    raw_flags = data.get("flags", []) if isinstance(data, dict) else []
     flags = []
-    for f in data.get("flags", []):
+    for f in raw_flags:
+        if not isinstance(f, dict):
+            continue
         flags.append({
             "text": f.get("text", ""), "level": f.get("level", "中"),
             "reason": f.get("reason", ""), "source": "模型复核", "confirmed": False,
@@ -125,10 +135,12 @@ def dedup(flags: List[Dict]) -> List[Dict]:
 
 def risk_check_storyboard(ai_service, sb: dict, evidence: str = "",
                           input_claims: List[str] | None = None,
-                          product_info: str = "") -> Dict:
+                          product_info: str = "",
+                          model: Optional[str] = None) -> Dict:
     """对分镜的旁白/字幕 + 用户原始卖点做三层检查（前两层自动，第三层人工确认由前端完成）。
 
     input_claims: 用户输入的卖点/产品信息原文，用于发现"输入即带风险"的情况。
+    model: 用户选择的模型，透传给模型复核；为空则使用服务默认模型。
     返回 {"flags": [...], "scanned_shots": n}。
     """
     lines = []
@@ -144,7 +156,7 @@ def risk_check_storyboard(ai_service, sb: dict, evidence: str = "",
         for f in rule_scan(claim, "用户输入卖点"):
             f["reason"] += "；注意：该说法来自用户输入，请确认是否有证明材料"
             flags.append(f)
-    flags.extend(model_review(ai_service, lines, evidence, product_info))
+    flags.extend(model_review(ai_service, lines, evidence, product_info, model=model))
     return {"flags": dedup(flags), "scanned_shots": len(sb.get("shots", []))}
 
 
@@ -153,23 +165,39 @@ def risk_check_storyboard(ai_service, sb: dict, evidence: str = "",
 def check_fact_grounding(sb_dict: dict, facts: list) -> list:
     """规则层：检查旁白/字幕中的事实宣称是否有事实依据。
     
+    有效引用要求：事实 ID 存在，且 status=confirmed，且 allow_use=true。
     返回 [{"shot_number": n, "text": 涉及文案, "level": "中", "reason": 原因}]
     不依赖模型，确定性检查。
     """
-    fact_ids = {f.get("id") for f in (facts or []) if f.get("id")}
+    facts = facts or []
+    known_ids = {f.get("id") for f in facts if f.get("id")}
+    # 只有"已确认且允许使用"的事实才能作为宣传依据
+    usable_ids = {
+        f.get("id") for f in facts
+        if f.get("id") and f.get("status") == "confirmed" and f.get("allow_use") is True
+    }
     flags = []
     for s in sb_dict.get("shots", []):
         num = s.get("shot_number")
         text = f"{s.get('voiceover','')} {s.get('subtitle','')}"
         refs = s.get("fact_refs") or []
-        # 1. 引用的事实ID不存在
-        bad_refs = [r for r in refs if r not in fact_ids]
-        if bad_refs:
+        # 1. 引用的事实 ID 不存在
+        missing_refs = [r for r in refs if r not in known_ids]
+        if missing_refs:
             flags.append({
                 "shot_number": num,
-                "text": f"引用了不存在的事实ID: {','.join(bad_refs)}",
+                "text": f"引用了不存在的事实ID: {','.join(missing_refs)}",
                 "level": "中",
                 "reason": "事实引用无效，请核实",
+            })
+        # 2. 引用的事实存在但未确认或不允许使用
+        unusable_refs = [r for r in refs if r in known_ids and r not in usable_ids]
+        if unusable_refs:
+            flags.append({
+                "shot_number": num,
+                "text": f"引用的事实未确认或不允许使用: {','.join(unusable_refs)}",
+                "level": "中",
+                "reason": "宣传依据必须是 status=confirmed 且允许使用的事实，请先在事实库中确认",
             })
         # 2. 含高风险宣称但无事实引用
         has_risky_claim = any(

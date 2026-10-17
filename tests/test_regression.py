@@ -1,12 +1,52 @@
 """阶段 5：三案例回归。全流程 API 走通并记录：
-ideas(3个) -> storyboard(校验/时长/单人约束) -> validate -> risk-check -> export。"""
+ideas(3个) -> storyboard(校验/时长/单人约束) -> validate -> risk-check -> export。
+
+依赖：实验数据目录 + 本地运行的后端服务（默认 127.0.0.1:8321）。
+干净环境下（无数据目录或服务未启动）明确跳过，不报错。"""
 import json
+import os
+import socket
 import sys
 import time
 import urllib.request
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+
+def _skip(msg):
+    print(f"[跳过] {msg}")
+    if "pytest" in sys.modules:
+        import pytest
+        pytest.skip(msg, allow_module_level=True)
+    sys.exit(0)
+
+
+EXP = os.path.join(
+    os.path.dirname(ROOT), "goals",
+    "shandong-ai-model-innovation-contest-registration",
+    "experiments", "exp-2026-10-16",
+)
+if not os.path.isdir(EXP) and os.path.isdir(
+        "/home/hatch/workspace/goals/shandong-ai-model-innovation-contest-registration/experiments/exp-2026-10-16"):
+    EXP = "/home/hatch/workspace/goals/shandong-ai-model-innovation-contest-registration/experiments/exp-2026-10-16"
+if not os.path.isdir(EXP):
+    _skip(f"缺少实验数据目录，无法运行三案例回归：{EXP}")
+
 BASE = "http://127.0.0.1:8321"
-EXP = "/home/hatch/workspace/goals/shandong-ai-model-innovation-contest-registration/experiments/exp-2026-10-16"
+
+
+def _server_reachable():
+    try:
+        socket.create_connection(("127.0.0.1", 8321), timeout=2).close()
+        return True
+    except OSError:
+        return False
+
+
+if not _server_reachable():
+    _skip(f"本地后端服务未启动（{BASE} 连不上），无法运行三案例回归")
 FORBIDDEN = ["航拍", "摇臂", "多机位", "轨道", "无人机", "稳定器"]
 
 results = []
@@ -98,7 +138,12 @@ failed = [(c, n) for c, n, ok, _ in results if not ok]
 print(f"共 {len(results)} 项，通过 {len(results)-len(failed)} 项")
 for c, n in failed:
     print(f"  未通过: [{c}] {n}")
-json.dump([{"case": c, "name": n, "pass": ok, "detail": d} for c, n, ok, d in results],
-          open("/home/hatch/workspace/lupin-kaipai/demo/regression.json", "w", encoding="utf-8"),
-          ensure_ascii=False, indent=2)
+_demo_dir = os.path.join(ROOT, "demo")
+try:
+    os.makedirs(_demo_dir, exist_ok=True)
+    json.dump([{"case": c, "name": n, "pass": ok, "detail": d} for c, n, ok, d in results],
+              open(os.path.join(_demo_dir, "regression.json"), "w", encoding="utf-8"),
+              ensure_ascii=False, indent=2)
+except OSError as e:
+    print(f"[警告] 回归报告写入失败（不影响测试结论）: {e}")
 sys.exit(1 if failed else 0)
