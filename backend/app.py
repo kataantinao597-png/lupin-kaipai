@@ -178,15 +178,20 @@ def _mount(router, prefix: str = ""):
     """手动挂载 APIRouter 的所有路由（绕过 include_router bug）。
 
     prefix 非空时，给每个路由路径加前缀（用于 /api/v1 下的新体系路由）。
+    注意：Starlette 用预编译的 path_regex 做路径匹配，只改 path/path_format
+    不够，必须重新编译（026 组修复：此前 v1 路由 openapi 可见但请求 404）。
     """
     import copy
+    from starlette.routing import compile_path
     for route in router.routes:
         if prefix:
             nr = copy.copy(route)
             nr.path = prefix + route.path
-            # 同步 path_format（Starlette 内部用）
+            # 同步 path_format（Starlette 内部用）并重新编译匹配正则
             if hasattr(nr, "path_format"):
                 nr.path_format = prefix + route.path_format
+                nr.path_regex, nr.path_format, nr.param_convertors = compile_path(
+                    nr.path_format)
             app.router.routes.append(nr)
         else:
             app.router.routes.append(route)
