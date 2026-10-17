@@ -65,3 +65,27 @@ $("btn_export").addEventListener("click", async () => {
   finally { setLoading(null); }
 });
 
+
+function renderDeliveryPanel(result) {
+  const panel = $("delivery_panel");
+  panel.classList.remove("hidden");
+  const labels = { done: "已完成", action: "需要处理", suggest: "建议完善", na: "不适用" };
+  panel.innerHTML = `<h3>${result.ready ? "✓ 可以交付" : "尚不能交付"}</h3>` + result.items.map((item) => `<div class="delivery-item ${item.status}"><strong>${esc(item.label)}</strong><span>${esc(labels[item.status] || item.status)}</span><p>${esc(item.reason)}</p></div>`).join("");
+}
+$("btn_delivery_check").addEventListener("click", async () => {
+  showErr("err4", "");
+  try {
+    setLoading("正在检查交付状态…");
+    const result = await api("/api/delivery-check", { storyboard: stripUids(state.storyboard), product: state.product, facts: state.facts || [], feasibility: state.feasibility || null, shoot_state: state.shoot || {} });
+    renderDeliveryPanel(result);
+  } catch (e) { showErr("err4", e.message); } finally { setLoading(null); }
+});
+$("btn_export_srt").addEventListener("click", async () => {
+  showErr("err4", "");
+  try {
+    setLoading("正在生成 SRT 字幕…");
+    const r = await fetch("/api/export-srt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ storyboard: stripUids(state.storyboard) }) });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || "SRT 导出失败"); }
+    const blob = await r.blob(); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "字幕.srt"; a.click(); URL.revokeObjectURL(a.href);
+  } catch (e) { showErr("err4", e.message); } finally { setLoading(null); }
+});

@@ -1,5 +1,6 @@
 """鲁品开拍 - AI 服务层（独立封装：调用、重试、错误映射、token 记录）。"""
 import os
+import re
 import time
 import yaml
 import requests
@@ -11,6 +12,44 @@ MAX_RETRIES = 3
 TIMEOUT = 120
 
 CONFIG_PATH = "/home/hatch/.omp/agent/models.yml"
+
+
+def parse_json_content(content):
+    """Normalize common OpenAI-compatible JSON response wrappers."""
+    if isinstance(content, dict):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
+                text = part.get("text") or part.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+        content = "".join(parts)
+    if not isinstance(content, str):
+        raise ValueError("模型输出内容为空或不是文本")
+    text = content.lstrip("\ufeff").strip()
+    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, flags=re.IGNORECASE | re.DOTALL)
+    if fenced:
+        text = fenced.group(1).strip()
+    import json as _json
+    try:
+        parsed = _json.loads(text)
+    except _json.JSONDecodeError as original_error:
+        decoder = _json.JSONDecoder()
+        for match in re.finditer(r"[\{[]", text):
+            try:
+                parsed, _ = decoder.raw_decode(text[match.start():])
+                if isinstance(parsed, dict):
+                    return parsed
+            except _json.JSONDecodeError:
+                continue
+        raise original_error
+    if not isinstance(parsed, dict):
+        raise ValueError("模型输出顶层必须是 JSON 对象")
+    return parsed
 
 
 class AIConfigError(Exception):
@@ -79,7 +118,13 @@ class AIService:
         except requests.RequestException as e:
             raise AIRetryableError(f"网络错误: {type(e).__name__}")
         if r.status_code == 200:
-            return r.json()
+            try:
+                data = r.json()
+            except (ValueError, TypeError) as e:
+                raise AIFatalError(f"模型服务返回了无法解析的 JSON（{type(e).__name__}）") from e
+            if not isinstance(data, dict):
+                raise AIFatalError("模型服务返回格式无效：顶层结果不是 JSON 对象")
+            return data
         if r.status_code == 401:
             raise AIFatalError("鉴权失败（401）：API Key 无效或过期，请检查配置")
         if r.status_code == 429 or 500 <= r.status_code < 600:
@@ -105,7 +150,11 @@ class AIService:
         self.call_count += 1
         usage = data.get("usage", {})
         self.total_tokens += usage.get("total_tokens", 0)
-        return data["choices"][0]["message"]["content"], usage
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as e:
+            raise AIFatalError("模型服务返回格式无效：缺少 choices.message.content") from e
+        return content, usage
 
     def generate_with_retry(
         self,
@@ -132,10 +181,9 @@ class AIService:
             messages = make_messages(feedback)
             content, usage = chat(messages)
             usage_list.append(usage)
-            import json as _json
             try:
-                data = _json.loads(content)
-            except _json.JSONDecodeError as e:
+                data = parse_json_content(content)
+            except (ValueError, TypeError, __import__("json").JSONDecodeError) as e:
                 last_errors = [f"[解析] 模型输出不是合法 JSON: {e}"]
                 feedback = "上次输出不是合法 JSON，请只输出纯 JSON，不要加任何解释文字或 markdown 标记。"
                 continue
@@ -152,3 +200,4 @@ class AIService:
             f"最后一次的校验问题：{'; '.join(last_errors[:5])}。"
             "建议：简化产品描述或缩短目标时长后重试。"
         )
+        self.model = os.environ.get("LUPIN_MODEL", DEFAULT_MODEL)

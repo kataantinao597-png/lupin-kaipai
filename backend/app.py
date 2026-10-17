@@ -155,7 +155,7 @@ class ExportRequest(BaseModel):
 def health():
     return {
         "status": "ok",
-        "model": "gpt-6-luna",
+        "model": getattr(ai, "model", DEFAULT_MODEL),
         "ai_ready": ai is not None,
         "calls": ai.call_count if ai else 0,
         "total_tokens": ai.total_tokens if ai else 0,
@@ -200,9 +200,6 @@ def create_ideas(req: IdeasRequest, request: Request):
             make_messages, _validate_ideas, model=_model or DEFAULT_MODEL, temperature=0.7)
     except (AIFatalError, AIRetryableError, AIConfigError) as e:
         raise HTTPException(status_code=502, detail=str(e))
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
     return {
         "ideas": [i.model_dump() for i in ideas],
         "attempts": meta["attempts"],
@@ -225,9 +222,6 @@ def create_storyboard(req: StoryboardRequest, request: Request):
             make_messages, validate_dict, model=_model or DEFAULT_MODEL, temperature=0.3)
     except (AIFatalError, AIRetryableError, AIConfigError) as e:
         raise HTTPException(status_code=502, detail=str(e))
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
     return {
         "storyboard": sb.model_dump(),
         "attempts": meta["attempts"],
@@ -252,7 +246,7 @@ def _validate_shot(data: dict):
 
 
 @app.post("/api/regenerate-shot")
-def regenerate_shot(req: RegenShotRequest):
+def regenerate_shot(req: RegenShotRequest, request: Request):
     check_rate_limit(request)
     svc = get_ai(request)
     _model = get_request_model(request)
@@ -271,9 +265,6 @@ def regenerate_shot(req: RegenShotRequest):
             make_messages, _validate_shot, model=_model or DEFAULT_MODEL, temperature=0.4)
     except (AIFatalError, AIRetryableError, AIConfigError) as e:
         raise HTTPException(status_code=502, detail=str(e))
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
 
     if new_shot.shot_number != req.shot_number:
         raise HTTPException(status_code=502, detail="模型返回了错误的镜头序号，已丢弃该结果")
@@ -309,9 +300,6 @@ def check_risk(req: RiskCheckRequest, request: Request):
             product_info=pinfo)
     except (AIFatalError, AIRetryableError, AIConfigError) as e:
         raise HTTPException(status_code=502, detail=str(e))
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"风险复核失败: {e}")
     # V5+: 事实 grounding 规则层（确定性，不消耗 API）
@@ -416,9 +404,6 @@ def check_feasibility(req: FeasibilityCheckRequest, request: Request):
             make_messages,
             lambda d: _validate_feasibility(d, shot_numbers),
             model=_model or DEFAULT_MODEL, temperature=0.3)
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
     except (AIFatalError, AIRetryableError, AIConfigError) as e:
         # 模型失败：只返回规则结果，明确标记未完成
         results = []
@@ -462,3 +447,52 @@ def index():
 
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+class DeliveryCheckRequest(BaseModel):
+    storyboard: Optional[dict] = None
+    product: Optional[dict] = None
+    facts: List[dict] = Field(default_factory=list)
+    feasibility: Optional[dict] = None
+    shoot_state: dict = Field(default_factory=dict)
+
+def _delivery_item(item_id: str, label: str, status: str, reason: str, action: str = "") -> dict:
+    return {"id": item_id, "label": label, "status": status, "reason": reason, "action": action}
+
+def delivery_check(req: DeliveryCheckRequest) -> dict:
+    """根据当前真实数据计算交付状态；不使用硬编码完成率。"""
+    sb = req.storyboard or {}
+    shots = sb.get("shots") or []
+    items = []
+    confirmed_facts = any(f.get("status") == "confirmed" for f in req.facts)
+    items.append(_delivery_item("product", "产品资料", "done" if req.product and req.product.get("product_name") else "action", "产品名称已填写" if req.product and req.product.get("product_name") else "尚未填写产品资料", "返回产品资料"))
+    items.append(_delivery_item("facts", "可信事实", "done" if confirmed_facts else ("suggest" if req.facts else "action"), "存在已确认事实" if confirmed_facts else "建议至少确认一条产品事实", "检查事实库"))
+    items.append(_delivery_item("storyboard", "创意与分镜", "done" if shots else "action", f"已生成 {len(shots)} 个镜头" if shots else "尚未生成分镜", "返回分镜编辑"))
+    sb_errors, _ = validate_dict(sb) if sb else (["缺少分镜"], None)
+    items.append(_delivery_item("duration", "时长与校验", "done" if shots and not sb_errors else "action", "分镜校验通过" if shots and not sb_errors else "；".join(sb_errors[:2]), "修正分镜"))
+    flags = sb.get("risk_flags") or []
+    unresolved = [f for f in flags if not f.get("confirmed") or f.get("level") == "高"]
+    items.append(_delivery_item("risks", "风险审核", "action" if unresolved else ("done" if flags else "suggest"), f"有 {len(unresolved)} 条风险未完成人工确认" if unresolved else ("风险已记录并确认" if flags else "尚未运行风险检查"), "处理风险"))
+    shoot_shots = req.shoot_state.get("shots") or {}
+    all_shoot_done = bool(shots) and len(shoot_shots) >= len(shots) and all(v.get("status") == "done" for v in shoot_shots.values())
+    items.append(_delivery_item("shooting", "现场拍摄", "done" if all_shoot_done else ("suggest" if shots else "na"), "所有镜头已标记完成" if all_shoot_done else "拍摄状态未全部完成", "进入现场拍摄"))
+    ready = bool(items) and all(i["status"] in ("done", "na", "suggest") for i in items)
+    return {"ready": ready, "items": items}
+
+@app.post("/api/delivery-check")
+def delivery_check_route(req: DeliveryCheckRequest):
+    return delivery_check(req)
+@app.post("/api/export-srt")
+def export_srt(req: ExportRequest):
+    errors, sb = validate_dict(req.storyboard)
+    if errors:
+        raise HTTPException(status_code=400, detail="分镜未通过校验，无法导出 SRT：" + "; ".join(errors[:3]))
+    from .exporter import storyboard_to_srt
+    try:
+        content = storyboard_to_srt(sb.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    tmp = tempfile.NamedTemporaryFile(suffix=".srt", delete=False)
+    tmp.write(content.encode("utf-8-sig"))
+    tmp.close()
+    return FileResponse(tmp.name, filename="字幕.srt", media_type="application/x-subrip")
+

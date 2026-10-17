@@ -201,3 +201,30 @@ if __name__ == "__main__":
     data = json.load(open(sys.argv[1], encoding="utf-8"))
     export_docx(data, sys.argv[2])
     print("DOCX 已生成: " + sys.argv[2])
+def _srt_timestamp(seconds: float) -> str:
+    if seconds < 0:
+        raise ValueError("SRT timestamp cannot be negative")
+    millis = int(round(seconds * 1000))
+    hours, remainder = divmod(millis, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    secs, millis = divmod(remainder, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+def storyboard_to_srt(storyboard: dict) -> str:
+    """Convert storyboard subtitles to UTF-8 SRT text using cumulative timing."""
+    entries = []
+    cursor = 0.0
+    for index, shot in enumerate(storyboard.get("shots", []), start=1):
+        duration = float(shot.get("duration_seconds", 0))
+        subtitle = str(shot.get("subtitle", "")).strip()
+        if duration <= 0:
+            raise ValueError(f"shot {index} duration must be positive")
+        if not subtitle:
+            raise ValueError(f"shot {index} has no subtitle")
+        end = cursor + duration
+        entries.append(f"{index}\n{_srt_timestamp(cursor)} --> {_srt_timestamp(end)}\n{subtitle}\n")
+        cursor = end
+    if not entries:
+        raise ValueError("storyboard is empty")
+    return "\n".join(entries)
+

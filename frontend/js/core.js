@@ -8,6 +8,7 @@ function showView(id) {
   $(id).classList.add("active");
   document.querySelectorAll(".step").forEach((s) => s.classList.toggle("active", s.dataset.view === id));
   window.scrollTo(0, 0);
+  if (typeof renderStageProgress === "function") renderStageProgress(id);
 }
 document.querySelectorAll(".step").forEach((s) => s.addEventListener("click", () => showView(s.dataset.view)));
 
