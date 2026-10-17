@@ -125,6 +125,9 @@ def _enqueue_ai_task(task_type: str, payload: dict, request: Request) -> dict:
     try:
         org_id = _resolve_org_id(db, None)
         repo = AITaskRepository(db)
+        # S6.1：payload 注入 org_id，供 runner 在 gateway 调用前做事实引用检查
+        payload = dict(payload or {})
+        payload["_org_id"] = org_id
         # 137：同步接口转异步（用户在等待结果）→ high 优先级
         task = repo.create(org_id=org_id, task_type=task_type,
                            payload=payload, priority="high")

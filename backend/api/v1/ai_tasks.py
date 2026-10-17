@@ -93,6 +93,8 @@ def create_task(req: AITaskCreate, db: Session = Depends(get_db)):
     payload = dict(req.payload or {})
     payload.pop("api_key", None)
     payload.pop("apiKey", None)
+    # S6.1：注入 org_id，供 runner 在 gateway 调用前做事实引用检查
+    payload["_org_id"] = org_id
     repo = AITaskRepository(db)
     task = repo.create(org_id=org_id, task_type=req.task_type,
                        payload=payload, created_by=req.created_by or "",

@@ -259,3 +259,90 @@ class AITaskCancelOut(BaseModel):
 class AITaskListOut(BaseModel):
     items: list[AITaskOut] = Field(default_factory=list)
     total: int = 0
+
+
+# ---- S6.1：事实库（状态机 + 审计 + 版本） ----
+
+class FactCreate(BaseModel):
+    org_id: str = Field(..., description="组织 ID")
+    content: str = Field(..., min_length=1, description="事实内容")
+    product_id: str = Field(default="", description="关联产品 ID")
+    category: str = Field(default="", description="事实分类")
+    source_type: str = Field(
+        default="human_statement",
+        description="来源类型：official_document|enterprise_material|human_statement|ai_inference")
+    source_ref: str = Field(default="", description="来源引用/证据链接")
+    expires_at: Optional[datetime] = Field(default=None, description="有效期截止")
+
+    @field_validator("source_type")
+    @classmethod
+    def _check_source_type(cls, v: str) -> str:
+        allowed = {"official_document", "enterprise_material",
+                   "human_statement", "ai_inference"}
+        if v not in allowed:
+            raise ValueError(f"source_type 非法，应为 {sorted(allowed)} 之一")
+        return v
+
+
+class FactOut(BaseModel):
+    id: str
+    org_id: str
+    product_id: str = ""
+    content: str
+    category: str = ""
+    source_type: str = ""
+    source_ref: str = ""
+    status: str
+    allow_use: bool = False
+    verified_by: Optional[str] = None
+    verified_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    version: int = 1
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class FactTransitionReq(BaseModel):
+    org_id: str = Field(..., description="组织 ID")
+    target_status: str = Field(
+        ..., description="目标状态：pending_review|confirmed|rejected|expired|revoked|draft")
+    reason: str = Field(default="", description="流转原因（确认/驳回/撤销必填）")
+    evidence_ref: str = Field(default="", description="证据引用")
+    expected_version: Optional[int] = Field(
+        default=None, description="乐观锁版本号，不传则跳过校验")
+    allow_use: Optional[bool] = Field(
+        default=None, description="确认时可显式设置 allow_use（默认 true）")
+
+
+class FactHistoryOut(BaseModel):
+    id: str
+    fact_id: str
+    from_status: str
+    to_status: str
+    operator_id: str
+    reason: str = ""
+    evidence_ref: str = ""
+    created_at: Optional[datetime] = None
+
+
+class FactContentUpdate(BaseModel):
+    org_id: str = Field(..., description="组织 ID")
+    expected_version: int = Field(..., description="乐观锁版本号（必填）")
+    content: Optional[str] = Field(default=None, description="事实内容")
+    category: Optional[str] = Field(default=None, description="事实分类")
+    source_type: Optional[str] = Field(default=None, description="来源类型")
+    source_ref: Optional[str] = Field(default=None, description="来源引用")
+
+
+class FactVersionOut(BaseModel):
+    id: str
+    fact_id: str
+    version_no: int
+    content: str = ""
+    category: str = ""
+    source_type: str = ""
+    source_ref: str = ""
+    status: str = ""
+    allow_use: bool = False
+    created_by: str = ""
+    created_at: Optional[datetime] = None

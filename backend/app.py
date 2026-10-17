@@ -169,6 +169,15 @@ def _startup():
     except Exception as e:  # noqa: BLE001
         log.info(f"权限体系数据库初始化失败: {e}")
 
+    # S6.3：注册领域事件默认订阅者（分镜/事实变更 → 审核自动失效）
+    try:
+        from .core.events import get_event_bus, register_default_subscribers
+        from .auth.database import get_session_factory
+        register_default_subscribers(get_event_bus(), get_session_factory())
+        log.info("领域事件订阅者已注册")
+    except Exception as e:  # noqa: BLE001
+        log.info(f"领域事件订阅者注册失败: {e}")
+
 
 # ---------- 业务路由挂载（022） ----------
 # 注意：FastAPI 0.143.2 的 include_router 有 bug（只挂载部分路由），
@@ -183,6 +192,7 @@ def _mount(router, prefix: str = ""):
     """
     import copy
     from starlette.routing import compile_path
+    from fastapi.routing import request_response  # 必须用 FastAPI 版（含 astack 初始化），不用 starlette 版
     for route in router.routes:
         if prefix:
             nr = copy.copy(route)
@@ -192,8 +202,17 @@ def _mount(router, prefix: str = ""):
                 nr.path_format = prefix + route.path_format
                 nr.path_regex, nr.path_format, nr.param_convertors = compile_path(
                     nr.path_format)
+            # S6.1 修复：拷贝的路由保留原 dependency_overrides_provider，
+            # 导致 app.dependency_overrides 对 v1 路由无效；指向 app 并重建
+            # handler（handler 在路由创建时已绑定旧 provider）。
+            if hasattr(nr, "dependency_overrides_provider"):
+                nr.dependency_overrides_provider = app
+                nr.app = request_response(nr.get_route_handler())
             app.router.routes.append(nr)
         else:
+            if hasattr(route, "dependency_overrides_provider"):
+                route.dependency_overrides_provider = app
+                route.app = request_response(route.get_route_handler())
             app.router.routes.append(route)
 
 
@@ -222,6 +241,24 @@ try:
     _mount(ai_stats_router, prefix="/api/v1")
 except Exception as e:  # noqa: BLE001
     log.info(f"API v1 模块加载跳过（并行施工中）: {type(e).__name__}: {e}")
+
+# S6.1：事实库 API（独立 try 块，与审核闭环组解耦）
+try:
+    from .api.v1.facts import router as facts_router  # noqa: E402  # S6.1
+    _mount(facts_router, prefix="/api/v1")
+except Exception as e:  # noqa: BLE001
+    log.info(f"事实库 API 加载跳过: {type(e).__name__}: {e}")
+
+# S6.2-S6.5：审核闭环 API（并行组施工中）
+try:
+    from .api.v1 import reviews as reviews_mod  # noqa: E402  # S6 审核闭环
+    _mount(reviews_mod.router, prefix="/api/v1")
+    _mount(reviews_mod.review_router, prefix="/api/v1")
+    _mount(reviews_mod.finding_router, prefix="/api/v1")
+    _mount(reviews_mod.waiver_router, prefix="/api/v1")
+    _mount(reviews_mod.delivery_router, prefix="/api/v1")
+except Exception as e:  # noqa: BLE001
+    log.info(f"审核闭环 API 加载跳过（并行施工中）: {type(e).__name__}: {e}")
 
 
 # ---------- 基础路由 ----------

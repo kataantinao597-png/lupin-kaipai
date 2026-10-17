@@ -26,6 +26,27 @@ def _cancelled():
     raise _TaskCancelled()
 
 
+def _check_fact_refs(payload: dict[str, Any], facts: list) -> None:
+    """S6.1：在 gateway 调用前检查引用事实状态。
+
+    expired/revoked/未确认/不允许使用的事实不得被新生成内容引用。
+    无 org 上下文或无事实 ID 时跳过（MVP 旧链路）；检查失败抛错，
+    任务直接失败，不静默使用不可用事实。
+    """
+    org_id = payload.get("_org_id")
+    if not org_id or not facts:
+        return
+    from ..auth.database import get_session_factory
+    from ..facts.guard import assert_facts_usable, UnusableFactError
+    db = get_session_factory()()
+    try:
+        assert_facts_usable(db, org_id, facts)
+    except UnusableFactError as e:
+        raise RuntimeError(f"事实引用检查失败，任务拒绝执行：{e}")
+    finally:
+        db.close()
+
+
 def run_ideas(task_id: str, is_cancelled: Callable[[], bool],
               payload: dict[str, Any]) -> dict[str, Any]:
     """034：创意生成异步 runner。payload: {product, facts}。"""
@@ -39,6 +60,7 @@ def run_ideas(task_id: str, is_cancelled: Callable[[], bool],
     gw = AIGateway(service=_get_server_ai(), task_id=task_id)
     product = payload.get("product") or {}
     facts = payload.get("facts") or []
+    _check_fact_refs(payload, facts)  # S6.1：gateway 调用前检查引用事实
 
     def make_messages(feedback):
         msgs = build_idea_messages(product, facts)
@@ -72,6 +94,7 @@ def run_storyboard(task_id: str, is_cancelled: Callable[[], bool],
     product = payload.get("product") or {}
     direction = payload.get("direction") or ""
     facts = payload.get("facts") or []
+    _check_fact_refs(payload, facts)  # S6.1：gateway 调用前检查引用事实
 
     def make_messages(feedback):
         return build_storyboard_messages(product, direction, facts, feedback)

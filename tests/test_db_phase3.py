@@ -100,7 +100,7 @@ def test_082_migration_tables(db: Session):
             "refresh_tokens", "password_resets"} <= names
     row = db.execute(__import__("sqlalchemy").text(
         "select version_num from alembic_version")).fetchone()
-    assert row[0] == "0004_ai_observability"  # Phase5：131/132/137 新增 ai_calls/model_prices/ai_tasks.priority，head 前移
+    assert row[0] == "0006_fact_lifecycle"  # Phase6：S6.1 新增 fact_status_history/fact_versions，head 前移
 
 
 # ---------- 083/084/085 CRUD ----------
@@ -129,7 +129,8 @@ def test_crud_facts(db: Session):
     org = _org(db)
     frepo = FactRepository(db)
     f = frepo.create(org.id, "产自章丘", product_id="p1", category="产地")
-    assert f.status == "pending" and f.allow_use is False and f.version == 1
+    # S6.1：新事实初始状态为 draft（原 pending 改为待审核别名）
+    assert f.status == "draft" and f.allow_use is False and f.version == 1
     # 未确认前不在可用列表
     assert frepo.list_usable(org.id) == []
     f2 = frepo.set_status(f.id, org.id, "confirmed", expected_version=1,

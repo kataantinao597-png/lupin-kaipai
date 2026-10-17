@@ -161,14 +161,25 @@ class Shot(Base):
 
 
 # 085：事实状态
-FACT_STATUS_PENDING = "pending"
+# S6.1：六态工作流 draft -> pending_review -> confirmed -> expired/revoked，
+# 另有 rejected。历史值 "pending"（085 时代）视为 pending_review 别名，
+# 0005 迁移已把存量改写；此处保留常量供读兼容。
+# 注意：字符串取值必须与 backend/facts/state_machine.py 保持一致
+#（两处为避免循环导入而各自定义，请同步修改）。
+FACT_STATUS_DRAFT = "draft"
+FACT_STATUS_PENDING = "pending"  # 历史别名 == pending_review
+FACT_STATUS_PENDING_REVIEW = "pending_review"
 FACT_STATUS_CONFIRMED = "confirmed"
 FACT_STATUS_REJECTED = "rejected"
 FACT_STATUS_EXPIRED = "expired"
+FACT_STATUS_REVOKED = "revoked"
 FACT_STATUSES = (
-    FACT_STATUS_PENDING, FACT_STATUS_CONFIRMED,
-    FACT_STATUS_REJECTED, FACT_STATUS_EXPIRED,
+    FACT_STATUS_DRAFT, FACT_STATUS_PENDING, FACT_STATUS_PENDING_REVIEW,
+    FACT_STATUS_CONFIRMED, FACT_STATUS_REJECTED, FACT_STATUS_EXPIRED,
+    FACT_STATUS_REVOKED,
 )
+# AI 可引用的状态（010：还需 allow_use=true 且未过期）
+FACT_USABLE_STATUSES = (FACT_STATUS_CONFIRMED,)
 
 
 class Fact(Base):
@@ -190,8 +201,8 @@ class Fact(Base):
     # official_document | enterprise_material | human_statement | ai_inference
     source_type = Column(String(32), nullable=False, default="human_statement")
     source_ref = Column(Text, nullable=False, default="")
-    status = Column(String(16), nullable=False, default=FACT_STATUS_PENDING,
-                    server_default=FACT_STATUS_PENDING)
+    status = Column(String(16), nullable=False, default=FACT_STATUS_DRAFT,
+                    server_default=FACT_STATUS_DRAFT)
     allow_use = Column(Boolean, nullable=False, default=False, server_default="0")
     verified_by = Column(String(64), nullable=True)  # 逻辑关联 users.id
     verified_at = Column(DateTime(timezone=True), nullable=True)
@@ -201,6 +212,56 @@ class Fact(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
                         onupdate=_now)
+
+
+class FactStatusHistory(Base):
+    """S6.1：事实状态变更审计。
+
+    每次状态流转必须记录操作者、时间、原因和证据引用；
+    确认/驳回/撤销缺 reason 拒绝流转（state_machine.REASON_REQUIRED）。
+    """
+    __tablename__ = "fact_status_history"
+    __table_args__ = (
+        Index("ix_facthist_fact", "fact_id"),
+        Index("ix_facthist_org", "org_id"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    fact_id = Column(String(32), ForeignKey("facts.id", ondelete="CASCADE"),
+                     nullable=False)
+    org_id = Column(String(32), nullable=False)  # 冗余租户字段，便于按组织审计
+    from_status = Column(String(16), nullable=False)
+    to_status = Column(String(16), nullable=False)
+    operator_id = Column(String(64), nullable=False, default="")  # 逻辑关联 users.id；"system" 表系统自动
+    reason = Column(Text, nullable=False, default="")
+    evidence_ref = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class FactVersion(Base):
+    """S6.1：事实内容版本快照（与 work_versions 091 同模式）。
+
+    事实内容（content/category/source_type/source_ref）变更前存一条，
+    version_no 单调递增；超限删最旧（上限 50）。
+    """
+    __tablename__ = "fact_versions"
+    __table_args__ = (
+        Index("ix_factversion_fact", "fact_id"),
+        UniqueConstraint("fact_id", "version_no", name="uq_factversion_no"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    fact_id = Column(String(32), ForeignKey("facts.id", ondelete="CASCADE"),
+                     nullable=False)
+    version_no = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False, default="")
+    category = Column(String(64), nullable=False, default="")
+    source_type = Column(String(32), nullable=False, default="")
+    source_ref = Column(Text, nullable=False, default="")
+    status = Column(String(16), nullable=False, default="")
+    allow_use = Column(Boolean, nullable=False, default=False)
+    created_by = Column(String(64), nullable=False, default="")  # 逻辑关联 users.id
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
 class WorkVersion(Base):
@@ -271,6 +332,10 @@ class Review(Base):
                            nullable=True)
     # 203：被审核内容的内容哈希（分镜 version + 镜头快照哈希）
     content_hash = Column(String(64), nullable=False, default="")
+    # S6.3：审核绑定规则/模型/Prompt 版本，任一变更都应触发重新审核
+    rule_version = Column(String(64), nullable=False, default="")
+    model_version = Column(String(128), nullable=False, default="")
+    prompt_version = Column(String(64), nullable=False, default="")
     status = Column(String(16), nullable=False, default=REVIEW_STATUS_PENDING,
                     server_default=REVIEW_STATUS_PENDING)
     # 205：每项风险的处置结果 {risk_id: retained|modified|removed|escalated}
@@ -280,6 +345,111 @@ class Review(Base):
     comment = Column(Text, nullable=False, default="")
     # 088 风格乐观锁
     version = Column(Integer, nullable=False, default=1, server_default="1")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)
+
+
+# S6.5：交付门禁类型
+GATE_TYPE_PLAN = "plan"
+GATE_TYPE_PRODUCTION = "production"
+GATE_TYPE_FINAL = "final"
+GATE_TYPES = (GATE_TYPE_PLAN, GATE_TYPE_PRODUCTION, GATE_TYPE_FINAL)
+
+
+class DeliveryGateConfig(Base):
+    """S6.5：交付门禁配置——每种交付类型下各检查项是否为阻断项。
+
+    取代 delivery_service 里写死的 blocking 规则；默认种子数据与旧硬编码
+    行为完全一致，老 /api/delivery-check 接口不受影响。
+    """
+    __tablename__ = "delivery_gate_configs"
+    __table_args__ = (
+        Index("ix_gate_type", "gate_type"),
+        UniqueConstraint("gate_type", "check_id", name="uq_gate_check"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    gate_type = Column(String(16), nullable=False)          # plan/production/final
+    check_id = Column(String(32), nullable=False)          # product/facts/...
+    label = Column(String(128), nullable=False, default="")
+    is_blocking = Column(Boolean, nullable=False, default=True,
+                         server_default="1")
+    is_waivable = Column(Boolean, nullable=False, default=False,
+                         server_default="0")
+    # 条件阻断（如 feasibility：平时建议项，但发现不可执行镜头时变阻断）
+    conditional_blocking = Column(Boolean, nullable=False, default=False,
+                                  server_default="0")
+    required_permission = Column(String(64), nullable=False, default="")
+    sort_order = Column(Integer, nullable=False, default=0, server_default="0")
+    updated_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)
+
+
+class Waiver(Base):
+    """S6.5：交付门禁豁免——阻断项可豁免，但必须记录原因和批准人。"""
+    __tablename__ = "waivers"
+    __table_args__ = (
+        Index("ix_waiver_work", "work_id"),
+        Index("ix_waiver_org", "org_id"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="RESTRICT"),
+                    nullable=False)
+    work_id = Column(String(32), ForeignKey("works.id", ondelete="CASCADE"),
+                     nullable=False)
+    gate_type = Column(String(16), nullable=False)
+    check_id = Column(String(32), nullable=False)
+    reason = Column(Text, nullable=False, default="")
+    approved_by = Column(String(64), nullable=False)   # 逻辑关联 users.id
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    revoked = Column(Boolean, nullable=False, default=False, server_default="0")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+# S6.4：风险发现严重程度 / 处置状态
+FINDING_SEV_HIGH = "high"
+FINDING_SEV_MEDIUM = "medium"
+FINDING_SEV_LOW = "low"
+FINDING_SEVERITIES = (FINDING_SEV_HIGH, FINDING_SEV_MEDIUM, FINDING_SEV_LOW)
+
+FINDING_STATUS_OPEN = "open"        # 待处理
+FINDING_STATUS_FIXED = "fixed"      # 已修复
+FINDING_STATUS_WAIVED = "waived"    # 已豁免（人工接受风险）
+FINDING_STATUSES = (FINDING_STATUS_OPEN, FINDING_STATUS_FIXED,
+                    FINDING_STATUS_WAIVED)
+
+
+class RiskFinding(Base):
+    """S6.4：风险发现追踪——每条风险定位到镜头或文字片段，跟踪解决状态。"""
+    __tablename__ = "risk_findings"
+    __table_args__ = (
+        Index("ix_finding_review", "review_id"),
+        Index("ix_finding_work", "work_id"),
+        Index("ix_finding_status", "status"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    review_id = Column(String(32), ForeignKey("reviews.id", ondelete="CASCADE"),
+                       nullable=False)
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="RESTRICT"),
+                    nullable=False)
+    work_id = Column(String(32), ForeignKey("works.id", ondelete="CASCADE"),
+                     nullable=False)
+    # 定位：镜头稳定 ID（可空）+ 文字片段（可空），至少其一
+    shot_id = Column(String(64), nullable=True)
+    shot_no = Column(Integer, nullable=True)
+    text_fragment = Column(Text, nullable=True)
+    severity = Column(String(16), nullable=False, default=FINDING_SEV_MEDIUM)
+    status = Column(String(16), nullable=False, default=FINDING_STATUS_OPEN,
+                    server_default=FINDING_STATUS_OPEN)
+    source = Column(String(64), nullable=False, default="")  # AI 风险识别/事实依据检查
+    reason = Column(Text, nullable=False, default="")
+    resolved_by = Column(String(64), nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
                         onupdate=_now)
