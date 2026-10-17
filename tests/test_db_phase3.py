@@ -12,6 +12,8 @@ import os
 import sys
 
 import pytest
+
+pytestmark = pytest.mark.integration
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session

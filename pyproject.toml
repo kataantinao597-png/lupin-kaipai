@@ -1,0 +1,18 @@
+[project]
+name = "lupin-kaipai"
+version = "0.1.0"
+description = "鲁品开拍 - 山东农产品短视频拍摄方案 AI 工具"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "unit: 纯逻辑单元测试（无 IO、无网络）",
+    "integration: API + 测试数据库集成测试",
+    "contract: OpenAPI 请求/响应契约测试",
+    "security: 鉴权、租户隔离、越权等安全测试",
+    "slow: 耗时较长的测试",
+    "needs_model: 需要真实 AI 模型（默认跳过）",
+]
+# 默认跳过需要真实模型的测试（CI 无真实 Key）
+addopts = "-m 'not needs_model'"

@@ -1,0 +1,43 @@
+# 鲁品开拍 - 生产 Dockerfile（多阶段构建，非 root 运行）
+# 用法：docker build -f Dockerfile.prod -t lupin-kaipai .
+# 运行：docker run -p 8080:8080 --env-file .env lupin-kaipai
+
+# ---------- 构建阶段：装依赖 ----------
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# ---------- 运行阶段 ----------
+FROM python:3.11-slim
+
+# 非 root 用户
+RUN useradd -m -u 10001 appuser
+
+WORKDIR /app
+
+# 只复制已安装的依赖和代码（不带构建工具链）
+COPY --from=builder /install /usr/local
+COPY backend/ ./backend/
+COPY frontend/ ./frontend/
+COPY alembic.ini ./
+COPY migrations/ ./migrations/
+
+# 数据/备份目录（挂 volume 用）
+RUN mkdir -p /app/backend/data /app/backend/backups \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+ENV PORT=8080 \
+    PYTHONUNBUFFERED=1 \
+    LUPIN_DB_AUTO_CREATE=0
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD python -c "import urllib.request,os; urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','8080')+'/api/health', timeout=4)" || exit 1
+
+# 生产启动前先跑 alembic 迁移（LUPIN_DB_AUTO_CREATE=0 时必须）
+CMD ["sh", "-c", "python -m alembic upgrade head && exec uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8080} --workers 2"]
