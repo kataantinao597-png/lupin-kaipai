@@ -67,7 +67,7 @@ def _task_out(task) -> AITaskOut:
         id=task.id, org_id=task.org_id, task_type=task.task_type,
         status=task.status, progress=task.progress or 0,
         result=task.result_json, error=task.error,
-        model_used=task.model_used,
+        model_used=task.model_used, priority=task.priority or "high",
         created_at=task.created_at, started_at=task.started_at,
         finished_at=task.finished_at,
     )
@@ -95,13 +95,14 @@ def create_task(req: AITaskCreate, db: Session = Depends(get_db)):
     payload.pop("apiKey", None)
     repo = AITaskRepository(db)
     task = repo.create(org_id=org_id, task_type=req.task_type,
-                       payload=payload, created_by=req.created_by or "")
+                       payload=payload, created_by=req.created_by or "",
+                       priority=req.priority)
     runner = RUNNERS[req.task_type]
 
     def _runner(task_id: str, is_cancelled):
         return runner(task_id, is_cancelled, dict(payload))
 
-    _get_queue().submit(task.id, _runner)
+    _get_queue().submit(task.id, _runner, priority=req.priority)
     # 重新读一次拿到最新状态
     task = repo.get(task.id)
     assert task is not None

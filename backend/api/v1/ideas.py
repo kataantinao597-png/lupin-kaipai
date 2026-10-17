@@ -125,8 +125,9 @@ def _enqueue_ai_task(task_type: str, payload: dict, request: Request) -> dict:
     try:
         org_id = _resolve_org_id(db, None)
         repo = AITaskRepository(db)
+        # 137：同步接口转异步（用户在等待结果）→ high 优先级
         task = repo.create(org_id=org_id, task_type=task_type,
-                           payload=payload)
+                           payload=payload, priority="high")
         task_id = task.id
     finally:
         db.close()
@@ -135,7 +136,7 @@ def _enqueue_ai_task(task_type: str, payload: dict, request: Request) -> dict:
     def _runner(tid: str, is_cancelled):
         return runner(tid, is_cancelled, dict(payload))
 
-    TaskQueue(session_factory).submit(task_id, _runner)
+    TaskQueue(session_factory).submit(task_id, _runner, priority="high")
     return {"task_id": task_id, "status": "pending",
             "query_url": f"/api/v1/ai-tasks/{task_id}"}
 

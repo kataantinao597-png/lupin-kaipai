@@ -100,7 +100,7 @@ def test_082_migration_tables(db: Session):
             "refresh_tokens", "password_resets"} <= names
     row = db.execute(__import__("sqlalchemy").text(
         "select version_num from alembic_version")).fetchone()
-    assert row[0] == "0003_locks_reviews_aitasks"  # Phase4：032/035 新增 reviews/ai_tasks/shots.locked，head 前移
+    assert row[0] == "0004_ai_observability"  # Phase5：131/132/137 新增 ai_calls/model_prices/ai_tasks.priority，head 前移
 
 
 # ---------- 083/084/085 CRUD ----------

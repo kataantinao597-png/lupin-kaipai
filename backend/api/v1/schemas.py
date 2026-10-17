@@ -231,6 +231,7 @@ class AITaskCreate(BaseModel):
     org_id: Optional[str] = Field(default=None, description="组织 ID，不传则用内置 default 组织")
     payload: Optional[dict[str, Any]] = Field(default=None, description="任务输入（不得含 API Key）")
     created_by: Optional[str] = None
+    priority: str = Field(default="high", description="high=用户交互优先，low=后台批量")
 
 
 class AITaskOut(BaseModel):
@@ -242,6 +243,7 @@ class AITaskOut(BaseModel):
     result: Optional[Any] = None
     error: Optional[str] = None
     model_used: Optional[str] = None
+    priority: str = "high"
     created_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None

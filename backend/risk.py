@@ -117,6 +117,7 @@ def model_review(ai_service, lines: List[str], evidence: str = "",
             [{"role": "user", "content": prompt}],
             model=model or DEFAULT_MODEL,
             temperature=0.2, json_object=True,
+            task_type="risk_check",
         )
     # 统一 JSON 解析：兼容模型输出 markdown 代码围栏/前后杂文本
     data = parse_json_content(content)

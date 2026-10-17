@@ -33,11 +33,17 @@ class AITaskRepository:
     @transactional_method
     def create(self, org_id: str, task_type: str,
                payload: dict[str, Any] | None = None,
-               created_by: str = "") -> AITask:
-        """创建 pending 任务。payload 已在 API 层脱敏（不含 Key）。"""
+               created_by: str = "",
+               priority: str = "high") -> AITask:
+        """创建 pending 任务。payload 已在 API 层脱敏（不含 Key）。
+
+        137：priority=high（用户交互）/low（后台批量），队列优先执行 high。
+        """
+        if priority not in ("high", "low"):
+            priority = "high"
         task = AITask(
             org_id=org_id, created_by=created_by, task_type=task_type,
-            payload_json=payload or {},
+            payload_json=payload or {}, priority=priority,
         )
         self.db.add(task)
         self.db.flush()
