@@ -21,6 +21,7 @@ from .prompts import build_idea_messages, build_storyboard_messages, build_regen
 from .schemas import Shot
 from .risk import risk_check_storyboard, check_fact_grounding
 from .exporter import export_docx, export_checklist_docx
+from .auth.router import router as auth_router
 from .validator import rule_feasibility_scan
 from .prompts import build_feasibility_messages
 from .schemas import ShotFeasibility, FeasibilityReport
@@ -29,6 +30,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 
 app = FastAPI(title="鲁品开拍", version="0.1.0")
+app.include_router(auth_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -64,6 +66,25 @@ def _startup():
     except AIConfigError as e:
         print(f"[启动警告] {e}")
         print("[启动警告] 云端部署时请设置环境变量 LUPIN_API_KEY")
+    # Phase 2：组织/权限表与认证组共用 backend/data/lupin.db。
+    # 先导入模型注册到同一 Base.metadata，再触发建表（幂等）。
+    try:
+        from . import models  # noqa: F401
+        from .auth.database import get_engine
+        get_engine()
+    except Exception as e:  # noqa: BLE001
+        print(f"[启动警告] 权限体系数据库初始化失败: {e}")
+
+
+# Phase 2：API v1（组织 / RBAC / 租户隔离新体系），不影响现有 /api/* 接口
+# 并行施工中：依赖模块（如 backend.db）尚未落地时跳过，不阻塞主应用启动
+try:
+    from .api.v1.orgs import router as orgs_router  # noqa: E402
+    from .api.v1.works import router as works_router  # noqa: E402
+    app.include_router(orgs_router, prefix="/api/v1")
+    app.include_router(works_router, prefix="/api/v1")
+except Exception as e:  # noqa: BLE001
+    print(f"[启动警告] API v1 模块加载跳过（并行施工中）: {type(e).__name__}: {e}")
 
 
 def get_ai(request: Request = None) -> AIService:
