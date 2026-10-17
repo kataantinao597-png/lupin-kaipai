@@ -15,6 +15,10 @@ from .review_repository import (  # noqa: F401
     ReviewRepository,
     validate_review_transition,
 )
+from .risk_finding_repository import (  # noqa: F401
+    IllegalFindingTransition,
+    RiskFindingRepository,
+)
 from .storyboard_repository import StoryboardRepository  # noqa: F401
 from .user_repository import (
     PasswordResetRepository,

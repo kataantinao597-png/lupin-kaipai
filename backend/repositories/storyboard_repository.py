@@ -13,6 +13,11 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from ..models import Shot, Storyboard
+from ..core.events import (
+    ReviewInvalidated,
+    StoryboardUpdated,
+    get_event_bus,
+)
 from .base import EntityNotFound, OptimisticLockError, transactional_method
 
 
@@ -24,12 +29,44 @@ class StoryboardRepository:
     def __init__(self, db: Session):
         self.db = db
 
+    def _emit_updated(self, storyboard_id: str) -> None:
+        """S6.3：分镜写操作后发布 StoryboardUpdated 事件。
+
+        审核失效在同一事务内直接完成（同一会话写 reviews，无跨会话
+        写锁问题；主事务回滚时失效自动撤销，比跨会话更正确），事件
+        标记 handled_inline=True 供订阅者跳过重复 DB 写。
+        无订阅者时 publish 为 no-op。
+        """
+        sb = self.get(storyboard_id)
+        if sb is None:
+            return
+        try:
+            from ..services.review_service import compute_content_hash
+            content_hash, _ = compute_content_hash(self.db, sb.work_id)
+        except Exception:  # noqa: BLE001 — 哈希失败不阻断主写流程
+            content_hash = ""
+        expired = 0
+        if content_hash:
+            from .review_repository import ReviewRepository
+            expired = ReviewRepository(self.db).expire_stale(
+                sb.work_id, content_hash)
+        bus = get_event_bus()
+        bus.publish(StoryboardUpdated(
+            work_id=sb.work_id, storyboard_id=storyboard_id,
+            content_hash=content_hash, handled_inline=True))
+        if expired:
+            bus.publish(ReviewInvalidated(
+                work_id=sb.work_id, review_id="",
+                reason=f"分镜变更（hash={content_hash[:12]}），"
+                       f"{expired} 条审核自动失效"))
+
     @transactional_method
     def create(self, work_id: str, title: str = "") -> Storyboard:
         sb = Storyboard(work_id=work_id, title=title.strip())
         self.db.add(sb)
         self.db.flush()
         self.db.refresh(sb)
+        self._emit_updated(sb.id)
         return sb
 
     def get(self, storyboard_id: str) -> Storyboard | None:
@@ -69,6 +106,7 @@ class StoryboardRepository:
         self.db.flush()
         sb = self.get(storyboard_id)
         assert sb is not None
+        self._emit_updated(storyboard_id)
         return sb
 
     # ---- 镜头 ----
@@ -88,6 +126,7 @@ class StoryboardRepository:
         self.db.add(shot)
         self.db.flush()
         self.db.refresh(shot)
+        self._emit_updated(storyboard_id)
         return shot
 
     def list_shots(self, storyboard_id: str) -> list[Shot]:
@@ -132,6 +171,7 @@ class StoryboardRepository:
         sb.updated_at = _utcnow()
         self.db.flush()
         self.db.refresh(sb)
+        self._emit_updated(storyboard_id)
         return sb
 
     @transactional_method
@@ -144,6 +184,7 @@ class StoryboardRepository:
         for idx, sid in enumerate(ordered_shot_ids, start=1):
             shots[sid].shot_no = idx
         self.db.flush()
+        self._emit_updated(storyboard_id)
 
     # ---- 032：镜头锁定状态（事务边界） ----
 
@@ -159,6 +200,7 @@ class StoryboardRepository:
             raise EntityNotFound("Shot", shot_id)
         shot.locked = locked
         self.db.flush()
+        self._emit_updated(storyboard_id)
 
     @transactional_method
     def set_shots_lock(self, storyboard_id: str,
@@ -176,6 +218,7 @@ class StoryboardRepository:
             shot.locked = locked
             count += 1
         self.db.flush()
+        self._emit_updated(storyboard_id)
         return count
 
     def list_locked_shot_nos(self, storyboard_id: str) -> list[int]:

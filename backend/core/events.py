@@ -52,6 +52,9 @@ class StoryboardUpdated(DomainEvent):
     # 修改后的内容哈希（version + 镜头快照），供审核失效比对
     content_hash: str = ""
     actor_id: str = ""
+    # S6.3：发布方已在同一事务内完成审核失效时置 True，
+    # 订阅者跳过 DB 写（避免 SQLite 下跨会话写锁冲突）。
+    handled_inline: bool = False
 
 
 @dataclass(frozen=True)
@@ -63,6 +66,12 @@ class FactChanged(DomainEvent):
     old_status: str = ""
     new_status: str = ""
     actor_id: str = ""
+    # S6.1/S6.3：事实内容发生实质修改（状态未变）。已确认事实的内容变更
+    # 同样使引用它的审核结论失效。
+    content_changed: bool = False
+    # S6.3：发布方已在同一事务内完成审核失效时置 True，
+    # 订阅者跳过 DB 写（避免 SQLite 下跨会话写锁冲突）。
+    handled_inline: bool = False
 
 
 @dataclass(frozen=True)
@@ -166,7 +175,8 @@ def register_default_subscribers(bus: MemoryEventBus | None = None,
 
     - StoryboardUpdated → 审核结果失效（ReviewRepository.expire_stale）
       + 发布 ReviewInvalidated（供审计/通知）
-    - FactChanged →（预留：事实变更影响分析，Phase 6 实现 114）
+    - FactChanged → S6.3：事实实质变更（confirmed → 不可用）时，
+      该组织下所有"有效"审核自动失效（expire_all_for_org）
 
     db_session_factory：返回新 Session 的可调用对象；为 None 时订阅者
     只记日志不写库（测试/轻量场景）。
@@ -176,6 +186,11 @@ def register_default_subscribers(bus: MemoryEventBus | None = None,
         return
 
     def on_storyboard_updated(event: StoryboardUpdated) -> None:
+        # S6.3：发布方已在同一事务内完成失效时，只记日志不碰 DB
+        if event.handled_inline:
+            logger.info("StoryboardUpdated（已内联处理）: %s",
+                        event.storyboard_id)
+            return
         if db_session_factory is None:
             logger.info("StoryboardUpdated（无 DB 会话，跳过失效）: %s",
                         event.storyboard_id)
@@ -201,9 +216,46 @@ def register_default_subscribers(bus: MemoryEventBus | None = None,
             logger.exception("StoryboardUpdated 订阅者处理失败")
 
     def on_fact_changed(event: FactChanged) -> None:
-        # 114 事实修改影响分析在 Phase 6 实现；此处先记日志
-        logger.info("FactChanged: fact=%s %s->%s",
-                    event.fact_id, event.old_status, event.new_status)
+        # S6.3：事实发生实质变更（曾可用 confirmed → 不再可用）时，保守地将
+        # 该组织下所有"有效"审核置为 expired（只做过期提示，不覆盖旧成果）。
+        # 近似说明：精确到"引用了该事实的作品"需要事实→作品引用链，
+        # 当前按组织级保守失效，Phase 6 后续可细化到 product 维度。
+        material = (event.old_status == "confirmed"
+                    and event.new_status != "confirmed")
+        # S6.1：已确认事实的内容变更同样使审核失效
+        content_material = (event.content_changed
+                            and event.new_status == "confirmed")
+        if not (material or content_material):
+            logger.info("FactChanged（非实质变更，跳过失效）: fact=%s %s->%s",
+                        event.fact_id, event.old_status, event.new_status)
+            return
+        # S6.3：发布方已在同一事务内完成失效时，只记日志不碰 DB
+        if event.handled_inline:
+            logger.info("FactChanged（已内联处理）: fact=%s", event.fact_id)
+            return
+        if db_session_factory is None:
+            logger.info("FactChanged（无 DB 会话，跳过失效）: fact=%s",
+                        event.fact_id)
+            return
+        try:
+            from ..repositories.review_repository import ReviewRepository
+            db = db_session_factory()
+            try:
+                repo = ReviewRepository(db)
+                expired = repo.expire_all_for_org(event.org_id)
+                if expired:
+                    logger.info("事实变更导致 %d 条审核失效 org=%s fact=%s",
+                                expired, event.org_id, event.fact_id)
+                    bus.publish(ReviewInvalidated(
+                        work_id="",
+                        review_id="",
+                        reason=f"事实变更（fact={event.fact_id[:12]}），"
+                               f"{expired} 条审核自动失效",
+                    ))
+            finally:
+                db.close()
+        except Exception:  # noqa: BLE001
+            logger.exception("FactChanged 订阅者处理失败")
 
     bus.subscribe(StoryboardUpdated, on_storyboard_updated)
     bus.subscribe(FactChanged, on_fact_changed)

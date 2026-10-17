@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..facts import state_machine as sm
 from ..models import FACT_STATUSES, Fact, FactStatusHistory, FactVersion
+from ..core.events import FactChanged, ReviewInvalidated, get_event_bus
 from .base import EntityNotFound, OptimisticLockError, transactional_method
 
 
@@ -35,6 +36,24 @@ class FactRepository:
     def __init__(self, db: Session):
         self.db = db
 
+    def _expire_reviews_inline(self, org_id: str, fact_id: str) -> None:
+        """S6.3：事实实质变更时，在同一事务内失效该组织的有效审核。
+
+        同一会话写 reviews，无跨会话写锁问题；主事务回滚时失效自动撤销。
+        """
+        from .review_repository import ReviewRepository
+        expired = ReviewRepository(self.db).expire_all_for_org(org_id)
+        if expired:
+            get_event_bus().publish(ReviewInvalidated(
+                work_id="", review_id="",
+                reason=f"事实变更（fact={fact_id[:12]}），"
+                       f"{expired} 条审核自动失效"))
+
+    @staticmethod
+    def _is_material_change(old_status: str, new_status: str) -> bool:
+        """S6.3：实质变更 = 曾可用（confirmed）→ 不再可用。"""
+        return old_status == "confirmed" and new_status != "confirmed"
+
     @transactional_method
     def create(self, org_id: str, content: str, product_id: str = "",
                category: str = "", source_type: str = "human_statement",
@@ -48,6 +67,11 @@ class FactRepository:
         self.db.add(fact)
         self.db.flush()
         self.db.refresh(fact)
+        # S6.3：新事实进入待审核池也通知（订阅者只对实质变更做失效）
+        get_event_bus().publish(FactChanged(
+            org_id=org_id, fact_id=fact.id, product_id=product_id,
+            old_status="", new_status=fact.status or "pending",
+            handled_inline=True))
         return fact
 
     def get(self, fact_id: str, org_id: str) -> Fact | None:
@@ -90,6 +114,12 @@ class FactRepository:
         """088：状态流转必须带 version，冲突抛 OptimisticLockError。"""
         if status not in FACT_STATUSES:
             raise ValueError(f"非法事实状态: {status}")
+        # S6.3：记录变更前状态，供 FactChanged 事件判断是否为实质变更
+        _row = self.db.execute(
+            select(Fact.status, Fact.product_id).where(
+                Fact.id == fact_id, Fact.org_id == org_id)).first()
+        old_status = _row[0] if _row else ""
+        product_id = _row[1] if _row else ""
         values: dict[str, Any] = {
             "status": status,
             "version": Fact.version + 1,
@@ -114,6 +144,13 @@ class FactRepository:
         self.db.flush()
         fact = self.get(fact_id, org_id)
         assert fact is not None
+        # S6.3：事实状态变更通知；实质变更时同一事务内失效组织有效审核
+        get_event_bus().publish(FactChanged(
+            org_id=org_id, fact_id=fact_id, product_id=product_id or "",
+            old_status=old_status, new_status=status,
+            handled_inline=True))
+        if self._is_material_change(old_status, status):
+            self._expire_reviews_inline(org_id, fact_id)
         return fact
 
     def count_by_org(self, org_id: str) -> int:
@@ -190,12 +227,19 @@ class FactRepository:
         fact = self.get(fact_id, org_id)
         assert fact is not None
         self._publish_fact_changed(org_id, fact, frm, to, operator_id)
+        # S6.3：实质变更时同一事务内失效组织有效审核
+        if self._is_material_change(frm, to):
+            self._expire_reviews_inline(org_id, fact_id)
         return fact
 
     def _publish_fact_changed(self, org_id: str, fact: Fact,
                               old_status: str, new_status: str,
-                              actor_id: str) -> None:
-        """发 FactChanged 事件（033 事件总线；订阅者异常隔离，失败不阻断主流程）。"""
+                              actor_id: str,
+                              content_changed: bool = False) -> None:
+        """发 FactChanged 事件（033 事件总线；订阅者异常隔离，失败不阻断主流程）。
+
+        S6.3：调用方已在同一事务内完成审核失效，事件标记 handled_inline。
+        """
         try:
             from ..core.events import FactChanged, get_event_bus
             get_event_bus().publish(FactChanged(
@@ -203,6 +247,8 @@ class FactRepository:
                 product_id=fact.product_id or "",
                 old_status=old_status, new_status=new_status,
                 actor_id=actor_id or "",
+                content_changed=content_changed,
+                handled_inline=True,
             ))
         except Exception:  # noqa: BLE001 — 事件失败不阻断业务
             import logging
@@ -274,7 +320,11 @@ class FactRepository:
         assert fact is not None
         # 内容变更也发事件（订阅者可据此让相关审核失效）
         self._publish_fact_changed(org_id, fact, sm.normalize_status(fact.status),
-                                   sm.normalize_status(fact.status), operator_id)
+                                   sm.normalize_status(fact.status), operator_id,
+                                   content_changed=True)
+        # S6.3：已确认事实的内容变更，同一事务内失效组织有效审核
+        if sm.normalize_status(fact.status) == "confirmed":
+            self._expire_reviews_inline(org_id, fact_id)
         return fact
 
     # ---------------- S6.1：过期扫库 ----------------
@@ -312,6 +362,8 @@ class FactRepository:
             self.db.flush()
             self._publish_fact_changed(fact.org_id, fact,
                                        sm.CONFIRMED, sm.EXPIRED, "system")
+            # S6.3：到期自动过期是实质变更，同一事务内失效组织有效审核
+            self._expire_reviews_inline(fact.org_id, fact.id)
         return len(due)
 
     # ---------------- S6.1：审计查询 ----------------

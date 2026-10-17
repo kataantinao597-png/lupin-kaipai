@@ -58,11 +58,19 @@ class ReviewRepository:
     @transactional_method
     def create(self, org_id: str, work_id: str, content_hash: str,
                storyboard_id: str | None = None,
-               created_by: str = "") -> Review:
-        """创建一条待提交审核（pending）。"""
+               created_by: str = "",
+               rule_version: str = "",
+               model_version: str = "",
+               prompt_version: str = "") -> Review:
+        """创建一条待提交审核（pending）。
+
+        S6.3：同时绑定规则/模型/Prompt 版本。
+        """
         review = Review(
             org_id=org_id, work_id=work_id, storyboard_id=storyboard_id,
             content_hash=content_hash,
+            rule_version=rule_version, model_version=model_version,
+            prompt_version=prompt_version,
         )
         # created_by 记录在 reviewer_id 占位？不——创建人不等于审核人，
         # 保留 reviewer_id 给实际审核人。这里不写。
@@ -150,6 +158,29 @@ class ReviewRepository:
             if REVIEW_STATUS_EXPIRED in REVIEW_TRANSITIONS.get(r.status, ()):
                 r.status = REVIEW_STATUS_EXPIRED
                 r.version = r.version + 1
+                r.updated_at = _utcnow()
+                count += 1
+        self.db.flush()
+        return count
+
+    @transactional_method
+    def expire_all_for_org(self, org_id: str) -> int:
+        """S6.3/FactChanged：组织事实库发生实质变更时，保守地将该组织下
+        所有"有效"审核置为 expired（只做过期提示，不覆盖旧成果）。
+
+        返回失效的条数。事务内完成。
+        """
+        stale = list(self.db.scalars(
+            select(Review).where(
+                Review.org_id == org_id,
+                Review.status.in_([REVIEW_STATUS_PENDING,
+                                   REVIEW_STATUS_IN_REVIEW,
+                                   REVIEW_STATUS_APPROVED]))))
+        count = 0
+        for r in stale:
+            if REVIEW_STATUS_EXPIRED in REVIEW_TRANSITIONS.get(r.status, ()):
+                r.status = REVIEW_STATUS_EXPIRED
+                r.version = (r.version or 1) + 1
                 r.updated_at = _utcnow()
                 count += 1
         self.db.flush()
