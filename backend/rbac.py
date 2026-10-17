@@ -10,13 +10,15 @@
 """
 from typing import Callable, Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from .auth.deps import get_current_user
 from .auth.database import get_db
 from .auth.models import User
 from . import models
+from .core import error_codes
+from .core.exceptions import AuthError, BusinessError
 
 # ---------------------------------------------------------------------------
 # 046：角色与权限矩阵
@@ -122,12 +124,12 @@ def require_org_permission(action: str) -> Callable:
         org = db.query(models.Organization).filter(
             models.Organization.id == org_id).first()
         if org is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                                detail="组织不存在")
+            raise BusinessError("组织不存在",
+                                code=error_codes.ORG_NOT_FOUND, http_status=404)
         ms = get_membership(db, user.id, org_id)
         if ms is None or not has_permission(ms.role, action):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                                detail="组织不存在")
+            raise BusinessError("组织不存在",
+                                code=error_codes.ORG_NOT_FOUND, http_status=404)
         return ms
     return _dep
 
@@ -135,8 +137,8 @@ def require_org_permission(action: str) -> Callable:
 def get_work_or_404(db: Session, work_id: str) -> models.Work:
     work = db.query(models.Work).filter(models.Work.id == work_id).first()
     if work is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail="作品不存在")
+        raise BusinessError("作品不存在",
+                            code=error_codes.WORK_NOT_FOUND, http_status=404)
     return work
 
 
@@ -157,8 +159,8 @@ def require_work_access(action: str) -> Callable:
         work = get_work_or_404(db, work_id)
         ms = get_membership(db, user.id, work.org_id)
         if ms is None or not has_permission(ms.role, action):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                                detail="作品不存在")
+            raise BusinessError("作品不存在",
+                                code=error_codes.WORK_NOT_FOUND, http_status=404)
         return work, ms
     return _dep
 
@@ -166,5 +168,4 @@ def require_work_access(action: str) -> Callable:
 def assert_can(user_role: str, action: str, what: str = "执行此操作") -> None:
     """050：在 handler 内部重新验证重要操作的权限（不只靠路由 Depends）。"""
     if not has_permission(user_role, action):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail=f"权限不足，无法{what}")
+        raise AuthError(f"权限不足，无法{what}", forbidden=True)
