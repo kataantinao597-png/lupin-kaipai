@@ -28,6 +28,22 @@ function assignShotUids(sb) {
   });
 }
 
+/* 007: 永久镜头 ID。后端忽略多余字段，shot_id 由前端维护，
+   重排/删除/重生成后仍能关联拍摄记录、审核结果。旧数据没有就补。 */
+function genShotId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    try { return "shot_" + crypto.randomUUID().replace(/-/g, "").slice(0, 12); } catch (e) {}
+  }
+  return "shot_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+}
+
+function ensureShotIds(sb) {
+  (sb && sb.shots || []).forEach((s) => {
+    if (!s.shot_id) s.shot_id = genShotId();
+  });
+  return sb;
+}
+
 function stripUids(obj) {
   // 深拷贝并移除 _uid，用于 API 请求
   if (!obj) return obj;
@@ -42,12 +58,15 @@ function collectWorkData() {
     facts: state.facts || [],
     factsUpdatedAt: state.factsUpdatedAt || 0,
     ideas: state.ideas,
+    ideasFactsHash: state.ideasFactsHash || "",
     direction: state.direction,
     storyboard: stripUids(state.storyboard),
+    sbFactsHash: state.sbFactsHash || "",
     locked: [...state.locked],
     feasibility: state.feasibility ? {
       results: state.feasibility,
-      storyboardHash: storyboardHash(state.storyboard),
+      // 009: 用检查时刻记录的 hash，不在保存时重算（重算会掩盖"分镜已变、报告过期"）
+      storyboardHash: state.feasibilityHash || storyboardHash(state.storyboard),
       checkedAt: Date.now(),
     } : null,
     risks: state.risks,
@@ -65,7 +84,7 @@ function applyWorkData(data) {
   state.ideas = data.ideas || [];
   state.direction = data.direction || "";
   state.storyboard = data.storyboard || null;
-  if (state.storyboard) assignShotUids(state.storyboard);
+  if (state.storyboard) { assignShotUids(state.storyboard); ensureShotIds(state.storyboard); }
   state.locked = new Set(data.locked || []);
   state.feasibility = (data.feasibility && data.feasibility.results) || null;
   state.feasibilityHash = (data.feasibility && data.feasibility.storyboardHash) || "";

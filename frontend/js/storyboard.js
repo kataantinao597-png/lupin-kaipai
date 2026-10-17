@@ -74,18 +74,19 @@ function editShot(i) {
     </div></div>`;
 }
 async function saveShot(i) {
-  markDirty();
-  const s = state.storyboard.shots[i];
-  const split = (id) => $(id).value.split(/[、,，]/).map((x) => x.trim()).filter(Boolean);
-  s.duration_seconds = parseFloat($("e_dur_" + i).value) || s.duration_seconds;
-  s.shot_type = $("e_type_" + i).value;
-  s.scene_description = $("e_scene_" + i).value;
-  s.shooting_action = $("e_act_" + i).value;
-  s.camera_movement = $("e_cam_" + i).value;
-  s.voiceover = $("e_vo_" + i).value;
-  s.subtitle = $("e_sub_" + i).value;
-  s.props = split("e_props_" + i);
-  s.required_assets = split("e_assets_" + i);
+  updateState((st) => {
+    const s = st.storyboard.shots[i];
+    const split = (id) => $(id).value.split(/[、,，]/).map((x) => x.trim()).filter(Boolean);
+    s.duration_seconds = parseFloat($("e_dur_" + i).value) || s.duration_seconds;
+    s.shot_type = $("e_type_" + i).value;
+    s.scene_description = $("e_scene_" + i).value;
+    s.shooting_action = $("e_act_" + i).value;
+    s.camera_movement = $("e_cam_" + i).value;
+    s.voiceover = $("e_vo_" + i).value;
+    s.subtitle = $("e_sub_" + i).value;
+    s.props = split("e_props_" + i);
+    s.required_assets = split("e_assets_" + i);
+  }, { storyboardChanged: true });
   renderShots();
   await refreshValidate();
 }
@@ -127,14 +128,23 @@ async function regenShot(num) {
   const instruction = prompt(`对镜头 ${num} 的修改要求（例如：改成俯视角度）：`);
   if (!instruction) return;
   showErr("err3", "");
+  // 015: 记录请求归属，响应返回后校验
+  const reqWorkId = (typeof works !== "undefined" && works.activeId) || null;
   try {
     setLoading(`正在重生成镜头 ${num}…`);
     const d = await api("/api/regenerate-shot", {
       storyboard: stripUids(state.storyboard), shot_number: num,
       instruction, locked: [...state.locked],
     });
+    if (typeof works !== "undefined" && works.activeId !== reqWorkId) return; // 用户已切换作品，丢弃过期响应
+    // 007: 保留未改动镜头的原 shot_id（按镜头号匹配），新镜头再补 id
+    const oldIds = {};
+    (state.storyboard.shots || []).forEach((s) => { if (s.shot_id) oldIds[s.shot_number] = s.shot_id; });
     state.storyboard = d.storyboard;
+    (state.storyboard.shots || []).forEach((s) => { if (!s.shot_id && oldIds[s.shot_number]) s.shot_id = oldIds[s.shot_number]; });
     if (typeof assignShotUids === 'function') assignShotUids(state.storyboard);
+    if (typeof ensureShotIds === 'function') ensureShotIds(state.storyboard);
+    if (typeof markDirty === "function") markDirty(); // 004: 重生成成功后立即标记变更，确保刷新不丢失
     if (d.warning) showErr("err3", "注意：" + d.warning);
     renderShots();
     await refreshValidate();

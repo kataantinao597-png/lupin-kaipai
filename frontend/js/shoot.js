@@ -6,13 +6,15 @@ state.shoot = { key: "", shots: {} };
 state.shootFilter = "all";
 
 function shootKey(sb) {
-  // 用产品名+镜头数+各镜头号+时长生成 key，避免错配
-  const parts = [sb.product_summary || "", (sb.shots || []).length];
-  (sb.shots || []).forEach((s) => parts.push(s.shot_number + ":" + s.duration_seconds));
-  let h = 0;
-  const str = parts.join("|");
-  for (let i = 0; i < str.length; i++) { h = ((h << 5) - h + str.charCodeAt(i)) | 0; }
-  return "lupin_shoot_v" + SHOOT_VERSION + "_" + (h >>> 0).toString(36);
+  // 006: 存储键必须关联唯一 work_id，不能只靠产品信息+镜头属性计算
+  const wid = (typeof works !== "undefined" && works.activeId) || "none";
+  return "lupin_shoot_v" + SHOOT_VERSION + "_" + wid;
+}
+
+/* 007: 拍摄记录按 shot_id 关联（重排后仍能对应）；旧数据按镜头号存的，加载时兼容 */
+function recKeyFor(num) {
+  const s = (state.storyboard && state.storyboard.shots || []).find((x) => x.shot_number === num);
+  return (s && s.shot_id) ? s.shot_id : String(num);
 }
 
 function loadShootState() {
@@ -26,13 +28,15 @@ function loadShootState() {
     if (raw) {
       const data = JSON.parse(raw);
       if (data.version === SHOOT_VERSION && data.shots) {
-        // 只保留当前分镜中存在的镜头号
-        const validNums = new Set(sb.shots.map((s) => String(s.shot_number)));
-        Object.keys(data.shots).forEach((num) => {
-          if (validNums.has(num) && SHOOT_STATUS[data.shots[num].status]) {
-            state.shoot.shots[num] = {
-              status: data.shots[num].status,
-              note: String(data.shots[num].note || "").slice(0, 200),
+        const saved = data.shots;
+        sb.shots.forEach((s) => {
+          const recKey = s.shot_id || String(s.shot_number);
+          // 优先按 shot_id 取，兼容旧的按镜头号存的数据
+          const rec = saved[recKey] || saved[String(s.shot_number)];
+          if (rec && SHOOT_STATUS[rec.status]) {
+            state.shoot.shots[recKey] = {
+              status: rec.status,
+              note: String(rec.note || "").slice(0, 200),
             };
           }
         });
@@ -52,11 +56,11 @@ function saveShootState() {
 }
 
 function getShootStatus(num) {
-  return (state.shoot.shots[String(num)] || {}).status || "todo";
+  return (state.shoot.shots[recKeyFor(num)] || {}).status || "todo";
 }
 
 function setShootStatus(num, status) {
-  const key = String(num);
+  const key = recKeyFor(num);
   if (!state.shoot.shots[key]) state.shoot.shots[key] = { status: "todo", note: "" };
   state.shoot.shots[key].status = status;
   if (status !== "reshoot") state.shoot.shots[key].note = "";
@@ -65,7 +69,7 @@ function setShootStatus(num, status) {
 }
 
 function setReshootNote(num, note) {
-  const key = String(num);
+  const key = recKeyFor(num);
   if (!state.shoot.shots[key]) state.shoot.shots[key] = { status: "reshoot", note: "" };
   state.shoot.shots[key].note = String(note).slice(0, 200);
   saveShootState();
@@ -109,7 +113,7 @@ function renderShootMode() {
   });
   $("shoot_cards").innerHTML = visible.map((s) => {
     const cur = getShootStatus(s.shot_number);
-    const note = (state.shoot.shots[String(s.shot_number)] || {}).note || "";
+    const note = (state.shoot.shots[recKeyFor(s.shot_number)] || {}).note || "";
     const locked = state.locked.has(s.shot_number);
     const fields = [];
     if (s.scene_description) fields.push(`<div class="row"><span class="k">画面</span><span>${esc(s.scene_description)}</span></div>`);

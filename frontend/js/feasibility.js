@@ -79,20 +79,22 @@ async function applyAlternative(num) {
     if (!confirm(`替代方案建议时长 ${newDur}s（原 ${oldDur}s），将改变总时长。是否继续？`)) return;
     shot.duration_seconds = newDur;
   }
-  // 标记该镜头已处理，避免重复提示
-  feas.status = "可执行";
-  feas.reason = "已采用替代方案";
-  feas.alternative = null;
+  // 标记该镜头已处理，避免重复提示（走统一更新入口，自动保存+关联失效）
+  updateState((st) => {
+    feas.status = "可执行";
+    feas.reason = "已采用替代方案";
+    feas.alternative = null;
+  }, { storyboardChanged: true });
   // V4: 替代方案改变了拍摄内容，提示用户确认拍摄状态
-  const shootSt = (state.shoot.shots[String(num)] || {}).status;
+  const recKey = (typeof recKeyFor === "function") ? recKeyFor(num) : String(num);
+  const shootSt = (state.shoot.shots[recKey] || {}).status;
   if (shootSt === "done") {
     if (confirm(`镜头 ${num} 已标记为"已拍摄"，应用替代方案后建议重新拍摄。是否将其改回"待拍摄"？`)) {
-      state.shoot.shots[String(num)].status = "todo";
-      state.shoot.shots[String(num)].note = "";
+      state.shoot.shots[recKey].status = "todo";
+      state.shoot.shots[recKey].note = "";
       if (typeof saveShootState === "function") saveShootState();
     }
   }
-  markDirty();
   renderShots();
   await refreshValidate();
   renderFeasibility({ results: state.feasibility, model_completed: true });

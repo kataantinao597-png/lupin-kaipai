@@ -19,8 +19,11 @@ function renderRisks() {
     </div>`).join("");
 }
 function toggleConfirm(i) {
-  state.risks[i].confirmed = !state.risks[i].confirmed;
-  state.storyboard.risk_flags = state.risks;
+  // 005: 每次勾选/撤销都走统一更新入口，自动触发保存
+  updateState((st) => {
+    st.risks[i].confirmed = !st.risks[i].confirmed;
+    if (st.storyboard) st.storyboard.risk_flags = st.risks;
+  });
   renderRisks();
 }
 $("btn_risk").addEventListener("click", async () => {

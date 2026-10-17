@@ -17,14 +17,20 @@ async function selectIdea(i) {
   showErr("err2", "");
   const it = state.ideas[i];
   state.direction = it.name + "：" + it.tagline;
+  // 015: 记录请求归属，响应返回后校验
+  const reqWorkId = (typeof works !== "undefined" && works.activeId) || null;
   try {
     setLoading("正在生成结构化分镜…（约半分钟）");
     const d = await api("/api/storyboard", { product: state.product, direction: state.direction, facts: usableFacts() });
+    if (typeof works !== "undefined" && works.activeId !== reqWorkId) return; // 用户已切换作品，丢弃过期响应
     state.storyboard = d.storyboard;
     if (typeof assignShotUids === 'function') assignShotUids(state.storyboard);
+    if (typeof ensureShotIds === 'function') ensureShotIds(state.storyboard);
+    state.sbFactsHash = factsHash();
     state.risks = [];
     renderShots();
     await refreshValidate();
+    if (typeof scheduleSave === "function") scheduleSave(); // 003: 分镜生成后走统一持久化入口
     showView("v3");
   } catch (e) { showErr("err2", e.message); }
   finally { setLoading(null); }

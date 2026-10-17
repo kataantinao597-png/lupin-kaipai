@@ -38,6 +38,20 @@ async function api(path, body) {
 }
 const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+/* 016: 统一前端状态更新入口。
+   用法：updateState((st) => { st.risks[i].confirmed = true; });
+   自动触发：持久化保存 + 可选的关联失效（分镜变化 → 可行性过期检查）。
+   opts.storyboardChanged=true 时，分镜内容变了，提示可行性报告可能过期。 */
+function updateState(mutator, opts) {
+  opts = opts || {};
+  mutator(state);
+  if (opts.storyboardChanged && typeof checkFeasibilityStale === "function") {
+    setTimeout(checkFeasibilityStale, 100);
+  }
+  if (typeof markDirty === "function") markDirty();
+  return state;
+}
+
 
 /* ---------- 用户 API 配置（V6/部署） ---------- */
 // Key 仅存 sessionStorage（标签页关闭即清除），不写入 localStorage

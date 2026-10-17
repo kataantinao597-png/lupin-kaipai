@@ -32,11 +32,14 @@ $("btn_fill_demo").addEventListener("click", () => {
 });
 $("btn_ideas").addEventListener("click", async () => {
   showErr("err1", "");
+  // 015: 记录请求归属，响应返回后校验
+  const reqWorkId = (typeof works !== "undefined" && works.activeId) || null;
   try {
     state.product = collectForm();
     state.locked = new Set();
     setLoading("正在生成 3 个创意方向…");
     const d = await api("/api/ideas", { product: state.product, facts: usableFacts() });
+    if (typeof works !== "undefined" && works.activeId !== reqWorkId) return; // 用户已切换作品，丢弃过期响应
     state.ideas = d.ideas;
     state.ideasFactsHash = factsHash();
     renderIdeas();
