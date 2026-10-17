@@ -100,7 +100,7 @@ def test_082_migration_tables(db: Session):
             "refresh_tokens", "password_resets"} <= names
     row = db.execute(__import__("sqlalchemy").text(
         "select version_num from alembic_version")).fetchone()
-    assert row[0] == "0001_initial_schema"
+    assert row[0] == "0002_work_versions"  # 091：可靠性组新增 work_versions 表，head 前移
 
 
 # ---------- 083/084/085 CRUD ----------

@@ -63,31 +63,23 @@ def _engine_kwargs(url: str) -> dict:
     return kwargs
 
 
-# 094：高频查询索引。create_all 不会给已存在的表补建索引/列，
-# 这里做幂等补建，保证存量库也能拿到新结构。
-# facts/shots 目前以内嵌 JSON 存于 works.data_json，无独立 ORM 表，
-# 暂无可建索引；待 Phase 4 拆表后再补。
+# 094：高频查询索引兜底。alembic 迁移（0002）是主路径；
+# 这里保证走 create_all 的本地开发库也能拿到索引（checkfirst 幂等）。
+# 注：shots(storyboard_id) 的 ix_shot_storyboard 已在模型中定义，
+# create_all 会自动建出，无需在此重复。
 def ensure_indexes(engine: Engine) -> None:
     from sqlalchemy import Index, text
     from .. import models as biz_models
 
-    # 092：存量 works 表补 deleted_at 列（SQLite 支持 ADD COLUMN）
-    try:
-        with engine.begin() as conn:
-            cols = {r[1] for r in conn.execute(text("PRAGMA table_info(works)"))}
-            if "deleted_at" not in cols and "works" in {
-                r[0] for r in conn.execute(
-                    text("SELECT name FROM sqlite_master WHERE type='table'"))}:
-                conn.execute(text("ALTER TABLE works ADD COLUMN deleted_at DATETIME"))
-    except Exception:
-        pass  # 非 SQLite 或无 works 表时忽略
-
     pending = [
         Index("ix_organization_created_by", biz_models.Organization.created_by),
+        Index("ix_work_org_status", biz_models.Work.org_id,
+              biz_models.Work.status),
         Index("ix_work_org_deleted", biz_models.Work.org_id,
               biz_models.Work.deleted_at),
-        Index("ix_workversion_work", biz_models.WorkVersion.work_id,
-              biz_models.WorkVersion.version_no),
+        Index("ix_fact_org_status", biz_models.Fact.org_id,
+              biz_models.Fact.status),
+        Index("ix_workversion_work", biz_models.WorkVersion.work_id),
     ]
     for ix in pending:
         try:
