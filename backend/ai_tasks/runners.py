@@ -35,7 +35,8 @@ def run_ideas(task_id: str, is_cancelled: Callable[[], bool],
 
     if is_cancelled():
         _cancelled()
-    svc = _get_server_ai()
+    from ..ai.gateway import AIGateway
+    gw = AIGateway(service=_get_server_ai(), task_id=task_id)
     product = payload.get("product") or {}
     facts = payload.get("facts") or []
 
@@ -45,8 +46,8 @@ def run_ideas(task_id: str, is_cancelled: Callable[[], bool],
             msgs.append({"role": "user", "content": feedback})
         return msgs
 
-    ideas, meta = svc.generate_with_retry(
-        make_messages, _validate_ideas,
+    ideas, meta = gw.generate_with_retry(
+        "ideas", make_messages, _validate_ideas,
         model=payload.get("model") or DEFAULT_MODEL, temperature=0.7)
     if is_cancelled():
         _cancelled()
@@ -66,7 +67,8 @@ def run_storyboard(task_id: str, is_cancelled: Callable[[], bool],
 
     if is_cancelled():
         _cancelled()
-    svc = _get_server_ai()
+    from ..ai.gateway import AIGateway
+    gw = AIGateway(service=_get_server_ai(), task_id=task_id)
     product = payload.get("product") or {}
     direction = payload.get("direction") or ""
     facts = payload.get("facts") or []
@@ -74,8 +76,8 @@ def run_storyboard(task_id: str, is_cancelled: Callable[[], bool],
     def make_messages(feedback):
         return build_storyboard_messages(product, direction, facts, feedback)
 
-    sb, meta = svc.generate_with_retry(
-        make_messages, validate_dict,
+    sb, meta = gw.generate_with_retry(
+        "storyboard", make_messages, validate_dict,
         model=payload.get("model") or DEFAULT_MODEL, temperature=0.3)
     if is_cancelled():
         _cancelled()

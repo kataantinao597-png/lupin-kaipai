@@ -15,7 +15,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError, DEFAULT_MODEL
-from ...core.deps import check_rate_limit, get_ai_service, get_request_model
+from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
+from ...core.deps import check_rate_limit, get_ai_gateway, get_request_model
 from ...prompts import (
     build_idea_messages,
     build_regen_shot_messages,
@@ -145,7 +146,7 @@ def _enqueue_ai_task(task_type: str, payload: dict, request: Request) -> dict:
 def create_ideas(
     req: IdeasRequest,
     request: Request,
-    svc=Depends(get_ai_service),
+    gw=Depends(get_ai_gateway),
     async_mode: bool = Query(default=False, alias="async"),
 ):
     check_rate_limit(request)
@@ -165,8 +166,13 @@ def create_ideas(
         return msgs
 
     try:
-        ideas, meta = svc.generate_with_retry(
-            make_messages, _validate_ideas, model=_model or DEFAULT_MODEL, temperature=0.7)
+        ideas, meta = gw.generate_with_retry(
+            "ideas", make_messages, _validate_ideas,
+            model=_model or DEFAULT_MODEL, temperature=0.7)
+    except BudgetExceededError as e:
+        raise HTTPException(status_code=402, detail=str(e))
+    except TaskLimitExceededError as e:
+        raise HTTPException(status_code=429, detail=str(e))
     except (AIFatalError, AIRetryableError, AIConfigError) as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {
@@ -180,7 +186,7 @@ def create_ideas(
 def create_storyboard(
     req: StoryboardRequest,
     request: Request,
-    svc=Depends(get_ai_service),
+    gw=Depends(get_ai_gateway),
     async_mode: bool = Query(default=False, alias="async"),
 ):
     check_rate_limit(request)
@@ -198,8 +204,13 @@ def create_storyboard(
         return build_storyboard_messages(product, req.direction, req.facts, feedback)
 
     try:
-        sb, meta = svc.generate_with_retry(
-            make_messages, validate_dict, model=_model or DEFAULT_MODEL, temperature=0.3)
+        sb, meta = gw.generate_with_retry(
+            "storyboard", make_messages, validate_dict,
+            model=_model or DEFAULT_MODEL, temperature=0.3)
+    except BudgetExceededError as e:
+        raise HTTPException(status_code=402, detail=str(e))
+    except TaskLimitExceededError as e:
+        raise HTTPException(status_code=429, detail=str(e))
     except (AIFatalError, AIRetryableError, AIConfigError) as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {
@@ -213,7 +224,7 @@ def create_storyboard(
 def regenerate_shot(
     req: RegenShotRequest,
     request: Request,
-    svc=Depends(get_ai_service),
+    gw=Depends(get_ai_gateway),
 ):
     check_rate_limit(request)
     _model = get_request_model(request)
@@ -228,8 +239,13 @@ def regenerate_shot(
         return build_regen_shot_messages(sb, req.shot_number, req.instruction, req.locked, feedback)
 
     try:
-        new_shot, meta = svc.generate_with_retry(
-            make_messages, _validate_shot, model=_model or DEFAULT_MODEL, temperature=0.4)
+        new_shot, meta = gw.generate_with_retry(
+            "regen_shot", make_messages, _validate_shot,
+            model=_model or DEFAULT_MODEL, temperature=0.4)
+    except BudgetExceededError as e:
+        raise HTTPException(status_code=402, detail=str(e))
+    except TaskLimitExceededError as e:
+        raise HTTPException(status_code=429, detail=str(e))
     except (AIFatalError, AIRetryableError, AIConfigError) as e:
         raise HTTPException(status_code=502, detail=str(e))
 

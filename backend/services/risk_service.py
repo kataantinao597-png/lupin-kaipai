@@ -25,7 +25,7 @@ def check_storyboard_risk(
 ) -> dict:
     """执行完整的风险审核，返回 result（含 flags 列表）。
 
-    ai_service: AIService 实例（由 core/deps.get_ai_service 注入）
+    ai_service: AIGateway 实例（由 core/deps.get_ai_gateway 注入；兼容 AIService）
     model: 实际使用的模型名（012：必须显式传递，禁止静默回退）
     """
     selling_points = selling_points or []

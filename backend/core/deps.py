@@ -98,8 +98,36 @@ __all__ = [
     "get_db",
     "get_current_user",
     "get_ai_service",
+    "get_ai_gateway",
     "get_request_model",
     "get_settings_dep",
     "check_rate_limit",
     "User",
 ]
+
+
+def get_ai_gateway(request: Request):
+    """121：AI 网关依赖。包装 get_ai_service 的传输层。
+
+    用法：gw=Depends(get_ai_gateway)，然后
+    gw.generate_with_retry(task_type, make_messages, validate_fn, model=...)
+    行为与原 svc.generate_with_retry 一致，但走网关（预算/重试/配置记录）。
+    """
+    from ..ai.gateway import AIGateway
+    from ..auth.database import get_db as _get_db
+    svc = get_ai_service(request)
+    # org_id：从请求头 X-Org-Id 取（v1 新体系）；没有则 None（跳过预算）
+    org_id = request.headers.get("X-Org-Id", "").strip() or None
+    # db：有则做预算检查/扣减；拿不到也不阻断（降级为只记日志）
+    db_gen = _get_db()
+    try:
+        db = next(db_gen)
+    except StopIteration:
+        db = None
+    try:
+        yield AIGateway(service=svc, org_id=org_id, db=db)
+    finally:
+        try:
+            next(db_gen)
+        except StopIteration:
+            pass

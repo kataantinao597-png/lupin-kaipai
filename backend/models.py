@@ -22,6 +22,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -348,8 +349,88 @@ class AITask(Base):
     # 协作式取消标记：running 任务由工作线程轮询此标记
     cancel_requested = Column(Boolean, nullable=False, default=False,
                               server_default="0")
+    # 137：请求优先级 high（用户交互）/ low（后台批量），队列优先执行 high
+    priority = Column(String(8), nullable=False, default="high",
+                      server_default="high")
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
                         onupdate=_now)
     started_at = Column(DateTime(timezone=True), nullable=True)
     finished_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class AIBudget(Base):
+    """124：组织 AI 调用月度预算。
+
+    monthly_limit_cents：本月限额（分）；0 = 未配置（视为不限，记 warning）。
+    used_cents：本月已用（分）；period：YYYY-MM。
+    """
+    __tablename__ = "ai_budgets"
+    __table_args__ = (
+        UniqueConstraint("org_id", "period", name="uq_budget_org_period"),
+        Index("ix_budget_org", "org_id"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="CASCADE"),
+                    nullable=False)
+    period = Column(String(7), nullable=False)  # YYYY-MM
+    monthly_limit_cents = Column(Integer, nullable=False, default=0,
+                                 server_default="0")
+    used_cents = Column(Integer, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)
+
+
+# ---------- Phase 5：AI 可观测性（131/132） ----------
+
+class AICall(Base):
+    """131：AI 调用台账。每一次模型调用一条记录，以 provider 返回的 usage 为准。
+
+    status: success / failed / cached（缓存命中，未真实调用）。
+    cost_cents: 按 model_prices 估算的费用（分）。
+    """
+    __tablename__ = "ai_calls"
+    __table_args__ = (
+        Index("ix_aicall_task_type", "task_type"),
+        Index("ix_aicall_model", "model"),
+        Index("ix_aicall_created", "created_at"),
+        Index("ix_aicall_task", "task_id"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    task_id = Column(String(32), nullable=True)  # 关联 ai_tasks.id；同步调用为 None
+    task_type = Column(String(32), nullable=False)
+    model = Column(String(128), nullable=False)
+    prompt_tokens = Column(Integer, nullable=False, default=0, server_default="0")
+    completion_tokens = Column(Integer, nullable=False, default=0, server_default="0")
+    total_tokens = Column(Integer, nullable=False, default=0, server_default="0")
+    cost_cents = Column(Integer, nullable=False, default=0, server_default="0")
+    status = Column(String(16), nullable=False, default="success",
+                    server_default="success")
+    error = Column(Text, nullable=True)
+    latency_ms = Column(Integer, nullable=True)
+    cached = Column(Boolean, nullable=False, default=False, server_default="0")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class ModelPrice(Base):
+    """132：模型价格表。每 1k token 的输入/输出价格，用于成本估算。
+
+    同一 model 可有多个 version（价格变更时新增版本）；估算取最新版本。
+    """
+    __tablename__ = "model_prices"
+    __table_args__ = (
+        UniqueConstraint("model", "version", name="uq_modelprice_model_version"),
+        Index("ix_modelprice_model", "model"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model = Column(String(128), nullable=False)
+    input_price_per_1k = Column(Float, nullable=False)
+    output_price_per_1k = Column(Float, nullable=False)
+    currency = Column(String(8), nullable=False, default="CNY",
+                      server_default="CNY")
+    version = Column(Integer, nullable=False, default=1, server_default="1")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)

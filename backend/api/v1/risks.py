@@ -13,7 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError
-from ...core.deps import check_rate_limit, get_ai_service, get_request_model
+from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
+from ...core.deps import check_rate_limit, get_ai_gateway, get_request_model
 from ...services.delivery_service import check_delivery
 from ...services.risk_service import check_storyboard_risk
 from .ideas import ProductInput
@@ -43,7 +44,7 @@ class DeliveryCheckRequest(BaseModel):
 def check_risk(
     req: RiskCheckRequest,
     request: Request,
-    svc=Depends(get_ai_service),
+    gw=Depends(get_ai_gateway),
 ):
     check_rate_limit(request)
     _model = get_request_model(request)
@@ -51,12 +52,16 @@ def check_risk(
         from ...prompts import product_block
         pinfo = product_block(req.product.model_dump()) if req.product else ""
         result = check_storyboard_risk(
-            svc, req.storyboard,
+            gw, req.storyboard,
             evidence_materials=req.evidence_materials,
             selling_points=req.selling_points,
             product_info=pinfo,
             facts=req.facts,
             model=_model)
+    except BudgetExceededError as e:
+        raise HTTPException(status_code=402, detail=str(e))
+    except TaskLimitExceededError as e:
+        raise HTTPException(status_code=429, detail=str(e))
     except (AIFatalError, AIRetryableError, AIConfigError) as e:
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:

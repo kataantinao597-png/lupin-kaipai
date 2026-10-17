@@ -103,11 +103,21 @@ def model_review(ai_service, lines: List[str], evidence: str = "",
         evidence=evidence or "（用户未提供证明材料）",
         lines="\n".join(f"{i+1}. {ln}" for i, ln in enumerate(lines)),
     )
-    content, _usage = ai_service.chat(
-        [{"role": "user", "content": prompt}],
-        model=model or DEFAULT_MODEL,
-        temperature=0.2, json_object=True,
-    )
+    # 121：走 AI 网关（task_type="risk_check"）；兼容直接传 AIService 的老调用
+    from .ai.gateway import AIGateway
+    if isinstance(ai_service, AIGateway):
+        content, _usage = ai_service.chat(
+            "risk_check",
+            [{"role": "user", "content": prompt}],
+            model=model or DEFAULT_MODEL,
+            temperature=0.2, json_object=True,
+        )
+    else:
+        content, _usage = ai_service.chat(
+            [{"role": "user", "content": prompt}],
+            model=model or DEFAULT_MODEL,
+            temperature=0.2, json_object=True,
+        )
     # 统一 JSON 解析：兼容模型输出 markdown 代码围栏/前后杂文本
     data = parse_json_content(content)
     raw_flags = data.get("flags", []) if isinstance(data, dict) else []
@@ -133,7 +143,7 @@ def dedup(flags: List[Dict]) -> List[Dict]:
     return out
 
 
-def risk_check_storyboard(ai_service, sb: dict, evidence: str = "",
+def risk_check_storyboard(ai_service, sb: dict,  # ai_service: AIGateway 或 AIService evidence: str = "",
                           input_claims: List[str] | None = None,
                           product_info: str = "",
                           model: Optional[str] = None) -> Dict:

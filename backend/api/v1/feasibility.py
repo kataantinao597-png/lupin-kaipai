@@ -11,7 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError, DEFAULT_MODEL
-from ...core.deps import check_rate_limit, get_ai_service, get_request_model
+from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
+from ...core.deps import check_rate_limit, get_ai_gateway, get_request_model
 from ...prompts import build_feasibility_messages
 from ...schemas import FeasibilityReport
 from ...validator import rule_feasibility_scan, validate_dict
@@ -46,7 +47,7 @@ def _validate_feasibility(data: dict, shot_numbers: list):
 def check_feasibility(
     req: FeasibilityCheckRequest,
     request: Request,
-    svc=Depends(get_ai_service),
+    gw=Depends(get_ai_gateway),
 ):
     """智能拍摄可行性检查：规则预检 + 模型批量分析（一次请求覆盖所有镜头）。"""
     errors, sb = validate_dict(req.storyboard)
@@ -67,10 +68,14 @@ def check_feasibility(
         return build_feasibility_messages(sb_dict, feedback)
 
     try:
-        report, meta = svc.generate_with_retry(
-            make_messages,
+        report, meta = gw.generate_with_retry(
+            "feasibility", make_messages,
             lambda d: _validate_feasibility(d, shot_numbers),
             model=_model or DEFAULT_MODEL, temperature=0.3)
+    except BudgetExceededError as e:
+        raise HTTPException(status_code=402, detail=str(e))
+    except TaskLimitExceededError as e:
+        raise HTTPException(status_code=429, detail=str(e))
     except (AIFatalError, AIRetryableError, AIConfigError) as e:
         # 模型失败：只返回规则结果，明确标记未完成
         results = []

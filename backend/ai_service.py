@@ -143,29 +143,41 @@ class AIService:
         raise AIFatalError(f"请求失败（HTTP {r.status_code}）: {r.text[:120]}")
 
     def chat(self, messages: List[dict], model: str = DEFAULT_MODEL,
-             temperature: float = 0.5, json_object: bool = False) -> Tuple[str, dict]:
-        """返回 (content, usage)。HTTP 层重试最多 2 次（退避）。"""
+             temperature: float = 0.5, json_object: bool = False,
+             *, task_type: str = "chat", cacheable: bool = True,
+             task_id: Optional[str] = None) -> Tuple[str, dict]:
+        """返回 (content, usage)。HTTP 层重试最多 2 次（退避）。
+
+        task_type/cacheable/task_id：Phase 5 可观测性参数。
+        cacheable=False 时跳过结果缓存（用户自带 Key 等场景）。
+        """
+        from .ai_observability import run_observed
         payload = {"model": model, "temperature": temperature, "messages": messages}
         if json_object:
             payload["response_format"] = {"type": "json_object"}
-        last_err = None
-        for i in range(3):
+
+        def _do():
+            last_err = None
+            for i in range(3):
+                try:
+                    data = self._post(payload)
+                    break
+                except AIRetryableError as e:
+                    last_err = e
+                    time.sleep(2 ** i)
+            else:
+                raise last_err
+            self.call_count += 1
+            usage = data.get("usage", {})
+            self.total_tokens += usage.get("total_tokens", 0)
             try:
-                data = self._post(payload)
-                break
-            except AIRetryableError as e:
-                last_err = e
-                time.sleep(2 ** i)
-        else:
-            raise last_err
-        self.call_count += 1
-        usage = data.get("usage", {})
-        self.total_tokens += usage.get("total_tokens", 0)
-        try:
-            content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as e:
-            raise AIFatalError("模型服务返回格式无效：缺少 choices.message.content") from e
-        return content, usage
+                content = data["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError) as e:
+                raise AIFatalError("模型服务返回格式无效：缺少 choices.message.content") from e
+            return content, usage
+
+        return run_observed(task_type=task_type, model=model, payload=payload,
+                            do_call=_do, cacheable=cacheable, task_id=task_id)
 
     def generate_with_retry(
         self,
@@ -174,6 +186,8 @@ class AIService:
         model: str = DEFAULT_MODEL,
         temperature: float = 0.3,
         chat_fn: Optional[Callable] = None,
+        task_type: str = "generate",
+        cacheable: bool = True,
     ) -> Tuple[object, dict]:
         """带校验重试的生成。
 
@@ -182,7 +196,9 @@ class AIService:
         返回 (校验通过的对象, {attempts, usage_list})。
         全部失败则抛 AIFatalError，消息为用户可读的错误说明。
         """
-        chat = chat_fn or (lambda msgs: self.chat(msgs, model=model, temperature=temperature, json_object=True))
+        chat = chat_fn or (lambda msgs: self.chat(
+            msgs, model=model, temperature=temperature, json_object=True,
+            task_type=task_type, cacheable=cacheable))
         feedback: Optional[str] = None
         attempts = 0
         usage_list: List[dict] = []
