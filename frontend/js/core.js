@@ -33,7 +33,9 @@ async function api(path, body) {
     body: JSON.stringify(body || {}),
   });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.detail || ("请求失败 HTTP " + r.status));
+  // TODO(028)：v1 接口失败时 data.code 为业务错误码（如 1001 作品不存在、
+  // 4090 版本冲突），前端应按码展示文案；老 /api/* 接口保持 data.detail 兼容。
+  if (!r.ok) throw new Error(data.message || data.detail || ("请求失败 HTTP " + r.status));
   return data;
 }
 const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
