@@ -5,12 +5,12 @@ $("btn_feasibility").addEventListener("click", async () => {
   showErr("err3", "");
   try {
     setLoading("正在检查拍摄可行性…");
-    const d = await api("/api/feasibility-check", { storyboard: stripUids(state.storyboard) });
+    const d = await api("/api/feasibility-check", { storyboard: stripUids(state.storyboard) }, { signal: workSignal() });
     state.feasibility = d.results;
     state.feasibilityHash = storyboardHash(state.storyboard);
     renderFeasibility(d);
     if (typeof scheduleSave === "function") scheduleSave();
-  } catch (e) { showErr("err3", e.message); }
+  } catch (e) { if (isAbortError(e)) return; showErr("err3", e.message); }
   finally { setLoading(null); }
 });
 

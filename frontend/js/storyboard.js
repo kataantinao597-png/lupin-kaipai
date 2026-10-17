@@ -5,7 +5,7 @@ function renumber() {
 async function refreshValidate() {
   const bar = $("validate_bar");
   try {
-    const d = await api("/api/validate", { storyboard: stripUids(state.storyboard) });
+    const d = await api("/api/validate", { storyboard: stripUids(state.storyboard) }, { signal: workSignal() });
     const total = d.total_seconds;
     const target = state.storyboard.target_duration_seconds;
     if (d.valid) {
@@ -17,7 +17,7 @@ async function refreshValidate() {
     }
     const sbm = $("sb_meta");
     sbm.textContent = `（${d.shot_count} 镜头 / ${total}s）`;
-  } catch (e) { bar.className = "validate-bar bad"; bar.textContent = "校验请求失败：" + e.message; }
+  } catch (e) { if (!isAbortError(e)) { bar.className = "validate-bar bad"; bar.textContent = "校验请求失败：" + e.message; } }
 }
 function renderShots() {
   // 分镜变化后检查可行性报告是否过期
@@ -135,7 +135,7 @@ async function regenShot(num) {
     const d = await api("/api/regenerate-shot", {
       storyboard: stripUids(state.storyboard), shot_number: num,
       instruction, locked: [...state.locked],
-    });
+    }, { signal: workSignal() });
     if (typeof works !== "undefined" && works.activeId !== reqWorkId) return; // 用户已切换作品，丢弃过期响应
     // 007: 保留未改动镜头的原 shot_id（按镜头号匹配），新镜头再补 id
     const oldIds = {};
@@ -148,7 +148,7 @@ async function regenShot(num) {
     if (d.warning) showErr("err3", "注意：" + d.warning);
     renderShots();
     await refreshValidate();
-  } catch (e) { showErr("err3", e.message); }
+  } catch (e) { if (isAbortError(e)) return; showErr("err3", e.message); }
   finally { setLoading(null); }
 }
 $("btn_back2").addEventListener("click", () => showView("v2"));

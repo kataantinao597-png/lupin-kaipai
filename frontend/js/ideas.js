@@ -21,7 +21,7 @@ async function selectIdea(i) {
   const reqWorkId = (typeof works !== "undefined" && works.activeId) || null;
   try {
     setLoading("正在生成结构化分镜…（约半分钟）");
-    const d = await api("/api/storyboard", { product: state.product, direction: state.direction, facts: usableFacts() });
+    const d = await api("/api/storyboard", { product: state.product, direction: state.direction, facts: usableFacts() }, { signal: workSignal() });
     if (typeof works !== "undefined" && works.activeId !== reqWorkId) return; // 用户已切换作品，丢弃过期响应
     state.storyboard = d.storyboard;
     if (typeof assignShotUids === 'function') assignShotUids(state.storyboard);
@@ -32,7 +32,7 @@ async function selectIdea(i) {
     await refreshValidate();
     if (typeof scheduleSave === "function") scheduleSave(); // 003: 分镜生成后走统一持久化入口
     showView("v3");
-  } catch (e) { showErr("err2", e.message); }
+  } catch (e) { if (isAbortError(e)) return; showErr("err2", e.message); }
   finally { setLoading(null); }
 }
 $("btn_back1").addEventListener("click", () => showView("v1"));

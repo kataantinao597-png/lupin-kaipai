@@ -113,9 +113,11 @@ function setSaveStatus(s) {
   saveStatus = s;
   const el = $("save_status");
   if (!el) return;
-  const labels = { saved: "✓ 已保存", saving: "⏳ 保存中…", failed: "⚠ 保存失败", unsaved: "● 未保存" };
+  // S7.3：localStorage 只做本地缓存，明确标注（云端以数据库为准）
+  const labels = { saved: "✓ 已保存（本地缓存）", saving: "⏳ 保存中…", failed: "⚠ 保存失败", unsaved: "● 未保存" };
   el.textContent = labels[s] || s;
-  el.className = "save-status " + s;
+  el.className = "save-status " + s + " cache-note";
+  el.title = "本地缓存，可能过期；多设备/云端以服务器数据库为准";
 }
 
 function persistWorks() {
@@ -171,6 +173,11 @@ function switchWork(id) {
   if (id === works.activeId) return true;
   if (!saveActiveWork()) {
     if (!confirm("当前作品保存失败，切换将丢失未保存的修改。仍要切换吗？")) return false;
+  }
+  // S7.4：取消旧作品未完成的请求，防止旧数据污染新作品
+  if (window.WorkGuard) {
+    window.WorkGuard.abortAll();
+    window.WorkGuard.setActiveWork(id);
   }
   const w = works.items.find((x) => x.id === id);
   if (!w) return false;

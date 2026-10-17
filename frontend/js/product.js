@@ -38,7 +38,7 @@ $("btn_ideas").addEventListener("click", async () => {
     state.product = collectForm();
     state.locked = new Set();
     setLoading("正在生成 3 个创意方向…");
-    const d = await api("/api/ideas", { product: state.product, facts: usableFacts() });
+    const d = await api("/api/ideas", { product: state.product, facts: usableFacts() }, { signal: workSignal() });
     if (typeof works !== "undefined" && works.activeId !== reqWorkId) return; // 用户已切换作品，丢弃过期响应
     state.ideas = d.ideas;
     state.ideasFactsHash = factsHash();
@@ -46,7 +46,7 @@ $("btn_ideas").addEventListener("click", async () => {
     checkFactsStale();
     if (typeof scheduleSave === "function") scheduleSave();
     showView("v2");
-  } catch (e) { showErr("err1", e.message); }
+  } catch (e) { if (isAbortError(e)) return; showErr("err1", e.message); }
   finally { setLoading(null); }
 });
 

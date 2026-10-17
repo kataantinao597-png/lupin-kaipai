@@ -1,0 +1,109 @@
+/* 鲁品开拍 - S7 组件样式：状态组件 / 冲突对话框 / 过期徽章 / 离线横幅 */
+
+/* ---------- 统一状态组件 ---------- */
+.lp-status-wrap { min-height: 120px; }
+.lp-status { text-align: center; padding: 32px 16px; color: #5b5348; }
+.lp-status-icon { font-size: 40px; margin-bottom: 8px; opacity: .8; }
+.lp-status-title { font-size: 16px; font-weight: 600; margin: 0 0 6px; color: #3a342c; }
+.lp-status-hint { font-size: 13px; color: #8a8175; margin: 0 0 12px; line-height: 1.6; }
+.lp-status-text { font-size: 13px; color: #8a8175; }
+.lp-status-btn {
+  padding: 8px 20px; border: 1px solid #c9bfae; border-radius: 6px;
+  background: #fff; color: #3a342c; cursor: pointer; font-size: 14px;
+}
+.lp-status-btn:hover { background: #f5f0e6; }
+.lp-error .lp-status-icon { color: #c0392b; }
+.lp-forbidden .lp-status-icon { color: #7f8c8d; }
+
+/* loading 骨架屏 */
+.lp-skeleton { display: flex; flex-direction: column; gap: 10px; max-width: 420px; margin: 0 auto 12px; }
+.lp-skeleton span {
+  display: block; height: 14px; border-radius: 7px;
+  background: linear-gradient(90deg, #ece5d8 25%, #f7f2e9 50%, #ece5d8 75%);
+  background-size: 200% 100%;
+  animation: lp-shimmer 1.4s infinite;
+}
+.lp-skeleton span.short { width: 55%; }
+@keyframes lp-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .lp-skeleton span { animation: none; }
+}
+
+/* ---------- 断网横幅 ---------- */
+#lp-offline-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+  background: #8a6d1b; color: #fff; text-align: center;
+  font-size: 13px; padding: 8px 12px;
+}
+.lp-offline-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: #ffd75e; margin-right: 8px;
+  animation: lp-blink 1.2s infinite;
+}
+@keyframes lp-blink { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) {
+  .lp-offline-dot { animation: none; }
+}
+
+/* ---------- 冲突对话框 ---------- */
+.lp-modal-overlay {
+  position: fixed; inset: 0; z-index: 10000;
+  background: rgba(40, 32, 22, .55);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.lp-modal-nested { z-index: 10001; background: rgba(40, 32, 22, .65); }
+.lp-modal {
+  background: #fffdf8; border-radius: 12px; padding: 24px;
+  max-width: 560px; width: 100%; max-height: 85vh; overflow: auto;
+  box-shadow: 0 12px 48px rgba(0,0,0,.25);
+  border: 1px solid #e3d9c6;
+}
+.lp-modal-sm { max-width: 420px; }
+.lp-modal-title { margin: 0 0 10px; font-size: 17px; color: #3a342c; }
+.lp-modal-desc { font-size: 14px; line-height: 1.7; color: #5b5348; margin: 0 0 16px; }
+.lp-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.lp-btn {
+  padding: 9px 16px; border-radius: 7px; font-size: 14px; cursor: pointer;
+  border: 1px solid #c9bfae; background: #fff; color: #3a342c;
+}
+.lp-btn:hover { background: #f5f0e6; }
+.lp-btn-primary { background: #2f5d3a; border-color: #2f5d3a; color: #fff; }
+.lp-btn-primary:hover { background: #264b2f; }
+.lp-btn-danger { background: #b03a2e; border-color: #b03a2e; color: #fff; }
+.lp-btn-danger:hover { background: #962e24; }
+.lp-btn-ghost { border-color: transparent; color: #8a8175; }
+.lp-diff-wrap { margin-bottom: 14px; }
+.lp-diff-wrap.hidden { display: none; }
+.lp-diff-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.lp-diff-table th, .lp-diff-table td {
+  border: 1px solid #e8dfcd; padding: 6px 8px; text-align: left;
+  vertical-align: top; word-break: break-word;
+}
+.lp-diff-table th { background: #f5f0e6; }
+.diff-path { color: #8a8175; white-space: nowrap; }
+.diff-mod td:nth-child(2) { background: #fef3e2; }
+.diff-mod td:nth-child(3) { background: #e8f5e9; }
+.diff-add td:nth-child(3) { background: #e8f5e9; }
+.diff-del td:nth-child(2) { background: #fdecea; }
+.diff-na { color: #b0a695; }
+.lp-diff-empty { color: #8a8175; font-size: 13px; }
+
+/* ---------- 过期徽章 / 提示 ---------- */
+.lp-badge {
+  display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 10px;
+  margin-right: 6px; vertical-align: middle; white-space: nowrap;
+}
+.lp-badge-expired { background: #fdecea; color: #b03a2e; border: 1px solid #e8aFA0; font-weight: 600; }
+.lp-badge-rework { background: #fef3e2; color: #b7791f; border: 1px solid #ecd9a8; font-weight: 600; }
+.lp-expiry-notice {
+  background: #fef3e2; border: 1px solid #ecd9a8; border-radius: 8px;
+  padding: 10px 14px; font-size: 13px; color: #7a5c14; margin-bottom: 12px; line-height: 1.6;
+}
+.lp-review-expired { position: relative; opacity: .92; }
+.lp-review-expired::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  border: 2px dashed #e0aFA0; pointer-events: none;
+}
+
+/* ---------- 保存状态：本地缓存标注 ---------- */
+.save-status.cache-note { cursor: help; }

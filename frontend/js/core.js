@@ -21,7 +21,8 @@ function showErr(id, msg) {
   el.textContent = msg || "";
   el.classList.toggle("show", !!msg);
 }
-async function api(path, body) {
+async function api(path, body, opts) {
+  opts = opts || {};
   const headers = { "Content-Type": "application/json" };
   // 用户自定义 Key 通过请求头透传（仅内存，不持久化）
   const cfg = getApiConfig();
@@ -31,14 +32,32 @@ async function api(path, body) {
   const r = await fetch(path, {
     method: "POST", headers,
     body: JSON.stringify(body || {}),
+    signal: opts.signal || undefined, // S7.4：调用方可经 WorkGuard 传入 signal
   });
   const data = await r.json().catch(() => ({}));
   // TODO(028)：v1 接口失败时 data.code 为业务错误码（如 1001 作品不存在、
   // 4090 版本冲突），前端应按码展示文案；老 /api/* 接口保持 data.detail 兼容。
-  if (!r.ok) throw new Error(data.message || data.detail || ("请求失败 HTTP " + r.status));
+  // S7：错误对象携带 status/code/payload，供 LPConflict.isConflict 等识别。
+  if (!r.ok) {
+    const err = new Error(data.message || data.detail || ("请求失败 HTTP " + r.status));
+    err.status = r.status;
+    err.code = data.code;
+    err.payload = data;
+    throw err;
+  }
   return data;
 }
 const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/* S7.4：作品相关请求的 AbortSignal。切换作品时 WorkGuard.abortAll() 会取消
+   未完成的旧请求；响应回来后调用方还应校验 work 归属（见 015）。 */
+function workSignal() {
+  try { return (window.WorkGuard && window.WorkGuard.signal()) || undefined; }
+  catch (e) { return undefined; }
+}
+function isAbortError(e) {
+  return !!(e && (e.name === "AbortError" || /abort/i.test(String(e.message || ""))));
+}
 
 /* 016: 统一前端状态更新入口。
    用法：updateState((st) => { st.risks[i].confirmed = true; });
