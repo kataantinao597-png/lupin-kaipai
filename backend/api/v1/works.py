@@ -1,5 +1,10 @@
 """作品 API（047/048/050/091/092/099）：租户隔离新体系。
 
+027：全部接口使用标准响应信封 {"code":0,"data":...,"request_id":...}，
+     response_model=ApiResponse[...]（删除类 204 无响应体除外）。
+028：错误使用 error_codes 业务码，前端可按码展示。
+031：作品 data 已类型化为 WorkData（见 schemas.py）。
+
 - POST   /api/v1/works                       创建作品（必须指定 org_id，需 work:create）
 - GET    /api/v1/works?org_id=...             列出某组织的作品（048：强制 org 上下文；092：排除回收站）
 - GET    /api/v1/works/trash?org_id=...       092：回收站列表（需 work:delete 权限）
@@ -12,15 +17,13 @@
 - GET    /api/v1/works/{work_id}/export-json 099：导出作品完整 JSON（含分镜、事实、版本历史）
 - POST   /api/v1/works/{work_id}/export-all  导出全部数据（050：二次验证）
 
-现有 localStorage 作品暂不迁移（Phase 3），此为新体系起点。
-
 注意：FastAPI 按声明顺序匹配路由，/trash 与 /{id}/xxx 等固定路径
 必须声明在 /{work_id} 之前，否则会被 {work_id} 吞掉。
 """
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from ...auth.deps import get_current_user
@@ -31,7 +34,13 @@ from ...rbac import (
     get_membership, has_permission, require_work_access, assert_can,
     ROLE_OWNER,
 )
-from .schemas import WorkCreate, WorkUpdate, WorkOut, WorkVersionOut, TrashWorkOut
+from ...core import error_codes
+from ...core.exceptions import AuthError, BusinessError
+from ...core.response import ApiResponse, success
+from .schemas import (
+    WorkCreate, WorkUpdate, WorkOut, WorkVersionOut, TrashWorkOut,
+    WorkData, WorkExportOut, WorkExportWork, WorkExportVersion, ExportAllOut,
+)
 
 router = APIRouter(prefix="/works", tags=["v1-works"])
 
@@ -93,50 +102,81 @@ def _get_active_work(db: Session, work_id: str) -> models.Work:
                     models.Work.deleted_at.is_(None))
             .first())
     if work is None:
-        raise HTTPException(status_code=404, detail="作品不存在")
+        raise BusinessError("作品不存在",
+                            code=error_codes.WORK_NOT_FOUND, http_status=404)
     return work
 
 
-@router.post("", response_model=WorkOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ApiResponse[WorkOut],
+             status_code=status.HTTP_201_CREATED)
 def create_work(
     req: WorkCreate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """048：作品创建时必须指定 org_id；调用者在该组织内需有 work:create。"""
+    """创建作品。
+
+    权限要求：登录用户；在目标组织内拥有 work:create 权限（048）。
+
+    请求示例：
+        POST /api/v1/works
+        {"org_id": "org_123", "title": "章丘大葱宣传片",
+         "data": {"product": {"product_name": "章丘大葱"}}}
+
+    响应结构：标准信封，data 为 WorkOut（含类型化的 data.product/facts/storyboard）。
+
+    错误码：
+        4002 ORG_NOT_FOUND（组织不存在；无权限时同样返回 404 防枚举）
+        4000 INVALID_PARAM（请求体校验失败，由 422 统一返回）
+    """
     org = db.query(models.Organization).filter(
         models.Organization.id == req.org_id).first()
     if org is None:
-        raise HTTPException(status_code=404, detail="组织不存在")
+        raise BusinessError("组织不存在",
+                            code=error_codes.ORG_NOT_FOUND, http_status=404)
     ms = get_membership(db, user.id, req.org_id)
     if ms is None or not has_permission(ms.role, "work:create"):
         # 防枚举：与"组织不存在"返回一致
-        raise HTTPException(status_code=404, detail="组织不存在")
+        raise BusinessError("组织不存在",
+                            code=error_codes.ORG_NOT_FOUND, http_status=404)
     work = models.Work(
         org_id=req.org_id,
         owner_id=user.id,
         title=req.title.strip(),
-        data_json=json.dumps(req.data or {}, ensure_ascii=False),
+        data_json=json.dumps(req.data.model_dump(mode="json"), ensure_ascii=False),
     )
     db.add(work)
     db.commit()
     db.refresh(work)
-    return _work_out(work)
+    return success(_work_out(work))
 
 
-@router.get("", response_model=list[WorkOut])
+@router.get("", response_model=ApiResponse[list[WorkOut]])
 def list_works(
     org_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """048：租户隔离——作品列表查询强制带 org 上下文，无 org_id 参数直接 400。
-    092：排除回收站（deleted_at 非空的不返回）。"""
+    """列出某组织的作品。
+
+    权限要求：登录用户；组织成员且拥有 work:read 权限（048 强制 org 上下文）。
+
+    请求示例：
+        GET /api/v1/works?org_id=org_123
+
+    响应结构：标准信封，data 为 WorkOut 数组（092：排除回收站，按更新时间倒序）。
+
+    错误码：
+        4000 INVALID_PARAM（缺少 org_id 参数）
+        4002 ORG_NOT_FOUND（组织不存在或无权限，防枚举）
+    """
     if not org_id:
-        raise HTTPException(status_code=400, detail="必须指定 org_id")
+        raise BusinessError("必须指定 org_id",
+                            code=error_codes.INVALID_PARAM, http_status=400)
     ms = get_membership(db, user.id, org_id)
     if ms is None or not has_permission(ms.role, "work:read"):
-        raise HTTPException(status_code=404, detail="组织不存在")
+        raise BusinessError("组织不存在",
+                            code=error_codes.ORG_NOT_FOUND, http_status=404)
     works = (
         db.query(models.Work)
         .filter(models.Work.org_id == org_id,          # 048：强制 org 过滤
@@ -144,10 +184,10 @@ def list_works(
         .order_by(models.Work.updated_at.desc())
         .all()
     )
-    return [_work_out(w) for w in works]
+    return success([_work_out(w) for w in works])
 
 
-@router.get("/trash", response_model=list[TrashWorkOut])
+@router.get("/trash", response_model=ApiResponse[list[TrashWorkOut]])
 def list_trash(
     org_id: str,
     user: User = Depends(get_current_user),
@@ -155,10 +195,12 @@ def list_trash(
 ):
     """092：回收站列表。需要 work:delete 权限（能删才能看回收站）。"""
     if not org_id:
-        raise HTTPException(status_code=400, detail="必须指定 org_id")
+        raise BusinessError("必须指定 org_id",
+                            code=error_codes.INVALID_PARAM, http_status=400)
     ms = get_membership(db, user.id, org_id)
     if ms is None or not has_permission(ms.role, "work:delete"):
-        raise HTTPException(status_code=404, detail="组织不存在")
+        raise BusinessError("组织不存在",
+                            code=error_codes.ORG_NOT_FOUND, http_status=404)
     works = (
         db.query(models.Work)
         .filter(models.Work.org_id == org_id,
@@ -169,22 +211,34 @@ def list_trash(
     out = []
     for w in works:
         wo = _work_out(w)
-        out.append(TrashWorkOut(**wo.model_dump(), deleted_at=w.deleted_at))
-    return out
+        out.append(TrashWorkOut(**wo.model_dump(mode="json"), deleted_at=w.deleted_at))
+    return success(out)
 
 
-@router.get("/{work_id}", response_model=WorkOut)
+@router.get("/{work_id}", response_model=ApiResponse[WorkOut])
 def get_work(
     access: tuple = Depends(require_work_access("work:read")),
     db: Session = Depends(get_db),
 ):
+    """获取作品详情。
+
+    权限要求：登录用户；作品所属组织成员且拥有 work:read（047 对象级权限）。
+
+    请求示例：
+        GET /api/v1/works/wk_abc123
+
+    响应结构：标准信封，data 为 WorkOut。
+
+    错误码：
+        1001 WORK_NOT_FOUND（作品不存在 / 无权限 / 在回收站，防枚举统一 404）
+    """
     work, _ms = access
     # 092：回收站作品对正常详情接口不可见
     work = _get_active_work(db, work.id)
-    return _work_out(work)
+    return success(_work_out(work))
 
 
-@router.patch("/{work_id}", response_model=WorkOut)
+@router.patch("/{work_id}", response_model=ApiResponse[WorkOut])
 def update_work(
     work_id: str,
     req: WorkUpdate,
@@ -192,6 +246,27 @@ def update_work(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    """更新作品（标题 / 文档 / 状态）。
+
+    权限要求：登录用户；组织成员且拥有 work:update（047）。
+
+    请求示例：
+        PATCH /api/v1/works/wk_abc123
+        {"title": "新标题", "version": 3,
+         "data": {"product": {"product_name": "章丘大葱"}}}
+
+    说明：
+        - 091：data 实质变更前自动存快照（仅改标题不触发）；
+        - 088：携带 version 时做乐观锁检查，冲突返回 409；
+        - data 为全量替换语义（031：WorkData 类型化）。
+
+    响应结构：标准信封，data 为更新后的 WorkOut。
+
+    错误码：
+        1001 WORK_NOT_FOUND（作品不存在 / 在回收站）
+        4090 VERSION_CONFLICT（版本冲突，请刷新后重试）
+        1004 INVALID_WORK_STATUS（非法 status，仅允许 draft/active/archived）
+    """
     work, _ms = access
     # 重新从当前会话加载以获得可写对象（Depends 内会话已关闭）
     work = _get_active_work(db, work_id)
@@ -204,27 +279,30 @@ def update_work(
                 .with_for_update()
                 .first())
         if work is None:
-            raise HTTPException(status_code=404, detail="作品不存在")
+            raise BusinessError("作品不存在",
+                                code=error_codes.WORK_NOT_FOUND, http_status=404)
         if work.version != req.version:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"作品已被他人修改（当前版本 {work.version}），请刷新后重试",
-            )
+            raise BusinessError(
+                f"作品已被他人修改（当前版本 {work.version}），请刷新后重试",
+                code=error_codes.VERSION_CONFLICT, http_status=409)
     # 091：data 实质变更前先存快照（仅改标题不触发快照）
     if req.data is not None:
         _snapshot_work(db, work, user.id)
-        work.data_json = json.dumps(req.data, ensure_ascii=False)
+        work.data_json = json.dumps(req.data.model_dump(mode="json"),
+                                    ensure_ascii=False)
     if req.title is not None:
         work.title = req.title.strip()
     if req.status is not None:
         if req.status not in ("draft", "active", "archived"):
-            raise HTTPException(status_code=422, detail="非法 status")
+            raise BusinessError("非法 status",
+                                code=error_codes.INVALID_WORK_STATUS,
+                                http_status=422)
         work.status = req.status
     if req.version is not None:
         work.version = work.version + 1
     db.commit()
     db.refresh(work)
-    return _work_out(work)
+    return success(_work_out(work))
 
 
 @router.delete("/{work_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -234,29 +312,41 @@ def delete_work(
     access: tuple = Depends(require_work_access("work:delete")),
     db: Session = Depends(get_db),
 ):
-    """092：默认软删除（进回收站，可恢复）。
-    050：删除作品是重要操作——路由 Depends 之外，handler 内二次验证权限。
-    硬删除：只允许 owner，且作品必须在回收站满 30 天。
+    """删除作品（092：默认软删除进回收站，可恢复）。
+
+    权限要求：登录用户；组织成员且拥有 work:delete；handler 内二次验证（050）。
+
+    请求示例：
+        DELETE /api/v1/works/wk_abc123
+        DELETE /api/v1/works/wk_abc123?hard=true
+
+    响应：204 无内容（删除类接口不套信封）。
+
+    错误码：
+        1001 WORK_NOT_FOUND（作品不存在）
+        4001 PERMISSION_DENIED（硬删除非 owner 执行）
+        4000 INVALID_PARAM（不在回收站直接硬删除 / 未满 30 天）
     """
     work, ms = access
     assert_can(ms.role, "work:delete", "删除作品")  # 050 二次验证
     work = db.query(models.Work).filter(models.Work.id == work_id).first()
     if work is None:  # 已被硬删除的极端竞态
-        raise HTTPException(status_code=404, detail="作品不存在")
+        raise BusinessError("作品不存在",
+                            code=error_codes.WORK_NOT_FOUND, http_status=404)
 
     if hard:
         if ms.role != ROLE_OWNER:
-            raise HTTPException(status_code=403, detail="硬删除只允许组织 owner 执行")
+            raise AuthError("硬删除只允许组织 owner 执行", forbidden=True)
         if work.deleted_at is None:
-            raise HTTPException(status_code=400,
-                                detail="作品不在回收站，不能直接硬删除（请先软删除）")
+            raise BusinessError("作品不在回收站，不能直接硬删除（请先软删除）",
+                                code=error_codes.INVALID_PARAM, http_status=400)
         deleted_at = work.deleted_at
         if deleted_at.tzinfo is None:
             # SQLite 存入的 datetime 可能丢失 tzinfo，统一按 UTC 处理
             deleted_at = deleted_at.replace(tzinfo=timezone.utc)
         if (datetime.now(timezone.utc) - deleted_at).days < 30:
-            raise HTTPException(status_code=400,
-                                detail="回收站未满 30 天，不能硬删除（到期由清理任务自动处理）")
+            raise BusinessError("回收站未满 30 天，不能硬删除（到期由清理任务自动处理）",
+                                code=error_codes.INVALID_PARAM, http_status=400)
         db.query(models.WorkVersion).filter(
             models.WorkVersion.work_id == work.id).delete()
         db.delete(work)
@@ -271,41 +361,66 @@ def delete_work(
     return None
 
 
-@router.post("/{work_id}/restore", response_model=WorkOut)
+@router.post("/{work_id}/restore", response_model=ApiResponse[WorkOut])
 def restore_work(
     work_id: str,
     access: tuple = Depends(require_work_access("work:delete")),
     db: Session = Depends(get_db),
 ):
-    """092：从回收站恢复作品。需要 work:delete 权限。"""
+    """从回收站恢复作品（092）。
+
+    权限要求：登录用户；组织成员且拥有 work:delete 权限。
+
+    请求示例：
+        POST /api/v1/works/wk_abc123/restore
+
+    响应结构：标准信封，data 为恢复后的 WorkOut。
+
+    错误码：
+        1001 WORK_NOT_FOUND（回收站中没有该作品）
+        4001 PERMISSION_DENIED（无 work:delete 权限）
+    """
     work, ms = access
     assert_can(ms.role, "work:delete", "恢复作品")
     work = db.query(models.Work).filter(models.Work.id == work_id).first()
     if work is None or work.deleted_at is None:
-        raise HTTPException(status_code=404, detail="回收站中没有该作品")
+        raise BusinessError("回收站中没有该作品",
+                            code=error_codes.WORK_NOT_FOUND, http_status=404)
     work.deleted_at = None
     db.commit()
     db.refresh(work)
-    return _work_out(work)
+    return success(_work_out(work))
 
 
-@router.get("/{work_id}/versions", response_model=list[WorkVersionOut])
+@router.get("/{work_id}/versions", response_model=ApiResponse[list[WorkVersionOut]])
 def list_versions(
     work_id: str,
     access: tuple = Depends(require_work_access("work:read")),
     db: Session = Depends(get_db),
 ):
-    """091：历史版本列表（新到旧）。回收站作品不可查。"""
+    """获取作品历史版本列表（091）。
+
+    权限要求：登录用户；组织成员且拥有 work:read。
+
+    请求示例：
+        GET /api/v1/works/wk_abc123/versions
+
+    响应结构：标准信封，data 为 WorkVersionOut 数组（版本号倒序）。
+
+    错误码：
+        1001 WORK_NOT_FOUND（作品不存在 / 在回收站）
+    """
     work, _ms = access
     _get_active_work(db, work.id)
     versions = (db.query(models.WorkVersion)
                 .filter(models.WorkVersion.work_id == work_id)
                 .order_by(models.WorkVersion.version_no.desc())
                 .all())
-    return [_version_out(v) for v in versions]
+    return success([_version_out(v) for v in versions])
 
 
-@router.post("/{work_id}/versions/{version_no}/restore", response_model=WorkOut)
+@router.post("/{work_id}/versions/{version_no}/restore",
+             response_model=ApiResponse[WorkOut])
 def restore_version(
     work_id: str,
     version_no: int,
@@ -321,28 +436,43 @@ def restore_version(
                    models.WorkVersion.version_no == version_no)
            .first())
     if ver is None:
-        raise HTTPException(status_code=404, detail="版本不存在")
+        raise BusinessError("版本不存在",
+                            code=error_codes.WORK_VERSION_NOT_FOUND,
+                            http_status=404)
     _snapshot_work(db, work, user.id)  # 当前状态先存档
     work.data_json = ver.snapshot_json
     work.title = ver.title
     db.commit()
     db.refresh(work)
-    return _work_out(work)
+    return success(_work_out(work))
 
 
-@router.get("/{work_id}/export-json")
+@router.get("/{work_id}/export-json", response_model=ApiResponse[WorkExportOut])
 def export_json(
     work_id: str,
     access: tuple = Depends(require_work_access("work:export")),
     db: Session = Depends(get_db),
 ):
-    """099：导出作品完整 JSON（含分镜、事实、版本历史），供备份/迁移。
-    050：导出是重要操作——二次验证权限。"""
+    """导出作品完整 JSON（099：备份/迁移用）。
+
+    权限要求：登录用户；组织成员且拥有 work:export；二次验证（050）。
+
+    请求示例：
+        GET /api/v1/works/wk_abc123/export-json
+
+    响应结构：标准信封，data 为 WorkExportOut
+        {format, format_version, exported_at, work{...data}, versions[...]}。
+
+    错误码：
+        1001 WORK_NOT_FOUND（作品不存在 / 在回收站）
+        4001 PERMISSION_DENIED（无导出权限）
+    """
     work, ms = access
     assert_can(ms.role, "work:export", "导出作品数据")
     work = db.query(models.Work).filter(models.Work.id == work_id).first()
     if work is None or work.deleted_at is not None:
-        raise HTTPException(status_code=404, detail="作品不存在")
+        raise BusinessError("作品不存在",
+                            code=error_codes.WORK_NOT_FOUND, http_status=404)
     try:
         data = json.loads(work.data_json or "{}")
     except (ValueError, TypeError):
@@ -351,33 +481,29 @@ def export_json(
                 .filter(models.WorkVersion.work_id == work_id)
                 .order_by(models.WorkVersion.version_no.asc())
                 .all())
-    return {
-        "format": "lupin-work-export",
-        "format_version": 1,
-        "exported_at": datetime.now(timezone.utc).isoformat(),
-        "work": {
-            "id": work.id,
-            "org_id": work.org_id,
-            "owner_id": work.owner_id,
-            "title": work.title,
-            "created_at": work.created_at.isoformat() if work.created_at else None,
-            "updated_at": work.updated_at.isoformat() if work.updated_at else None,
-            "data": data,   # 含 product/facts/storyboard/shoot 等全部业务数据
-        },
-        "versions": [
-            {
-                "version_no": v.version_no,
-                "title": v.title,
-                "created_by": v.created_by,
-                "created_at": v.created_at.isoformat() if v.created_at else None,
-                "snapshot": json.loads(v.snapshot_json or "{}"),
-            }
-            for v in versions
-        ],
-    }
+
+    def _snap(v) -> WorkExportVersion:
+        try:
+            snap = json.loads(v.snapshot_json or "{}")
+        except (ValueError, TypeError):
+            snap = {}
+        return WorkExportVersion(
+            version_no=v.version_no, title=v.title or "",
+            created_by=v.created_by, created_at=v.created_at,
+            snapshot=snap)
+
+    out = WorkExportOut(
+        exported_at=datetime.now(timezone.utc),
+        work=WorkExportWork(
+            id=work.id, org_id=work.org_id, owner_id=work.owner_id,
+            title=work.title or "", created_at=work.created_at,
+            updated_at=work.updated_at, data=data),
+        versions=[_snap(v) for v in versions],
+    )
+    return success(out)
 
 
-@router.post("/{work_id}/export-all")
+@router.post("/{work_id}/export-all", response_model=ApiResponse[ExportAllOut])
 def export_all(
     work_id: str,
     access: tuple = Depends(require_work_access("work:export")),
@@ -387,7 +513,4 @@ def export_all(
     work, ms = access
     assert_can(ms.role, "work:export", "导出全部数据")  # 050 二次验证
     work = _get_active_work(db, work.id)
-    return {
-        "work": _work_out(work).model_dump(),
-        "exported_by_role": ms.role,
-    }
+    return success(ExportAllOut(work=_work_out(work), exported_by_role=ms.role))

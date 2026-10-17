@@ -144,3 +144,44 @@ class StoryboardRepository:
         for idx, sid in enumerate(ordered_shot_ids, start=1):
             shots[sid].shot_no = idx
         self.db.flush()
+
+    # ---- 032：镜头锁定状态（事务边界） ----
+
+    @transactional_method
+    def set_shot_lock(self, storyboard_id: str, shot_id: str,
+                      locked: bool) -> None:
+        """032：单个镜头锁定/解锁——事务内修改，失败回滚。
+
+        锁定镜头在 AI 重生成时受保护（app.py 的 locked 列表即来源于此）。
+        """
+        shot = self.db.get(Shot, shot_id)
+        if shot is None or shot.storyboard_id != storyboard_id:
+            raise EntityNotFound("Shot", shot_id)
+        shot.locked = locked
+        self.db.flush()
+
+    @transactional_method
+    def set_shots_lock(self, storyboard_id: str,
+                       shot_ids: list[str], locked: bool) -> int:
+        """032：批量锁定/解锁——同一事务内完成，要么全成功要么全回滚。
+
+        任一 shot_id 非法则抛 EntityNotFound，整个批次回滚。
+        返回实际修改的条数。
+        """
+        count = 0
+        for sid in shot_ids:
+            shot = self.db.get(Shot, sid)
+            if shot is None or shot.storyboard_id != storyboard_id:
+                raise EntityNotFound("Shot", sid)
+            shot.locked = locked
+            count += 1
+        self.db.flush()
+        return count
+
+    def list_locked_shot_nos(self, storyboard_id: str) -> list[int]:
+        """取已锁定镜头的展示编号（供 AI 重生成时保护）。"""
+        return list(self.db.scalars(
+            select(Shot.shot_no).where(
+                Shot.storyboard_id == storyboard_id,
+                Shot.locked.is_(True))
+            .order_by(Shot.shot_no.asc())))

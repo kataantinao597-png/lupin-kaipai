@@ -151,6 +151,9 @@ class Shot(Base):
     shot_id_stable = Column(String(64), nullable=True)
     content_json = Column(JSON, nullable=False, default=dict)
     duration_seconds = Column(Integer, nullable=False, default=0)
+    # 032：镜头锁定状态——锁定镜头不许改动，由 StoryboardRepository.set_shot_lock()
+    # 在事务中修改
+    locked = Column(Boolean, nullable=False, default=False, server_default="0")
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
                         onupdate=_now)
@@ -218,3 +221,135 @@ class WorkVersion(Base):
     title = Column(String(256), nullable=False, default="")
     created_by = Column(String(64), nullable=False, default="")  # 逻辑关联 users.id
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+# 032/201：审核状态机——区分"未查看"与"已批准"，审核结论绑定内容版本。
+REVIEW_STATUS_PENDING = "pending"            # 未提交
+REVIEW_STATUS_IN_REVIEW = "in_review"       # 审核中
+REVIEW_STATUS_CHANGES = "changes_requested"  # 需修改
+REVIEW_STATUS_APPROVED = "approved"          # 已通过
+REVIEW_STATUS_REJECTED = "rejected"          # 已驳回
+REVIEW_STATUS_EXPIRED = "expired"            # 已过期（内容变更后自动失效）
+REVIEW_STATUSES = (
+    REVIEW_STATUS_PENDING, REVIEW_STATUS_IN_REVIEW, REVIEW_STATUS_CHANGES,
+    REVIEW_STATUS_APPROVED, REVIEW_STATUS_REJECTED, REVIEW_STATUS_EXPIRED,
+)
+# 合法流转（032：非法流转在 ReviewRepository.transition() 拒绝）
+REVIEW_TRANSITIONS: dict[str, tuple[str, ...]] = {
+    REVIEW_STATUS_PENDING: (REVIEW_STATUS_IN_REVIEW, REVIEW_STATUS_EXPIRED),
+    REVIEW_STATUS_IN_REVIEW: (
+        REVIEW_STATUS_APPROVED, REVIEW_STATUS_REJECTED,
+        REVIEW_STATUS_CHANGES, REVIEW_STATUS_EXPIRED,
+    ),
+    REVIEW_STATUS_CHANGES: (REVIEW_STATUS_IN_REVIEW, REVIEW_STATUS_EXPIRED),
+    REVIEW_STATUS_APPROVED: (REVIEW_STATUS_EXPIRED,),
+    REVIEW_STATUS_REJECTED: (REVIEW_STATUS_IN_REVIEW, REVIEW_STATUS_EXPIRED),
+    REVIEW_STATUS_EXPIRED: (REVIEW_STATUS_IN_REVIEW,),
+}
+
+
+class Review(Base):
+    """032/201：内容审核记录。
+
+    - 203：审核结论绑定 content_hash（分镜版本哈希），内容变则自动 expired。
+    - 一条作品同一时刻只有一条"有效"审核（pending/in_review/approved），
+      历史结论保留在表中做审计（213）。
+    """
+    __tablename__ = "reviews"
+    __table_args__ = (
+        Index("ix_review_work", "work_id"),
+        Index("ix_review_status", "status"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="RESTRICT"),
+                    nullable=False)
+    work_id = Column(String(32), ForeignKey("works.id", ondelete="CASCADE"),
+                     nullable=False)
+    storyboard_id = Column(String(32), ForeignKey("storyboards.id", ondelete="SET NULL"),
+                           nullable=True)
+    # 203：被审核内容的内容哈希（分镜 version + 镜头快照哈希）
+    content_hash = Column(String(64), nullable=False, default="")
+    status = Column(String(16), nullable=False, default=REVIEW_STATUS_PENDING,
+                    server_default=REVIEW_STATUS_PENDING)
+    # 205：每项风险的处置结果 {risk_id: retained|modified|removed|escalated}
+    decisions_json = Column(JSON, nullable=False, default=dict)
+    reviewer_id = Column(String(64), nullable=True)   # 逻辑关联 users.id
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    comment = Column(Text, nullable=False, default="")
+    # 088 风格乐观锁
+    version = Column(Integer, nullable=False, default=1, server_default="1")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)
+
+
+# 035/036：AI 异步任务表
+TASK_TYPE_IDEAS = "ideas"
+TASK_TYPE_STORYBOARD = "storyboard"
+TASK_TYPE_REGEN_SHOT = "regen_shot"
+TASK_TYPE_RISK = "risk_check"
+TASK_TYPE_FEASIBILITY = "feasibility"
+TASK_TYPES = (
+    TASK_TYPE_IDEAS, TASK_TYPE_STORYBOARD, TASK_TYPE_REGEN_SHOT,
+    TASK_TYPE_RISK, TASK_TYPE_FEASIBILITY,
+)
+
+TASK_STATUS_PENDING = "pending"
+TASK_STATUS_RUNNING = "running"
+TASK_STATUS_SUCCEEDED = "succeeded"
+TASK_STATUS_FAILED = "failed"
+TASK_STATUS_CANCELLED = "cancelled"
+TASK_STATUSES = (
+    TASK_STATUS_PENDING, TASK_STATUS_RUNNING, TASK_STATUS_SUCCEEDED,
+    TASK_STATUS_FAILED, TASK_STATUS_CANCELLED,
+)
+# 036：合法状态转换；终态不允许再转
+TASK_TRANSITIONS: dict[str, tuple[str, ...]] = {
+    TASK_STATUS_PENDING: (TASK_STATUS_RUNNING, TASK_STATUS_CANCELLED),
+    TASK_STATUS_RUNNING: (
+        TASK_STATUS_SUCCEEDED, TASK_STATUS_FAILED, TASK_STATUS_CANCELLED,
+    ),
+    TASK_STATUS_SUCCEEDED: (),
+    TASK_STATUS_FAILED: (),
+    TASK_STATUS_CANCELLED: (),
+}
+
+
+class AITask(Base):
+    """035：AI 异步任务。ThreadPoolExecutor 执行，结果落库，前端轮询。
+
+    036：status 流转必须走 validate_task_transition()，非法抛 IllegalTaskTransition。
+    """
+    __tablename__ = "ai_tasks"
+    __table_args__ = (
+        Index("ix_aitask_org", "org_id"),
+        Index("ix_aitask_status", "status"),
+        Index("ix_aitask_created", "created_at"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="RESTRICT"),
+                    nullable=False)
+    created_by = Column(String(64), nullable=False, default="")  # 逻辑关联 users.id
+    task_type = Column(String(32), nullable=False)
+    status = Column(String(16), nullable=False, default=TASK_STATUS_PENDING,
+                    server_default=TASK_STATUS_PENDING)
+    # 请求参数（脱敏后存：不存 API Key）
+    payload_json = Column(JSON, nullable=False, default=dict)
+    # 成功结果
+    result_json = Column(JSON, nullable=True)
+    # 失败原因 / 取消原因
+    error = Column(Text, nullable=True)
+    # 0-100；running 阶段更新
+    progress = Column(Integer, nullable=False, default=0, server_default="0")
+    # 实际使用的模型（122：记录实际生效配置，防静默回退）
+    model_used = Column(String(128), nullable=True)
+    # 协作式取消标记：running 任务由工作线程轮询此标记
+    cancel_requested = Column(Boolean, nullable=False, default=False,
+                              server_default="0")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)

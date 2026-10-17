@@ -144,3 +144,24 @@ class WorkRepository:
         return self.db.scalar(
             select(func.count()).select_from(Work).where(
                 Work.org_id == org_id, Work.deleted_at.is_(None))) or 0
+
+    # ---------- 025：领域实体返回（示例） ----------
+
+    def get_domain(self, work_id: str, org_id: str):
+        """025 示例：返回领域实体而非 ORM 对象。
+
+        services/api 层应使用此方法；旧 get() 保留兼容，逐步迁移。
+        """
+        from ..domain.converters import work_to_domain
+        orm = self.get(work_id, org_id)
+        return work_to_domain(orm) if orm else None
+
+    def list_domain_by_org(self, org_id: str, include_archived: bool = False,
+                           limit: int = 100, offset: int = 0):
+        """025 示例：批量返回领域实体。"""
+        from ..domain.converters import work_to_domain
+        return [work_to_domain(w) for w in
+                self.list_by_org(org_id, include_archived, limit, offset)]
+
+    # TODO(025)：FactRepository.get_domain / StoryboardRepository.get_domain
+    # 待补；届时 services 层统一切换到领域实体。
