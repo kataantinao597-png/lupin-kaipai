@@ -133,9 +133,25 @@ def get_session_factory() -> sessionmaker:
 
 
 def get_db() -> Iterator[Session]:
-    """FastAPI Depends：每个请求一个会话，结束后关闭。"""
+    """FastAPI Depends：每个请求一个会话，结束后关闭。
+
+    S9.3：SQLAlchemy 异常冒泡时记一条 DB 错误指标。
+    """
     session = get_session_factory()()
     try:
         yield session
+    except Exception:
+        try:
+            from ..core import metrics as _metrics
+            _metrics.record_db(False)
+        except Exception:
+            pass
+        raise
+    else:
+        try:
+            from ..core import metrics as _metrics
+            _metrics.record_db(True)
+        except Exception:
+            pass
     finally:
         session.close()

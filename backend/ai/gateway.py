@@ -165,6 +165,16 @@ class AIGateway:
 
         start = time.time()
         executor = RetryExecutor()
+        # S9.3：重试/超时指标埋点
+        def _on_ai_attempt(attempt_no: int, category: str) -> None:
+            try:
+                from ..core import metrics as _metrics
+                _metrics.record_ai_retry(category)
+                if category in ("timeout", "connection"):
+                    _metrics.record_ai_timeout()
+            except Exception:
+                pass
+        executor.on_attempt = _on_ai_attempt
         tokens = 0
         # Phase 5 可观测性钩子：网关调用前后通知 observability 记录/熔断/并发/缓存
         from ..ai_observability import cache_put, on_call_end, on_call_start

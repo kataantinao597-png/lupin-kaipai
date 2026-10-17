@@ -28,11 +28,15 @@ from .auth.router import router as auth_router
 from .core.config import get_settings
 from .core.logging import get_logger
 from .core.request_id import RequestIDMiddleware, get_request_id
+from .core.metrics import MetricsMiddleware
 from .core.response import error as error_envelope
 from .core import error_codes
 from .core.exceptions import AppError, LupinError
 
 log = get_logger("app")
+
+import time as _time
+_START_TIME = _time.time()  # S9.3：uptime 计算基准
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
@@ -47,6 +51,8 @@ app.add_middleware(
 )
 # 026/027：请求 ID 中间件（响应头 X-Request-ID，错误信封内 request_id 同值）
 app.add_middleware(RequestIDMiddleware)
+# S9.3：请求指标中间件（挂在 RequestID 内侧，保证 request_id 已就绪）
+app.add_middleware(MetricsMiddleware)
 
 
 def _is_v1_path(request) -> bool:
@@ -234,11 +240,13 @@ try:
     from .api.v1.ai_tasks import router as ai_tasks_router  # noqa: E402
     from .api.v1.ai_config import router as ai_config_router  # noqa: E402  # 123/124
     from .api.v1.ai_stats import router as ai_stats_router  # noqa: E402  # 133/134
+    from .api.v1.metrics import router as metrics_router  # noqa: E402  # S9.3
     _mount(orgs_router, prefix="/api/v1")
     _mount(works_router, prefix="/api/v1")
     _mount(ai_tasks_router, prefix="/api/v1")
     _mount(ai_config_router, prefix="/api/v1")
     _mount(ai_stats_router, prefix="/api/v1")
+    _mount(metrics_router, prefix="/api/v1")
 except Exception as e:  # noqa: BLE001
     log.info(f"API v1 模块加载跳过（并行施工中）: {type(e).__name__}: {e}")
 
@@ -265,15 +273,83 @@ except Exception as e:  # noqa: BLE001
 
 @app.get("/api/health")
 def health():
+    """S9.3：增强健康检查。
+
+    返回：status、version(git commit)、database(连通性)、
+    migrations(当前 head)、uptime(秒)。
+    """
     from .core import deps as _deps
     ai = getattr(_deps.get_ai_service, "_singleton", None)
+
+    # version：git commit 短哈希（取不到则为 unknown）
+    version = "unknown"
+    try:
+        import subprocess
+        version = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=3,
+            cwd=BASE_DIR,
+        ).stdout.strip() or "unknown"
+    except Exception:
+        pass
+
+    # database：连通性
+    db_status = "unknown"
+    try:
+        from .auth.database import get_session_factory
+        s = get_session_factory()()
+        try:
+            s.execute(__import__("sqlalchemy").text("SELECT 1"))
+            db_status = "ok"
+        finally:
+            s.close()
+    except Exception as e:  # noqa: BLE001
+        db_status = f"error: {type(e).__name__}"
+
+    # migrations：当前 head
+    migration_head = "unknown"
+    try:
+        versions_dir = os.path.join(BASE_DIR, "migrations", "versions")
+        if os.path.isdir(versions_dir):
+            revs = sorted(
+                f[:-3] for f in os.listdir(versions_dir) if f.endswith(".py")
+            )
+            migration_head = revs[-1] if revs else "none"
+    except Exception:
+        pass
+
     return {
-        "status": "ok",
+        "status": "ok" if db_status == "ok" else "degraded",
+        "version": version,
+        "database": db_status,
+        "migrations": migration_head,
+        "uptime_seconds": round(_time.time() - _START_TIME, 1),
         "model": getattr(ai, "model", DEFAULT_MODEL),
         "ai_ready": ai is not None,
         "calls": ai.call_count if ai else 0,
         "total_tokens": ai.total_tokens if ai else 0,
     }
+
+
+@app.get("/api/ready")
+def ready():
+    """S9.3：就绪检查 —— DB 可写才算就绪（k8s readiness 用）。"""
+    try:
+        from sqlalchemy import text
+        from .auth.database import get_session_factory
+        s = get_session_factory()()
+        try:
+            # 可写检查：建表已由 startup 完成，这里只做一次轻量写入探测
+            # 用 ai_calls 的 count 做只读探测 + 事务回滚做写探测
+            s.execute(text("SELECT count(*) FROM ai_calls"))
+            s.execute(text("CREATE TEMP TABLE IF NOT EXISTS _ready_probe (id INTEGER)"))
+            s.execute(text("INSERT INTO _ready_probe (id) VALUES (1)"))
+            s.rollback()  # 回滚，不留痕迹
+        finally:
+            s.close()
+        return {"ready": True}
+    except Exception as e:  # noqa: BLE001
+        return {"ready": False, "reason": f"{type(e).__name__}: {e}"}
 
 
 @app.get("/")
