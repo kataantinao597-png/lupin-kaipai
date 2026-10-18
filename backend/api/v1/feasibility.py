@@ -12,7 +12,8 @@ from pydantic import BaseModel
 
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError, DEFAULT_MODEL
 from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
-from ...core.deps import check_rate_limit, get_ai_gateway, get_request_model
+from ...core.deps import get_ai_gateway, get_request_model
+from ...ai.prompts import get_prompt_version
 from ...prompts import build_feasibility_messages
 from ...schemas import FeasibilityReport
 from ...validator import rule_feasibility_scan, validate_dict
@@ -61,7 +62,6 @@ def check_feasibility(
                      for num, status, reason, constraints in rule_feasibility_scan(sb)}
 
     # 2. 模型层批量分析（一次请求）
-    check_rate_limit(request)
     _model = get_request_model(request)
 
     def make_messages(feedback):
@@ -71,7 +71,8 @@ def check_feasibility(
         report, meta = gw.generate_with_retry(
             "feasibility", make_messages,
             lambda d: _validate_feasibility(d, shot_numbers),
-            model=_model or DEFAULT_MODEL, temperature=0.3)
+            model=_model or None, temperature=0.3,
+            prompt_version=get_prompt_version("feasibility"))
     except BudgetExceededError as e:
         raise HTTPException(status_code=402, detail=str(e))
     except TaskLimitExceededError as e:

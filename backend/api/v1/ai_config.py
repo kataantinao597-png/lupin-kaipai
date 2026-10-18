@@ -46,6 +46,7 @@ def validate_config(req: ConfigValidateRequest):
     Key 只用于本次预检，不写入任何存储，不记入日志。
     """
     from ...ai.config import build_config, detect_provider
+    from ...security.ssrf import SSRFError, validate_outbound_url
 
     base_url = req.base_url.strip().rstrip("/")
     model = req.model.strip()
@@ -54,6 +55,14 @@ def validate_config(req: ConfigValidateRequest):
             ok=False, base_reachable=False, key_valid=False,
             model_available=False,
             detail="Base URL 必须以 http:// 或 https:// 开头").model_dump())
+
+    # Phase 9-2：SSRF 纵深校验（内网 IP / 保留地址 / DNS 重绑定）
+    try:
+        validate_outbound_url(base_url, purpose="模型 Base URL")
+    except SSRFError as e:
+        return success(ConfigValidateResult(
+            ok=False, base_reachable=False, key_valid=False,
+            model_available=False, detail=f"SSRF 拦截：{e}").model_dump())
 
     # 1. 构造 AIService（URL 格式校验 + deepkey 兜底都在 __init__ 里）
     try:

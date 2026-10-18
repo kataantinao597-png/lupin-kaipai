@@ -16,7 +16,7 @@
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.orm import Session
 
 from ...auth.deps import get_current_user
@@ -30,6 +30,7 @@ from ...rbac import (
 from ...core import error_codes
 from ...core.exceptions import BusinessError
 from ...core.response import ApiResponse, success
+from ...security.audit import client_ip, log_audit as _audit
 from .schemas import (
     OrgCreate, OrgOut, InviteCreate, InviteOut, JoinRequest,
     MemberOut, MemberRoleUpdate,
@@ -197,6 +198,13 @@ def join_org(
     if existing is not None:
         raise BusinessError("已是该组织成员",
                             code=error_codes.INVALID_PARAM, http_status=400)
+    # S10：成员配额（超限 403）
+    from ...services.quota_service import check_quota, QuotaExceededError
+    try:
+        check_quota(db, inv.org_id, "members")
+    except QuotaExceededError as e:
+        raise BusinessError(str(e), code=error_codes.QUOTA_EXCEEDED,
+                            http_status=403)
     db.add(models.Membership(user_id=user.id, org_id=inv.org_id, role=inv.role))
     inv.used_by = user.id
     db.commit()
@@ -230,6 +238,8 @@ def set_member_role(
     req: MemberRoleUpdate,
     ms: models.Membership = Depends(require_org_permission("org:member:set_role")),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    request: Request = None,
 ):
     """049：修改成员角色仅 owner/admin 可执行（rbac.has_permission 硬限制）。"""
     assert_can(ms.role, "org:member:set_role", "修改成员角色")
@@ -248,7 +258,14 @@ def set_member_role(
         if owners <= 1:
             raise BusinessError("组织至少保留一个 owner",
                                 code=error_codes.INVALID_PARAM, http_status=400)
+    old_role = target.role
     target.role = req.role
+    # Phase 9-5：权限变更写审计
+    _audit(db, action="org.member.set_role", org_id=org_id,
+           user_id=user.id, object_type="membership", object_id=target.id,
+           detail={"target_user_id": target_user_id,
+                   "old_role": old_role, "new_role": req.role},
+           ip=client_ip(request) if request else None)
     db.commit()
     return success(MemberOut(user_id=target.user_id, role=target.role,
                              joined_at=target.joined_at))
@@ -262,6 +279,7 @@ def remove_member(
     user: User = Depends(get_current_user),
     ms: models.Membership = Depends(require_org_permission("org:member:remove")),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     """049：移除成员仅 owner/admin 可执行。"""
     assert_can(ms.role, "org:member:remove", "移除成员")
@@ -282,6 +300,13 @@ def remove_member(
     if target_user_id == user.id:
         raise BusinessError("不能移除自己，请转让 owner 后退出",
                             code=error_codes.INVALID_PARAM, http_status=400)
+    removed_role = target.role
     db.delete(target)
+    # Phase 9-5：移除成员写审计
+    _audit(db, action="org.member.remove", org_id=org_id,
+           user_id=user.id, object_type="membership",
+           object_id=target_user_id,
+           detail={"removed_role": removed_role},
+           ip=client_ip(request) if request else None)
     db.commit()
     return None

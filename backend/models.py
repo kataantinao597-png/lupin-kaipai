@@ -155,6 +155,10 @@ class Shot(Base):
     # 032：镜头锁定状态——锁定镜头不许改动，由 StoryboardRepository.set_shot_lock()
     # 在事务中修改
     locked = Column(Boolean, nullable=False, default=False, server_default="0")
+    # S8.3：镜头参考图版权/来源标注（AI 生成参考须标明，不代表真实产品）
+    ref_image_copyright = Column(String(256), nullable=True)
+    ref_image_source = Column(String(512), nullable=True)
+    ref_image_license = Column(String(128), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
                         onupdate=_now)
@@ -516,6 +520,8 @@ class AITask(Base):
     progress = Column(Integer, nullable=False, default=0, server_default="0")
     # 实际使用的模型（122：记录实际生效配置，防静默回退）
     model_used = Column(String(128), nullable=True)
+    # 实际使用的 prompt 版本（141-160：prompt 版本化，改 prompt 必须升版本）
+    prompt_version = Column(String(32), nullable=True)
     # 协作式取消标记：running 任务由工作线程轮询此标记
     cancel_requested = Column(Boolean, nullable=False, default=False,
                               server_default="0")
@@ -604,3 +610,373 @@ class ModelPrice(Base):
                       server_default="CNY")
     version = Column(Integer, nullable=False, default=1, server_default="1")
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+# ---------------------------------------------------------------------------
+# Phase 10（AI 网关扩展）：任务选模型策略 + 模型能力注册表（128/129）
+# ---------------------------------------------------------------------------
+
+# 已知任务类型（与 RUNNERS / gateway task_type 对齐）
+AI_TASK_TYPES = ("ideas", "storyboard", "regen_shot", "feasibility", "risk_check")
+
+
+class TaskModelPolicy(Base):
+    """128：任务选模型策略。task_type → 主模型 + 兜底模型。
+
+    model=None 的调用走此表；调用方显式指定模型时优先用指定的。
+    fallback_model 用于 130 故障切换（主模型失败后自动切一次）。
+    """
+    __tablename__ = "task_model_policy"
+
+    task_type = Column(String(32), primary_key=True)
+    model = Column(String(64), nullable=False)
+    fallback_model = Column(String(64), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)
+
+
+class ModelCapability(Base):
+    """129：模型能力注册表。调用前校验任务需求 vs 模型能力。
+
+    max_tokens=0 表示未知；supports_* 为种子值时以管理后台更新为准。
+    """
+    __tablename__ = "model_capabilities"
+
+    model = Column(String(64), primary_key=True)
+    max_tokens = Column(Integer, nullable=False, default=0, server_default="0")
+    supports_vision = Column(Boolean, nullable=False, default=False,
+                             server_default="0")
+    supports_json = Column(Boolean, nullable=False, default=True,
+                           server_default="1")
+    cost_tier = Column(String(16), nullable=False, default="standard",
+                       server_default="standard")
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)
+
+
+# ---------------------------------------------------------------------------
+# Phase 9（安全纵深）：集成 API Key（服务账号）+ 审计日志（9-4/9-5）
+# ---------------------------------------------------------------------------
+
+class ApiKey(Base):
+    """集成用 API Key（服务账号）。9-4
+
+    只存 key_hash（SHA256），明文仅创建时返回一次。
+    scopes 为 JSON 列表，如 ["works:read", "ai:use"]。
+    """
+    __tablename__ = "api_keys"
+    __table_args__ = (
+        Index("ix_apikey_org", "org_id"),
+        Index("ix_apikey_hash", "key_hash", unique=True),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id",
+                                           ondelete="CASCADE"),
+                    nullable=False)
+    name = Column(String(128), nullable=False)
+    key_hash = Column(String(64), nullable=False)      # SHA256 hex
+    key_prefix = Column(String(16), nullable=False)    # 明文前 10 字符，便于辨认
+    scopes = Column(JSON, nullable=False, default=list)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    created_by = Column(String(64), nullable=False)    # 创建者 user_id（逻辑关联）
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class AuditEvent(Base):
+    """关键操作审计事件。9-5
+
+    action 如 api_key.create / work.delete / org.member.set_role /
+    waiver.create 等；detail_json 存差异摘要，不记敏感内容。
+    """
+    __tablename__ = "audit_events"
+    __table_args__ = (
+        Index("ix_audit_org_created", "org_id", "created_at"),
+        Index("ix_audit_action", "action"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), nullable=True)
+    user_id = Column(String(64), nullable=True)        # 操作者（逻辑关联）
+    action = Column(String(64), nullable=False)
+    object_type = Column(String(32), nullable=True)
+    object_id = Column(String(64), nullable=True)
+    detail_json = Column(JSON, nullable=True)
+    ip = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+# ---------------------------------------------------------------------------
+# Phase 12（企业管理与商业化 S10）：配额 / Webhook / 模板市场 / 计费
+# ---------------------------------------------------------------------------
+
+
+class Quota(Base):
+    """S10 配额：组织维度硬限额。
+
+    quota_type: ai_calls_daily（组织每日 AI 调用次数）
+                | storage_mb（作品 data_json 总量，MB）
+                | members（组织成员数）。
+    limit_value <= 0 视为未配置（不限）。
+    """
+    __tablename__ = "quotas"
+    __table_args__ = (
+        UniqueConstraint("org_id", "quota_type", name="uq_quota_org_type"),
+        Index("ix_quota_org", "org_id"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="CASCADE"),
+                    nullable=False)
+    quota_type = Column(String(32), nullable=False)
+    limit_value = Column(Integer, nullable=False, default=0, server_default="0")
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)
+
+
+class Webhook(Base):
+    """S10 Webhook 订阅：组织级事件通知。
+
+    events_json: JSON 数组，如 ["task.completed", "review.expired"]。
+    secret: HMAC-SHA256 签名密钥，只存库中，创建时向调用方返回一次明文。
+    """
+    __tablename__ = "webhooks"
+    __table_args__ = (
+        Index("ix_webhook_org", "org_id"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="CASCADE"),
+                    nullable=False)
+    url = Column(Text, nullable=False)
+    events_json = Column(Text, nullable=False, default="[]")
+    secret = Column(String(64), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True, server_default="1")
+    created_by = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class WebhookDelivery(Base):
+    """S10 Webhook 投递记录：status pending（待投递/重试中）/ sent / dead（死信）。
+
+    失败最多重试 3 次（指数退避），之后进死信，可在管理 API 查看。
+    """
+    __tablename__ = "webhook_deliveries"
+    __table_args__ = (
+        Index("ix_whdelivery_wh", "webhook_id"),
+        Index("ix_whdelivery_status", "status"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    webhook_id = Column(String(32), ForeignKey("webhooks.id", ondelete="CASCADE"),
+                        nullable=False)
+    event_type = Column(String(64), nullable=False)
+    payload_json = Column(Text, nullable=False, default="{}")
+    status = Column(String(16), nullable=False, default="pending",
+                    server_default="pending")
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    next_retry_at = Column(DateTime(timezone=True), nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class Template(Base):
+    """S10 模板市场：分镜/创意模板。更新内容时 version+1，旧版本快照进
+    template_versions。上架审核流留 TODO（当前 is_public 由管理员直接控制）。"""
+    __tablename__ = "templates"
+    __table_args__ = (
+        Index("ix_template_org", "org_id"),
+        Index("ix_template_public", "is_public"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="CASCADE"),
+                    nullable=False)
+    name = Column(String(128), nullable=False)
+    category = Column(String(64), nullable=False, default="", server_default="")
+    content_json = Column(Text, nullable=False, default="{}")
+    version = Column(Integer, nullable=False, default=1, server_default="1")
+    is_public = Column(Boolean, nullable=False, default=False, server_default="0")
+    # custom（自建）| official（官方）| shared（他组织共享）
+    source = Column(String(32), nullable=False, default="custom",
+                    server_default="custom")
+    created_by = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)
+
+
+class TemplateVersion(Base):
+    """S10 模板版本快照：每次更新内容前存一份。"""
+    __tablename__ = "template_versions"
+    __table_args__ = (
+        Index("ix_tversion_tpl", "template_id"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    template_id = Column(String(32), ForeignKey("templates.id", ondelete="CASCADE"),
+                         nullable=False)
+    version = Column(Integer, nullable=False)
+    content_json = Column(Text, nullable=False, default="{}")
+    created_by = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class PriceConfig(Base):
+    """S10 计费价格配置：只增版本、不改历史（对账可追溯）。
+
+    item: ai_token_1k（每千 token）| ai_call（每次调用）
+          | storage_gb_month（每 GB·月）| member_seat（每成员席位）。
+    注意：seed 数据为 0 占位，上线前必须由运营配置真实价格。
+    """
+    __tablename__ = "price_configs"
+    __table_args__ = (
+        UniqueConstraint("item", "version", name="uq_price_item_version"),
+        Index("ix_price_item", "item"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    item = Column(String(64), nullable=False)
+    unit_price_cents = Column(Integer, nullable=False, default=0,
+                              server_default="0")
+    currency = Column(String(8), nullable=False, default="CNY",
+                      server_default="CNY")
+    version = Column(Integer, nullable=False, default=1, server_default="1")
+    note = Column(String(256), nullable=False, default="", server_default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class BillingRecord(Base):
+    """S10 对账单：period=YYYY-MM；status draft/issued/paid/void。
+
+    usage_json 快照对账依据（用量明细 + 当时价格版本），金额可重算追溯。
+    """
+    __tablename__ = "billing_records"
+    __table_args__ = (
+        UniqueConstraint("org_id", "period", name="uq_billing_org_period"),
+        Index("ix_billing_org", "org_id"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="CASCADE"),
+                    nullable=False)
+    period = Column(String(7), nullable=False)  # YYYY-MM
+    usage_json = Column(Text, nullable=False, default="{}")
+    amount_cents = Column(Integer, nullable=False, default=0, server_default="0")
+    currency = Column(String(8), nullable=False, default="CNY",
+                      server_default="CNY")
+    status = Column(String(16), nullable=False, default="draft",
+                    server_default="draft")
+    issued_at = Column(DateTime(timezone=True), nullable=True)
+    created_by = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+# ---------------------------------------------------------------------------
+# S8.1/S8.2：媒体资产（对象存储元数据 + 上传意图 + 处理任务）
+# ---------------------------------------------------------------------------
+
+# 资产状态
+ASSET_STATUS_UPLOADING = "uploading"  # 已创建意图，等待文件
+ASSET_STATUS_READY = "ready"          # 已入库，可用
+ASSET_STATUS_FAILED = "failed"        # 校验/入库失败
+ASSET_STATUS_DELETED = "deleted"      # 已删除（文件已清）
+ASSET_STATUSES = (
+    ASSET_STATUS_UPLOADING, ASSET_STATUS_READY,
+    ASSET_STATUS_FAILED, ASSET_STATUS_DELETED,
+)
+
+# 媒体处理任务状态
+MEDIA_TASK_PENDING = "pending"
+MEDIA_TASK_RUNNING = "running"
+MEDIA_TASK_SUCCEEDED = "succeeded"
+MEDIA_TASK_FAILED = "failed"
+MEDIA_TASK_STATUSES = (
+    MEDIA_TASK_PENDING, MEDIA_TASK_RUNNING,
+    MEDIA_TASK_SUCCEEDED, MEDIA_TASK_FAILED,
+)
+
+
+class Asset(Base):
+    """S8.1：媒体资产元数据。业务库只存元数据 + 对象 key，文件本身在对象存储。
+
+    key 全局唯一，格式 `{org_id}/{work_id}/{uuid}_{safe_name}`。
+    """
+    __tablename__ = "assets"
+    __table_args__ = (
+        Index("ix_asset_org_work", "org_id", "work_id"),
+        Index("ix_asset_status", "status"),
+        UniqueConstraint("key", name="uq_asset_key"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    # 086 同理：组织删除先显式处理资产，RESTRICT 防误删连带
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="RESTRICT"),
+                    nullable=False)
+    work_id = Column(String(32), ForeignKey("works.id", ondelete="CASCADE"),
+                     nullable=False)
+    key = Column(String(512), nullable=False, unique=True)
+    filename = Column(String(256), nullable=False, default="")
+    mime = Column(String(128), nullable=False, default="")
+    size = Column(Integer, nullable=False, default=0)
+    sha256 = Column(String(64), nullable=True)
+    status = Column(String(16), nullable=False, default=ASSET_STATUS_UPLOADING,
+                    server_default=ASSET_STATUS_UPLOADING)
+    # 处理任务提取的元数据（宽高/时长/分辨率等），JSON 字符串
+    meta_json = Column(Text, nullable=False, default="{}")
+    created_by = Column(String(64), nullable=False, default="")  # 逻辑关联 users.id
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)
+
+
+class UploadIntent(Base):
+    """S8.1：一次性上传授权。后端签发 token，前端凭 token 上传文件。
+
+    token 即主键，一次有效（used=True 后作废），15 分钟过期。
+    """
+    __tablename__ = "upload_intents"
+    __table_args__ = (
+        Index("ix_intent_org", "org_id"),
+        Index("ix_intent_expires", "expires_at"),
+    )
+
+    token = Column(String(64), primary_key=True)
+    org_id = Column(String(32), nullable=False)
+    work_id = Column(String(32), nullable=False)
+    key = Column(String(512), nullable=False)  # 预分配的对象 key
+    filename = Column(String(256), nullable=False, default="")
+    mime = Column(String(128), nullable=False, default="")  # 声明的 mime（上传时再验魔数）
+    expected_size = Column(Integer, nullable=False, default=0)
+    expected_sha256 = Column(String(64), nullable=True)
+    used = Column(Boolean, nullable=False, default=False, server_default="0")
+    created_by = Column(String(64), nullable=False, default="")
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class MediaTask(Base):
+    """S8.2：媒体处理任务。上传完成后创建，工作线程提取元数据。
+
+    一个资产一条任务（asset_id 唯一）；meta_json 写回 assets.meta_json。
+    """
+    __tablename__ = "media_tasks"
+    __table_args__ = (
+        Index("ix_mediatask_status", "status"),
+        UniqueConstraint("asset_id", name="uq_mediatask_asset"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    asset_id = Column(String(32), ForeignKey("assets.id", ondelete="CASCADE"),
+                      nullable=False, unique=True)
+    status = Column(String(16), nullable=False, default=MEDIA_TASK_PENDING,
+                    server_default=MEDIA_TASK_PENDING)
+    meta_json = Column(Text, nullable=False, default="{}")
+    error = Column(Text, nullable=True)
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)

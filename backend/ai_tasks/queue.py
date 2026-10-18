@@ -126,6 +126,15 @@ class _PriorityDispatcher:
                 return
             repo.set_status(task_id, "succeeded", result=result,
                             progress=100)
+            # S10：任务完成事件（best-effort，不影响主流程）
+            try:
+                from ..services.webhook_service import dispatch_event
+                dispatch_event("task.completed", task.org_id, {
+                    "task_id": task_id, "task_type": task.task_type,
+                    "status": "succeeded"})
+            except Exception:  # noqa: BLE001
+                logger.warning("task.completed webhook 投递失败 task=%s",
+                               task_id, exc_info=True)
         except Exception as e:  # noqa: BLE001
             logger.exception("AI 任务执行失败 task=%s", task_id)
             try:

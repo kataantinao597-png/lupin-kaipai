@@ -29,6 +29,8 @@ from .core.config import get_settings
 from .core.logging import get_logger
 from .core.request_id import RequestIDMiddleware, get_request_id
 from .core.metrics import MetricsMiddleware
+from .security.headers import SecurityHeadersMiddleware  # Phase 9-1
+from .security.rate_limit import RateLimitMiddleware  # Phase 9-3
 from .core.response import error as error_envelope
 from .core import error_codes
 from .core.exceptions import AppError, LupinError
@@ -53,6 +55,10 @@ app.add_middleware(
 app.add_middleware(RequestIDMiddleware)
 # S9.3：请求指标中间件（挂在 RequestID 内侧，保证 request_id 已就绪）
 app.add_middleware(MetricsMiddleware)
+# Phase 9-3：分级限流（auth 5/min/IP、AI 20/min/用户、默认 100/min/IP）
+app.add_middleware(RateLimitMiddleware)
+# Phase 9-1：安全响应头（CSP report-only，不拦截）
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 def _is_v1_path(request) -> bool:
@@ -184,6 +190,14 @@ def _startup():
     except Exception as e:  # noqa: BLE001
         log.info(f"领域事件订阅者注册失败: {e}")
 
+    # S8.2：启动媒体处理工作线程（失败不阻断启动）
+    try:
+        from .media.worker import start_media_worker
+        start_media_worker()
+        log.info("媒体处理线程已启动")
+    except Exception as e:  # noqa: BLE001
+        log.info(f"媒体处理线程启动失败: {e}")
+
 
 # ---------- 业务路由挂载（022） ----------
 # 注意：FastAPI 0.143.2 的 include_router 有 bug（只挂载部分路由），
@@ -239,14 +253,18 @@ try:
     from .api.v1.works import router as works_router  # noqa: E402
     from .api.v1.ai_tasks import router as ai_tasks_router  # noqa: E402
     from .api.v1.ai_config import router as ai_config_router  # noqa: E402  # 123/124
+    from .api.v1.ai_models import router as ai_models_router  # noqa: E402  # 128/129
     from .api.v1.ai_stats import router as ai_stats_router  # noqa: E402  # 133/134
     from .api.v1.metrics import router as metrics_router  # noqa: E402  # S9.3
+    from .api.v1.enterprise import router as enterprise_router  # noqa: E402  # S10
     _mount(orgs_router, prefix="/api/v1")
     _mount(works_router, prefix="/api/v1")
     _mount(ai_tasks_router, prefix="/api/v1")
     _mount(ai_config_router, prefix="/api/v1")
+    _mount(ai_models_router, prefix="/api/v1")
     _mount(ai_stats_router, prefix="/api/v1")
     _mount(metrics_router, prefix="/api/v1")
+    _mount(enterprise_router, prefix="/api/v1")
 except Exception as e:  # noqa: BLE001
     log.info(f"API v1 模块加载跳过（并行施工中）: {type(e).__name__}: {e}")
 
@@ -256,6 +274,15 @@ try:
     _mount(facts_router, prefix="/api/v1")
 except Exception as e:  # noqa: BLE001
     log.info(f"事实库 API 加载跳过: {type(e).__name__}: {e}")
+
+# S8.1/S8.2/S8.3：媒体资产 + 分镜时间轴 API
+try:
+    from .api.v1.assets import router as assets_router  # noqa: E402  # S8 媒体
+    from .api.v1.timeline import router as timeline_router  # noqa: E402
+    _mount(assets_router, prefix="/api/v1")
+    _mount(timeline_router, prefix="/api/v1")
+except Exception as e:  # noqa: BLE001
+    log.info(f"媒体资产 API 加载跳过: {type(e).__name__}: {e}")
 
 # S6.2-S6.5：审核闭环 API（并行组施工中）
 try:
@@ -267,6 +294,17 @@ try:
     _mount(reviews_mod.delivery_router, prefix="/api/v1")
 except Exception as e:  # noqa: BLE001
     log.info(f"审核闭环 API 加载跳过（并行施工中）: {type(e).__name__}: {e}")
+
+# Phase 9：安全纵深（API Key / 审计 / CSP 上报）
+try:
+    from .api.v1.api_keys import router as api_keys_router  # noqa: E402  # 9-4
+    from .api.v1.audit import router as audit_router  # noqa: E402  # 9-5
+    from .api.v1.security import router as security_router  # noqa: E402  # 9-1
+    _mount(api_keys_router, prefix="/api/v1")
+    _mount(audit_router, prefix="/api/v1")
+    _mount(security_router, prefix="/api/v1")
+except Exception as e:  # noqa: BLE001
+    log.info(f"安全 API 加载跳过: {type(e).__name__}: {e}")
 
 
 # ---------- 基础路由 ----------

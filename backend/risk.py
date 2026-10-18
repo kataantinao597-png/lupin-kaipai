@@ -64,32 +64,8 @@ def rule_scan(text: str, where: str = "") -> List[Dict]:
     return flags
 
 
-REVIEW_PROMPT_TMPL = """你是短视频广告文案风险复核员。请审查以下旁白/字幕文案，找出**缺乏事实依据**的产品宣传。
-
-用户输入的产品信息（视为用户自己的主张，文案与之相符的不标风险）：
-{product_info}
-
-用户已提供的证明材料：{evidence}
-
-文案（逐条）：
-{lines}
-
-只关注**产品本身的事实宣传**：产地、品种、价格、销量、认证、农残、安全、功效。
-不要标记拍摄手法类表述（如"实拍""不加滤镜""现场原声"），那是制作承诺不是产品宣传。
-
-请特别注意以下**委婉功效暗示**（即使没有明显关键词也要标出）：
-- 暗示食用后身体变好：如"身体更轻松""气色更好""每天吃一只，整个人都精神了"
-- 暗示治疗/保健效果：如"坚持吃对血压好""老毛病都少了"
-
-判定规则：
-- 文案中的品种/规格/价格等事实如果与"用户输入的产品信息"一致 → 视为用户主张，**不标风险**
-- 只标记文案中**超出用户输入**的、缺乏依据的说法，按以下分类：
-  B. 用户提出但缺乏证明的宣传说法
-  D. 需要用户补充证据的信息
-- C类（无法核实）仅用于功效/医疗类暗示
-
-只输出 JSON：{{"flags": [{{"text": "涉及的原文片段", "level": "高/中/低", "reason": "原因（含分类B/D）"}}]}}
-没有风险则输出 {{"flags": []}}。不要输出其他文字。"""
+from .ai.prompts import REVIEW_PROMPT_TMPL, get_prompt_version  # 141-160：版本化 prompt
+from .ai.prompts.risk_review_v1 import build_risk_review_messages
 
 
 def model_review(ai_service, lines: List[str], evidence: str = "",
@@ -108,9 +84,10 @@ def model_review(ai_service, lines: List[str], evidence: str = "",
     if isinstance(ai_service, AIGateway):
         content, _usage = ai_service.chat(
             "risk_check",
-            [{"role": "user", "content": prompt}],
-            model=model or DEFAULT_MODEL,
+            build_risk_review_messages(lines, evidence, product_info),
+            model=model,  # None → 走 128 任务选模型策略；显式指定则优先
             temperature=0.2, json_object=True,
+            prompt_version=get_prompt_version("risk_check"),
         )
     else:
         content, _usage = ai_service.chat(

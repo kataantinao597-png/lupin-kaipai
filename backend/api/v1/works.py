@@ -23,7 +23,7 @@
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.orm import Session
 
 from ...auth.deps import get_current_user
@@ -37,6 +37,7 @@ from ...rbac import (
 from ...core import error_codes
 from ...core.exceptions import AuthError, BusinessError
 from ...core.response import ApiResponse, success
+from ...security.audit import client_ip, log_audit as _audit
 from .schemas import (
     WorkCreate, WorkUpdate, WorkOut, WorkVersionOut, TrashWorkOut,
     WorkData, WorkExportOut, WorkExportWork, WorkExportVersion, ExportAllOut,
@@ -139,6 +140,13 @@ def create_work(
         # 防枚举：与"组织不存在"返回一致
         raise BusinessError("组织不存在",
                             code=error_codes.ORG_NOT_FOUND, http_status=404)
+    # S10：存储配额（超限 402）
+    from ...services.quota_service import check_quota, QuotaExceededError
+    try:
+        check_quota(db, req.org_id, "storage_mb")
+    except QuotaExceededError as e:
+        raise BusinessError(str(e), code=error_codes.QUOTA_EXCEEDED,
+                            http_status=402)
     work = models.Work(
         org_id=req.org_id,
         owner_id=user.id,
@@ -308,9 +316,11 @@ def update_work(
 @router.delete("/{work_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_work(
     work_id: str,
+    request: Request,
     hard: bool = Query(default=False, description="硬删除：仅 owner 且回收站满 30 天"),
     access: tuple = Depends(require_work_access("work:delete")),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """删除作品（092：默认软删除进回收站，可恢复）。
 
@@ -349,6 +359,10 @@ def delete_work(
                                 code=error_codes.INVALID_PARAM, http_status=400)
         db.query(models.WorkVersion).filter(
             models.WorkVersion.work_id == work.id).delete()
+        # Phase 9-5：硬删除写审计
+        _audit(db, action="work.hard_delete", org_id=work.org_id,
+               user_id=user.id, object_type="work", object_id=work.id,
+               detail={"title": work.title}, ip=client_ip(request))
         db.delete(work)
         db.commit()
         return None
@@ -357,6 +371,10 @@ def delete_work(
         # 已在回收站：幂等返回
         return None
     work.deleted_at = datetime.now(timezone.utc)
+    # Phase 9-5：软删除写审计
+    _audit(db, action="work.delete", org_id=work.org_id,
+           user_id=user.id, object_type="work", object_id=work.id,
+           detail={"title": work.title}, ip=client_ip(request))
     db.commit()
     return None
 

@@ -18,6 +18,7 @@ INVALID_PARAM = 4000        # 请求参数非法（422 校验失败时用）
 UNAUTHENTICATED = 4010      # 未登录
 TOKEN_EXPIRED = 4011        # 登录已过期
 ACCOUNT_DISABLED = 4020     # 账号不可用
+QUOTA_EXCEEDED = 4021       # S10：组织配额超限（402/403，由场景决定）
 FORBIDDEN = 4030            # 通用禁止
 RESOURCE_NOT_FOUND = 4040   # 通用资源不存在
 CONFLICT = 4090             # 通用冲突
@@ -64,6 +65,7 @@ ERROR_MESSAGES: dict[int, str] = {
     UNAUTHENTICATED: "未登录",
     TOKEN_EXPIRED: "登录已过期，请重新登录",
     ACCOUNT_DISABLED: "账号不可用",
+    QUOTA_EXCEEDED: "组织配额已用完，请联系管理员调整",
     FORBIDDEN: "禁止访问",
     RESOURCE_NOT_FOUND: "资源不存在",
     CONFLICT: "请求冲突",

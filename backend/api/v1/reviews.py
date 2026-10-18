@@ -28,7 +28,7 @@ import json
 from datetime import datetime
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -39,6 +39,7 @@ from ...auth.models import User
 from ...core import error_codes
 from ...core.exceptions import AuthError, BusinessError
 from ...core.response import ApiResponse, success
+from ...security.audit import client_ip, log_audit as _audit
 from ...rbac import (
     ROLE_ADMIN,
     ROLE_OWNER,
@@ -372,7 +373,8 @@ def resolve_finding(finding_id: str, body: FindingResolve,
 def create_waiver_route(work_id: str, body: WaiverCreate,
                         ctx=Depends(require_work_access("review:approve")),
                         db: Session = Depends(get_db),
-                        user: User = Depends(get_current_user)):
+                        user: User = Depends(get_current_user),
+                        request: Request = None):
     """S6.5：创建交付豁免——原因和批准人必填，不可豁免项拒绝。"""
     work, ms = ctx
     try:
@@ -382,6 +384,14 @@ def create_waiver_route(work_id: str, body: WaiverCreate,
     except ValueError as e:
         raise BusinessError(str(e), code=error_codes.INVALID_PARAM,
                             http_status=422)
+    # Phase 9-5：豁免批准写审计
+    _audit(db, action="waiver.create", org_id=work.org_id,
+           user_id=user.id, object_type="waiver",
+           object_id=w.get("id") if isinstance(w, dict) else None,
+           detail={"work_id": work_id, "gate_type": body.gate_type,
+                   "check_id": body.check_id, "reason": body.reason},
+           ip=client_ip(request) if request else None)
+    db.commit()
     return success(w)
 
 
@@ -400,7 +410,8 @@ def list_waivers_route(work_id: str,
                       response_model=ApiResponse[dict])
 def revoke_waiver_route(waiver_id: str,
                         db: Session = Depends(get_db),
-                        user: User = Depends(get_current_user)):
+                        user: User = Depends(get_current_user),
+                        request: Request = None):
     """撤销豁免（需 review:approve）。"""
     w = db.get(models.Waiver, waiver_id)
     if w is None:
@@ -412,7 +423,14 @@ def revoke_waiver_route(waiver_id: str,
         raise BusinessError("豁免不存在",
                             code=error_codes.WORK_NOT_FOUND, http_status=404)
     _check_member(db, user, work.org_id, "review:approve")
-    return success(revoke_waiver(db, waiver_id))
+    out = revoke_waiver(db, waiver_id)
+    # Phase 9-5：豁免撤销写审计
+    _audit(db, action="waiver.revoke", org_id=work.org_id,
+           user_id=user.id, object_type="waiver", object_id=waiver_id,
+           detail={"work_id": w.work_id},
+           ip=client_ip(request) if request else None)
+    db.commit()
+    return success(out)
 
 
 # ---------------------------------------------------------------- 门禁配置

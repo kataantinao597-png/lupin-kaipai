@@ -36,7 +36,11 @@ RATE_WINDOW = 60
 
 
 def check_rate_limit(request: Request):
-    """简单的内存限流。生产环境应换 Redis（TODO 039）。"""
+    """简单的内存限流。生产环境应换 Redis（TODO 039）。
+
+    Phase 9-3 已废弃：分级限流由 RateLimitMiddleware 接管
+    （backend/security/rate_limit.py），保留本函数仅为兼容旧导入。
+    """
     ip = request.client.host if request.client else "unknown"
     now = _time.time()
     bucket = _rate_buckets[ip]
@@ -58,6 +62,13 @@ def get_ai_service(request: Request):
     user_key = request.headers.get("X-Lupin-Key", "").strip()
     if user_key:
         user_base = request.headers.get("X-Lupin-Base", "").strip() or None
+        # Phase 9-2：用户自定义 Base URL 走 SSRF 校验
+        if user_base:
+            from ..security.ssrf import SSRFError, validate_outbound_url
+            try:
+                validate_outbound_url(user_base, purpose="自定义 API 地址")
+            except SSRFError as e:
+                raise HTTPException(status_code=400, detail=f"自定义 API 地址被拦截: {e}")
         try:
             return AIService(api_key=user_key, base_url=user_base)
         except AIConfigError as e:

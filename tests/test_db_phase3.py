@@ -102,7 +102,7 @@ def test_082_migration_tables(db: Session):
             "refresh_tokens", "password_resets"} <= names
     row = db.execute(__import__("sqlalchemy").text(
         "select version_num from alembic_version")).fetchone()
-    assert row[0] == "0006_fact_lifecycle"  # Phase6：S6.1 新增 fact_status_history/fact_versions，head 前移
+    assert row[0] == "0007_security_phase9"  # Phase9：安全纵深新增 api_keys/audit_events，head 前移
 
 
 # ---------- 083/084/085 CRUD ----------

@@ -9,6 +9,11 @@ ai_service.AIService 保留为底层传输层（HTTP 调用 + 错误映射）。
 - 124：调用前检查组织预算，超限返回 402
 - 125：HTTP 层重试走 backend/ai/retry.py 的分类策略
 - 126：单任务最多 5 次调用、最多 500K tokens，超限熔断并告警
+- 127：经 ProviderAdapter 调用，不再直拼 URL / 直接解析响应
+- 128：model=None 时按 task_model_policy 选模型
+- 129：调用前校验模型能力，不满足直接报错不浪费调用
+- 130：主模型失败且有 fallback 时自动切换重试一次（预算内），记 failover 台账
+- 141-160：prompt_version 透传并记录到 ai_tasks.prompt_version
 """
 from __future__ import annotations
 
@@ -23,7 +28,10 @@ from ..ai_service import (
     AIRetryableError,
     DEFAULT_MODEL,
 )
+from .capabilities import check_capability
 from .config import ModelConfig, build_config
+from .model_policy import resolve_fallback, resolve_model
+from .providers import DeepKeyAdapter, ProviderAdapter
 from .retry import RetryExecutor
 
 logger = logging.getLogger(__name__)
@@ -61,19 +69,23 @@ class AIGateway:
 
     def __init__(self, service, org_id: Optional[str] = None,
                  db=None, task_id: Optional[str] = None,
-                 alert_fn: Optional[Callable[[str, dict], None]] = None):
+                 alert_fn: Optional[Callable[[str, dict], None]] = None,
+                 adapter: Optional[ProviderAdapter] = None):
         """
         service: ai_service.AIService 实例（传输层）
         org_id: 组织 ID（124 预算检查用；None 则跳过预算）
-        db: SQLAlchemy session（预算扣减 / ai_tasks.model_used 回写用；None 则只记日志）
+        db: SQLAlchemy session（预算扣减 / ai_tasks.model_used 回写 /
+            128 策略 / 129 能力查表用；None 则只记日志并用默认策略）
         task_id: 关联的 ai_tasks.id（122 回写 model_used 用）
         alert_fn: 126 熔断告警回调 fn(message, context)
+        adapter: 127 Provider 适配器；None 则用 DeepKeyAdapter(service)
         """
         self._svc = service
         self._org_id = org_id
         self._db = db
         self._task_id = task_id
         self._alert_fn = alert_fn or (lambda m, c: logger.warning("AI告警: %s %s", m, c))
+        self._adapter = adapter or DeepKeyAdapter(service)
         # 126：本网关实例内的任务级计数
         self._task_calls = 0
         self._task_tokens = 0
@@ -105,34 +117,83 @@ class AIGateway:
                 f"任务 {task_type} token 消耗超限（{self._task_tokens}/{MAX_TOKENS_PER_TASK}），"
                 "已熔断以防止费用失控。")
 
+    def _notify_webhook(self, event_type: str, payload: dict) -> None:
+        """S10：best-effort 投递组织事件；失败只记日志，不影响主流程。"""
+        if not self._org_id:
+            return
+        try:
+            from ..services.webhook_service import dispatch_event
+            dispatch_event(event_type, self._org_id, payload)
+        except Exception:  # noqa: BLE001
+            logger.warning("webhook 事件投递失败 event=%s", event_type,
+                           exc_info=True)
+
     def _check_budget(self, task_type: str):
-        """124：调用前检查组织预算。超限抛 BudgetExceededError（API 层转 402）。"""
+        """124：调用前检查组织预算。超限抛 BudgetExceededError（API 层转 402）。
+
+        S10：预算超限时发布 budget.exceeded 事件；随后检查 ai_calls_daily
+        配额（QuotaExceededError 为 BudgetExceededError 子类，同样走 402）。
+        """
         if not self._org_id or self._db is None:
             return
         from .budget import check_budget
-        check_budget(self._db, self._org_id, task_type)
+        from ..services.quota_service import QuotaExceededError
+        try:
+            check_budget(self._db, self._org_id, task_type)
+        except QuotaExceededError:
+            raise
+        except BudgetExceededError as e:
+            self._notify_webhook("budget.exceeded", {
+                "task_type": task_type, "error": str(e)[:200]})
+            raise
+        # S10：每日 AI 调用配额
+        from ..services.quota_service import check_quota
+        check_quota(self._db, self._org_id, "ai_calls_daily")
 
     def _record_config(self, cfg: ModelConfig, task_type: str, attempts: int,
-                       tokens: int, duration_ms: int, success: bool, error: str = ""):
-        """122：记录实际生效配置到日志；有 db+task_id 时回写 ai_tasks.model_used。"""
+                       tokens: int, duration_ms: int, success: bool,
+                       error: str = "", prompt_version: Optional[str] = None):
+        """122：记录实际生效配置到日志；有 db+task_id 时回写 ai_tasks。
+        141-160：同时回写 prompt_version。"""
         rec = GatewayCallRecord(
             task_type=task_type, provider=cfg.provider, model=cfg.model,
             config_version=cfg.config_version, requested_model=cfg.requested_model,
             attempts=attempts, total_tokens=tokens, duration_ms=duration_ms,
             success=success, error=error[:200],
         )
-        logger.info("AI调用 task=%s provider=%s model=%s cfg=%s tokens=%d success=%s",
+        logger.info("AI调用 task=%s provider=%s model=%s cfg=%s prompt=%s tokens=%d success=%s",
                     rec.task_type, rec.provider, rec.model, rec.config_version,
-                    rec.total_tokens, rec.success)
+                    prompt_version or "-", rec.total_tokens, rec.success)
         if self._db is not None and self._task_id:
             try:
                 from ..models import AITask
                 task = self._db.get(AITask, self._task_id)
                 if task is not None:
                     task.model_used = f"{cfg.provider}/{cfg.model}@{cfg.config_version}"
+                    if prompt_version and hasattr(task, "prompt_version"):
+                        task.prompt_version = prompt_version
                     self._db.commit()
             except Exception as e:
                 logger.warning("回写 ai_tasks.model_used 失败: %s", e)
+
+    def _record_failover(self, task_type: str, primary: str, fallback: str,
+                         error: str):
+        """130：故障切换记入 ai_calls 台账（status=failover），便于审计。"""
+        try:
+            from ..ai_observability import record_call_async
+            from ..ai_observability import _utcnow
+            record_call_async({
+                "task_id": self._task_id, "task_type": task_type,
+                "model": fallback, "prompt_tokens": 0, "completion_tokens": 0,
+                "total_tokens": 0, "cost_cents": 0, "status": "failover",
+                "error": f"主模型 {primary} 失败后切换: {error[:300]}",
+                "latency_ms": 0, "cached": False,
+                "created_at": _utcnow(),
+            })
+        except Exception as e:
+            logger.warning("记录 failover 台账失败: %s", e)
+        logger.warning("AI故障切换 task=%s 主模型=%s → 兜底=%s 原因=%s",
+                       task_type, primary, fallback, error[:200])
 
     def _charge_budget(self, tokens: int):
         """124：调用成功后按 token 扣减预算（简化计费：按 token 数折算）。"""
@@ -149,18 +210,53 @@ class AIGateway:
     def chat(self, task_type: str, messages: List[dict],
              model: Optional[str] = None,
              temperature: float = 0.5,
-             json_object: bool = False) -> Tuple[str, dict]:
+             json_object: bool = False,
+             prompt_version: Optional[str] = None) -> Tuple[str, dict]:
         """121：单次 chat 调用。禁止静默回退：指定模型即用该模型。
 
+        model=None → 128 按 task_type 查策略表；再无则 DEFAULT_MODEL。
+        prompt_version：141-160，记录到 ai_tasks.prompt_version。
         返回 (content, usage)。usage 为模型返回的 usage 字典。
         """
+        # 128：解析实际使用的模型（显式指定优先）
+        primary = resolve_model(self._db, task_type, model)
+        # 129：调用前能力校验（不满足直接报错，不浪费调用）
+        check_capability(self._db, primary, task_type, json_object=json_object)
+        try:
+            return self._chat_once(task_type, messages, model=primary,
+                                   temperature=temperature,
+                                   json_object=json_object,
+                                   prompt_version=prompt_version,
+                                   requested_model=model)
+        except Exception as e:
+            # 130：故障切换 —— 仅当模型来自策略（非用户显式指定）且配了 fallback
+            if model is not None:
+                raise  # 用户显式指定的模型，禁止静默切换（122）
+            fallback = resolve_fallback(self._db, task_type)
+            if not fallback or fallback == primary:
+                raise
+            self._record_failover(task_type, primary, fallback, str(e))
+            # 兜底调用同样受预算/任务上限约束
+            return self._chat_once(task_type, messages, model=fallback,
+                                   temperature=temperature,
+                                   json_object=json_object,
+                                   prompt_version=prompt_version,
+                                   requested_model=None)
+
+    def _chat_once(self, task_type: str, messages: List[dict],
+                   model: str,
+                   temperature: float = 0.5,
+                   json_object: bool = False,
+                   prompt_version: Optional[str] = None,
+                   requested_model: Optional[str] = None) -> Tuple[str, dict]:
+        """单次实际调用（预算/重试/上限/配置记录/可观测性全生效）。"""
         # 126：先检查任务级上限
         self._check_task_limits(task_type)
         # 124：再检查组织预算
         self._check_budget(task_type)
-        # 122：配置快照（实际生效值）
-        cfg = self._model_config(requested_model=model)
-        # 122：禁止静默回退 —— 调用方指定了模型，就必须用它
+        # 122：配置快照（实际生效值）；requested_model 保留原始用户指定
+        cfg = self._model_config(requested_model=requested_model or model)
+        # 122：禁止静默回退 —— 用解析后的模型
         effective_model = model or cfg.model
 
         start = time.time()
@@ -178,10 +274,9 @@ class AIGateway:
         tokens = 0
         # Phase 5 可观测性钩子：网关调用前后通知 observability 记录/熔断/并发/缓存
         from ..ai_observability import cache_put, on_call_end, on_call_start
-        payload = {"model": effective_model, "temperature": temperature,
-                   "messages": messages}
-        if json_object:
-            payload["response_format"] = {"type": "json_object"}
+        # 127：经 ProviderAdapter 构建请求（不再直拼 payload）
+        payload = self._adapter.build_payload(effective_model, messages,
+                                              temperature, json_object)
         obs_ctx = on_call_start(task_type=task_type, model=effective_model,
                                 input_payload=payload, cacheable=True)
         if obs_ctx["cached_result"] is not None:
@@ -191,16 +286,9 @@ class AIGateway:
             self._task_calls += 1
             return content, usage
         try:
-            # 125：HTTP 层重试走分类策略；ai_service.chat 内部还有一层简单重试，
-            # 这里直接调 _post 做单次 HTTP，由 RetryExecutor 统一控制重试。
+            # 127：经 ProviderAdapter 单次调用 + 响应解析
             def _single_post():
-                data = self._svc._post(payload)
-                try:
-                    content = data["choices"][0]["message"]["content"]
-                except (KeyError, IndexError, TypeError) as e:
-                    raise AIFatalError(
-                        "模型服务返回格式无效：缺少 choices.message.content") from e
-                return content, data.get("usage", {})
+                return self._adapter.single_call(payload)
 
             content, usage = executor.run(_single_post)
             tokens = int(usage.get("total_tokens", 0) or 0)
@@ -216,7 +304,7 @@ class AIGateway:
                         task_id=self._task_id)
             duration_ms = int((time.time() - start) * 1000)
             self._record_config(cfg, task_type, executor.attempts, tokens,
-                                duration_ms, True)
+                                duration_ms, True, prompt_version=prompt_version)
             self._charge_budget(tokens)
             return content, usage
         except Exception as e:
@@ -224,7 +312,8 @@ class AIGateway:
                         task_id=self._task_id)
             duration_ms = int((time.time() - start) * 1000)
             self._record_config(cfg, task_type, executor.attempts, tokens,
-                                duration_ms, False, error=str(e))
+                                duration_ms, False, error=str(e),
+                                prompt_version=prompt_version)
             raise
 
     def generate_with_retry(
@@ -235,10 +324,12 @@ class AIGateway:
         model: Optional[str] = None,
         temperature: float = 0.3,
         max_attempts: int = 4,
+        prompt_version: Optional[str] = None,
     ) -> Tuple[object, dict]:
         """121：带校验重试的生成（替代 svc.generate_with_retry）。
 
         每次 chat 都走 gateway.chat（预算/重试/上限/配置记录全生效）。
+        prompt_version 透传并记录到 ai_tasks。
         返回 (校验通过的对象, {attempts, usage})。行为与原接口一致。
         """
         from ..ai_service import parse_json_content, TOTAL_TIMEOUT
@@ -259,7 +350,8 @@ class AIGateway:
             attempts = n
             messages = make_messages(feedback)
             content, usage = self.chat(task_type, messages, model=model,
-                                       temperature=temperature, json_object=True)
+                                       temperature=temperature, json_object=True,
+                                       prompt_version=prompt_version)
             usage_list.append(usage)
             try:
                 data = parse_json_content(content)

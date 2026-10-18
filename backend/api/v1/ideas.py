@@ -16,7 +16,8 @@ from pydantic import BaseModel, Field
 
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError, DEFAULT_MODEL
 from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
-from ...core.deps import check_rate_limit, get_ai_gateway, get_request_model
+from ...core.deps import get_ai_gateway, get_request_model
+from ...ai.prompts import get_prompt_version
 from ...prompts import (
     build_idea_messages,
     build_regen_shot_messages,
@@ -153,7 +154,6 @@ def create_ideas(
     gw=Depends(get_ai_gateway),
     async_mode: bool = Query(default=False, alias="async"),
 ):
-    check_rate_limit(request)
     # 034：?async=true 走异步任务模式
     if async_mode:
         return _enqueue_ai_task("ideas", {
@@ -172,7 +172,8 @@ def create_ideas(
     try:
         ideas, meta = gw.generate_with_retry(
             "ideas", make_messages, _validate_ideas,
-            model=_model or DEFAULT_MODEL, temperature=0.7)
+            model=_model or None, temperature=0.7,
+            prompt_version=get_prompt_version("ideas"))
     except BudgetExceededError as e:
         raise HTTPException(status_code=402, detail=str(e))
     except TaskLimitExceededError as e:
@@ -193,7 +194,6 @@ def create_storyboard(
     gw=Depends(get_ai_gateway),
     async_mode: bool = Query(default=False, alias="async"),
 ):
-    check_rate_limit(request)
     # 034：?async=true 走异步任务模式
     if async_mode:
         return _enqueue_ai_task("storyboard", {
@@ -210,7 +210,8 @@ def create_storyboard(
     try:
         sb, meta = gw.generate_with_retry(
             "storyboard", make_messages, validate_dict,
-            model=_model or DEFAULT_MODEL, temperature=0.3)
+            model=_model or None, temperature=0.3,
+            prompt_version=get_prompt_version("storyboard"))
     except BudgetExceededError as e:
         raise HTTPException(status_code=402, detail=str(e))
     except TaskLimitExceededError as e:
@@ -230,7 +231,6 @@ def regenerate_shot(
     request: Request,
     gw=Depends(get_ai_gateway),
 ):
-    check_rate_limit(request)
     _model = get_request_model(request)
     sb = req.storyboard
     shots = sb.get("shots", [])
@@ -245,7 +245,8 @@ def regenerate_shot(
     try:
         new_shot, meta = gw.generate_with_retry(
             "regen_shot", make_messages, _validate_shot,
-            model=_model or DEFAULT_MODEL, temperature=0.4)
+            model=_model or None, temperature=0.4,
+            prompt_version=get_prompt_version("regen_shot"))
     except BudgetExceededError as e:
         raise HTTPException(status_code=402, detail=str(e))
     except TaskLimitExceededError as e:

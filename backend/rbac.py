@@ -54,6 +54,8 @@ ALL_PERMISSIONS = frozenset({
     "fact:create", "fact:read", "fact:update", "fact:delete", "fact:approve",
     # 审核
     "review:submit", "review:approve",
+    # 媒体资产（S8.1）
+    "asset:upload", "asset:read", "asset:delete",
 })
 
 ROLE_PERMISSIONS: dict[str, frozenset] = {
@@ -64,17 +66,20 @@ ROLE_PERMISSIONS: dict[str, frozenset] = {
         "work:create", "work:read", "work:update",
         "fact:create", "fact:read", "fact:update",
         "review:submit",
+        "asset:upload", "asset:read",
     }),
     ROLE_REVIEWER: frozenset({
         "org:read",
         "work:read",
         "fact:read", "fact:approve",
         "review:submit", "review:approve",
+        "asset:read",
     }),
     ROLE_VIEWER: frozenset({
         "org:read",
         "work:read",
         "fact:read",
+        "asset:read",
     }),
 }
 

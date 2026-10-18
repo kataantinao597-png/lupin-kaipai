@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError
 from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
-from ...core.deps import check_rate_limit, get_ai_gateway, get_request_model
+from ...core.deps import get_ai_gateway, get_request_model
 from ...services.delivery_service import check_delivery
 from ...services.risk_service import check_storyboard_risk
 from .ideas import ProductInput
@@ -46,7 +46,6 @@ def check_risk(
     request: Request,
     gw=Depends(get_ai_gateway),
 ):
-    check_rate_limit(request)
     _model = get_request_model(request)
     try:
         from ...prompts import product_block

@@ -27,6 +27,10 @@ from ..models import (
 )
 from .base import EntityNotFound, OptimisticLockError, transactional_method
 
+import logging as _logging
+
+logger = _logging.getLogger(__name__)
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -139,6 +143,20 @@ class ReviewRepository:
         assert review is not None
         return review
 
+    def _notify_reviews_expired(self, org_id: str, work_id: str,
+                                count: int, reason: str) -> None:
+        """S10：审核失效事件（best-effort；事务提交后由装饰器提交，此处在
+        flush 后触发，接收方应以 API 查询为准）。"""
+        if not count or not org_id:
+            return
+        try:
+            from ..services.webhook_service import dispatch_event
+            dispatch_event("review.expired", org_id, {
+                "work_id": work_id, "expired_count": count, "reason": reason})
+        except Exception:  # noqa: BLE001
+            logger.warning("review.expired webhook 投递失败 work=%s",
+                           work_id, exc_info=True)
+
     @transactional_method
     def expire_stale(self, work_id: str, current_content_hash: str) -> int:
         """203：内容变更后，把绑定旧哈希的"有效"审核自动置为 expired。
@@ -153,6 +171,7 @@ class ReviewRepository:
                                    REVIEW_STATUS_IN_REVIEW,
                                    REVIEW_STATUS_APPROVED]))))
         count = 0
+        org_ids = set()
         for r in stale:
             # 只有允许的流转才做；approved->expired 合法，pending->expired 合法
             if REVIEW_STATUS_EXPIRED in REVIEW_TRANSITIONS.get(r.status, ()):
@@ -160,7 +179,11 @@ class ReviewRepository:
                 r.version = r.version + 1
                 r.updated_at = _utcnow()
                 count += 1
+                if r.org_id:
+                    org_ids.add(r.org_id)
         self.db.flush()
+        for org_id in org_ids:
+            self._notify_reviews_expired(org_id, work_id, count, "分镜内容变更")
         return count
 
     @transactional_method
@@ -184,4 +207,5 @@ class ReviewRepository:
                 r.updated_at = _utcnow()
                 count += 1
         self.db.flush()
+        self._notify_reviews_expired(org_id, "", count, "事实库实质变更")
         return count

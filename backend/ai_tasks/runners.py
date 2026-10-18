@@ -50,7 +50,7 @@ def _check_fact_refs(payload: dict[str, Any], facts: list) -> None:
 def run_ideas(task_id: str, is_cancelled: Callable[[], bool],
               payload: dict[str, Any]) -> dict[str, Any]:
     """034：创意生成异步 runner。payload: {product, facts}。"""
-    from ..ai_service import DEFAULT_MODEL
+    from ..ai.prompts import get_prompt_version
     from ..api.v1.ideas import _validate_ideas
     from ..prompts import build_idea_messages
 
@@ -70,7 +70,8 @@ def run_ideas(task_id: str, is_cancelled: Callable[[], bool],
 
     ideas, meta = gw.generate_with_retry(
         "ideas", make_messages, _validate_ideas,
-        model=payload.get("model") or DEFAULT_MODEL, temperature=0.7)
+        model=payload.get("model") or None, temperature=0.7,
+        prompt_version=get_prompt_version("ideas"))
     if is_cancelled():
         _cancelled()
     return {
@@ -83,7 +84,7 @@ def run_ideas(task_id: str, is_cancelled: Callable[[], bool],
 def run_storyboard(task_id: str, is_cancelled: Callable[[], bool],
                    payload: dict[str, Any]) -> dict[str, Any]:
     """034：分镜生成异步 runner。payload: {product, direction, facts}。"""
-    from ..ai_service import DEFAULT_MODEL
+    from ..ai.prompts import get_prompt_version
     from ..prompts import build_storyboard_messages
     from ..validator import validate_dict
 
@@ -101,7 +102,8 @@ def run_storyboard(task_id: str, is_cancelled: Callable[[], bool],
 
     sb, meta = gw.generate_with_retry(
         "storyboard", make_messages, validate_dict,
-        model=payload.get("model") or DEFAULT_MODEL, temperature=0.3)
+        model=payload.get("model") or None, temperature=0.3,
+        prompt_version=get_prompt_version("storyboard"))
     if is_cancelled():
         _cancelled()
     return {
