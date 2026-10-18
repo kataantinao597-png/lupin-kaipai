@@ -213,7 +213,6 @@ class TestWebhooks:
             f"/api/v1/enterprise/{org_id}/webhooks",
             json={"url": "https://example.com/hook",
                   "events": ["task.completed"]})
-        assert created.status_code == 200, created.text[:200]
         data = _ok(created)
         assert len(data["secret"]) == 64
         wh_id = data["id"]
@@ -371,7 +370,6 @@ class TestBilling:
         _ok(client.post(f"/api/v1/enterprise/{org_id}/billing/prices/seed"))
         rec = client.post(f"/api/v1/enterprise/{org_id}/billing/records",
                           json={"period": "2026-10"})
-        assert rec.status_code == 200, rec.text[:200]
         assert _ok(rec)["status"] == "issued"
         # 重复开 → 409
         r = client.post(f"/api/v1/enterprise/{org_id}/billing/records",

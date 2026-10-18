@@ -120,6 +120,7 @@ class TemplateOut(BaseModel):
     source: str
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    notice: Optional[str] = None
 
 
 class TemplateVersionOut(BaseModel):
