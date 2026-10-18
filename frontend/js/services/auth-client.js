@@ -43,9 +43,12 @@
     return data;
   }
 
-  async function register(email, password) {
-    var data = await rawPost("/api/v1/auth/register", { email: email, password: password });
-    setSession(data.access_token, data.user || null);
+  async function register(email, password, displayName) {
+    var body = { email: email, password: password };
+    if (displayName) body.display_name = displayName;
+    var data = await rawPost("/api/v1/auth/register", body);
+    // 后端 register 返回用户信息（无 token），调用方需再 login
+    setSession(data.access_token || null, data.user || data || null);
     return data;
   }
 

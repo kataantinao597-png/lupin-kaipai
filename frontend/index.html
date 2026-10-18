@@ -3,65 +3,562 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>鲁品开拍 · 山东农产品短视频拍摄方案工具</title>
-<link rel="stylesheet" href="/static/style.css">
-<link rel="stylesheet" href="/static/heritage.css?v=20261017-6">
-<link rel="stylesheet" href="/static/css/components.css?v=20261018-1">
+<title>鲁品开拍 · AI 短视频创作工作台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F3F5F9; --card:#FFFFFF; --ink:#1B2436; --ink2:#4A5568; --muted:#606B84;
+  --line:#E7EBF2; --primary:#2E6BF0; --primary-deep:#1D55C9; --primary-soft:#EAF1FE;
+  --green:#1FA97A; --green-soft:#E6F7F0; --amber:#E8930C; --amber-soft:#FDF3E2;
+  --red:#EE4B4B; --red-soft:#FDECEC; --purple:#7C5CFC;
+  --shadow:0 1px 2px rgba(27,36,54,.05),0 10px 30px -14px rgba(27,36,54,.14);
+  --r:14px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Noto Sans SC",system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.7}
+.app{display:flex;min-height:100vh}
+/* ---------- 侧边栏 ---------- */
+.sidebar{width:216px;flex:none;background:var(--card);border-right:1px solid var(--line);position:sticky;top:0;height:100vh;
+  padding:20px 14px;display:flex;flex-direction:column;gap:2px}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 10px 18px}
+.brand-mark{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#2E6BF0,#5F3DE8);color:#fff;display:grid;place-items:center;font-weight:900;font-size:17px}
+.brand b{font-size:16px;letter-spacing:.04em}
+.nav-item{display:flex;align-items:center;gap:11px;width:100%;border:0;background:none;text-align:left;padding:10px 12px;border-radius:10px;
+  font-size:13.5px;color:var(--ink2);cursor:pointer;transition:all .18s;font-family:inherit}
+.nav-item svg{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8}
+.nav-item:hover{background:#F2F5FA;color:var(--ink)}
+.nav-item.active{background:var(--primary-soft);color:#1D55C9;font-weight:700}
+.nav-cap{font-size:11px;color:var(--muted);letter-spacing:.2em;padding:14px 12px 6px}
+.side-foot{margin-top:auto;padding:12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line);display:flex;align-items:center;gap:10px}
+.avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#F5B73F,#F07B3F);color:#4A2E05;display:grid;place-items:center;font-size:13px;font-weight:700}
+/* ---------- 主区 ---------- */
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{display:flex;align-items:center;gap:16px;padding:14px 30px;background:rgba(255,255,255,.9);backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+.search{flex:1;max-width:420px;display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:8px 16px;color:var(--muted);font-size:13px}
+.search input{border:0;background:none;outline:none;flex:1;font:inherit;color:var(--ink)}
+.top-actions{margin-left:auto;display:flex;align-items:center;gap:12px}
+.icon-btn{width:36px;height:36px;border-radius:50%;border:1px solid var(--line);background:#fff;display:grid;place-items:center;cursor:pointer;color:var(--ink2)}
+.icon-btn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8}
+.view{display:none;padding:28px 32px 70px;max-width:1240px;animation:rise .4s cubic-bezier(.2,.7,.3,1)}
+.view.active{display:block}
+@keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+.page-title{font-size:22px;font-weight:900;letter-spacing:.02em;margin-bottom:4px}
+.page-sub{color:var(--muted);font-size:13px;margin-bottom:22px}
+/* ---------- 通用组件 ---------- */
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
+.btn{display:inline-flex;align-items:center;gap:8px;border:0;border-radius:10px;padding:11px 24px;font-size:14px;cursor:pointer;letter-spacing:.04em;transition:all .2s;font-family:inherit;font-weight:500}
+.btn.primary{background:var(--primary);color:#fff;box-shadow:0 10px 24px -12px rgba(15,25,45,.35)}
+.btn.primary:hover{background:var(--primary-deep);transform:translateY(-1px)}
+.btn.dark{background:#1B2436;color:#fff}
+.btn.ghost{background:#fff;border:1px solid var(--line);color:var(--ink)}
+.btn.ghost:hover{border-color:var(--primary);color:var(--primary)}
+.btn.sm{padding:8px 16px;font-size:13px;border-radius:8px}
+.pill{display:inline-flex;align-items:center;font-size:11.5px;padding:3px 11px;border-radius:999px;letter-spacing:.06em;font-weight:500}
+.pill.blue{background:var(--primary-soft);color:#1D55C9}
+.pill.green{background:var(--green-soft);color:#147A56}
+.pill.amber{background:var(--amber-soft);color:#8F5A1A}
+.pill.red{background:var(--red-soft);color:#B03232}
+.pill.gray{background:#F1F4F8;color:var(--ink2)}
+.progress{height:6px;border-radius:99px;background:#EDF0F5;overflow:hidden}
+.progress i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--primary),var(--purple))}
+input,textarea,select{font:inherit;font-size:13.5px;padding:10px 13px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);width:100%;transition:border .2s,box-shadow .2s}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(46,107,240,.14)}
+label.f{display:flex;flex-direction:column;gap:7px;font-size:12.5px;color:var(--ink2)}
+label.f .req{color:var(--red)}
+/* ---------- 动效 ---------- */
+.stagger>*{opacity:0;animation:rise .5s cubic-bezier(.2,.7,.3,1) forwards}
+.stagger>*:nth-child(1){animation-delay:.04s}.stagger>*:nth-child(2){animation-delay:.1s}
+.stagger>*:nth-child(3){animation-delay:.16s}.stagger>*:nth-child(4){animation-delay:.22s}
+.stagger>*:nth-child(5){animation-delay:.28s}.stagger>*:nth-child(6){animation-delay:.34s}
+
+/* ===== 非遗 × 动效 ===== */
+@keyframes floatY{0%,100%{transform:translateY(0) rotate(var(--rr,0deg))}50%{transform:translateY(-14px) rotate(var(--rr,0deg))}}
+@keyframes drift{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+@keyframes heroPan{0%,100%{background-position:0% 40%}50%{background-position:100% 60%}}
+@keyframes sealIn{0%{opacity:0;transform:scale(1.9) rotate(-20deg)}60%{opacity:1;transform:scale(.93) rotate(-8deg)}100%{opacity:1;transform:scale(1) rotate(-8deg)}}
+@keyframes shine{from{transform:translateX(-130%) skewX(-18deg)}to{transform:translateX(260%) skewX(-18deg)}}
+@keyframes pulseDot{0%,100%{transform:scale(1)}50%{transform:scale(1.3)}}
+.hero{background-size:220% 220%;animation:heroPan 16s ease-in-out infinite}
+.hero-inner>*{opacity:0;animation:rise .7s cubic-bezier(.2,.7,.3,1) forwards}
+.hero-inner>*:nth-child(1){animation-delay:.1s}.hero-inner>*:nth-child(2){animation-delay:.22s}
+.hero-inner>*:nth-child(3){animation-delay:.34s}.hero-inner>*:nth-child(4){animation-delay:.48s}
+.hero-deco{position:absolute;pointer-events:none;color:rgba(255,255,255,.16);z-index:0}
+.hero-deco svg{width:100%;height:100%}
+.seal{position:absolute;top:30px;right:38px;width:88px;height:88px;border-radius:14px;background:#B23727;color:#FFF3E2;
+display:grid;place-content:center;text-align:center;font-weight:900;font-size:21px;line-height:1.45;letter-spacing:.14em;
+transform:rotate(-8deg);box-shadow:0 12px 28px -8px rgba(0,0,0,.55),inset 0 0 0 3px rgba(255,243,226,.55);
+animation:sealIn .7s cubic-bezier(.2,.9,.3,1.25) .6s both;z-index:2}
+.meander{height:12px;margin:24px 2px 6px;opacity:.85;
+background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='12' viewBox='0 0 28 12'%3E%3Cpath d='M1 11 V2 H27 V9 H8 V5 H18' fill='none' stroke='%23B23727' stroke-width='1.6'/%3E%3C/svg%3E") repeat-x left center;background-size:28px 12px}
+.marquee{overflow:hidden;padding:13px 28px;margin-top:16px}
+.marquee-track{display:flex;align-items:center;gap:28px;width:max-content;animation:drift 32s linear infinite;
+font-size:13.5px;color:var(--ink2);white-space:nowrap}
+.marquee-track i{color:#B23727;font-style:normal;font-size:10px}
+.marquee:hover .marquee-track{animation-play-state:paused}
+.reveal{opacity:0;transform:translateY(22px);transition:opacity .65s ease,transform .65s cubic-bezier(.2,.7,.3,1)}
+.reveal.in{opacity:1;transform:none}
+.btn:active{transform:scale(.96)}
+.shine{position:relative;overflow:hidden}
+.shine::after{content:"";position:absolute;top:0;bottom:0;width:45%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);
+transform:translateX(-130%) skewX(-18deg);pointer-events:none}
+.shine:hover::after{animation:shine .85s ease}
+.stp.cur .n{animation:pulseDot 2.2s ease-in-out infinite}
+.poster{border:7px solid #B23727}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.view{display:none}.view.active{display:block}.reveal{opacity:1!important;transform:none!important}.hero-inner>*{opacity:1!important}}
+/* ---------- v0 首页 hero ---------- */
+.hero{border-radius:22px;overflow:hidden;position:relative;color:#fff;
+  background:linear-gradient(115deg,#1B2A52 0%,#27407E 45%,#3A5499 75%,#4A63B8 100%);padding:64px 56px;box-shadow:var(--shadow)}
+.hero::before{content:"";position:absolute;inset:0;opacity:.5;
+  background:radial-gradient(600px 300px at 85% 20%,rgba(124,92,252,.5),transparent 60%),radial-gradient(500px 260px at 10% 90%,rgba(46,107,240,.55),transparent 60%)}
+.hero-inner{position:relative;max-width:560px}
+.hero h1{font-size:44px;font-weight:900;line-height:1.35;letter-spacing:.02em;margin-bottom:14px}
+.hero p{font-size:15px;color:#FFFFFF;margin-bottom:28px;max-width:480px}
+.hero-cta{display:flex;gap:14px;flex-wrap:wrap}
+.hero .btn.primary{box-shadow:0 10px 24px -12px rgba(0,0,0,.5)}
+.hero-badges{display:flex;gap:26px;margin-top:36px;flex-wrap:wrap}
+.hb{display:flex;align-items:center;gap:9px;font-size:12.5px;color:#FFFFFF}
+.hb svg{width:20px;height:20px;stroke:#9DB9F0;fill:none;stroke-width:1.8}
+.feat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:22px}
+.feat{padding:22px}
+.feat svg{width:26px;height:26px;stroke:var(--primary);fill:none;stroke-width:1.8;margin-bottom:10px}
+.feat h2{font-size:15px;margin-bottom:6px}
+.feat p{font-size:12.5px;color:var(--muted)}
+/* ---------- v1 工作台 ---------- */
+.greet{background:linear-gradient(120deg,#EAF1FE,#F3EFFF);border:1px solid #DCE7FD;border-radius:18px;padding:26px 30px;margin-bottom:22px;position:relative;overflow:hidden}
+.greet h2{font-size:21px;font-weight:900;margin-bottom:4px}
+.greet p{color:var(--ink2);font-size:13.5px}
+.quick{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px}
+.qa{padding:20px;display:flex;gap:14px;align-items:center;cursor:pointer;transition:transform .2s}
+.qa:hover{transform:translateY(-3px)}
+.qa .ic{width:46px;height:46px;flex:none;border-radius:13px;display:grid;place-items:center;color:#fff}
+.qa .ic svg{width:22px;height:22px;stroke:#fff;fill:none;stroke-width:2}
+.qa b{display:block;font-size:14.5px}
+.qa span{font-size:12px;color:var(--muted)}
+.work-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.work{overflow:hidden;cursor:pointer;transition:transform .22s;padding:10px}
+.work:hover{transform:translateY(-4px)}
+.work .cover{height:132px;position:relative;display:flex;align-items:flex-end;padding:12px;border-radius:8px}
+.work .cover .pill{position:absolute;top:10px;right:10px}
+.work .body{padding:16px 18px}
+.work h4{font-size:15px;margin-bottom:2px}
+.work .date{font-size:11.5px;color:var(--muted);margin-bottom:10px}
+.work .meta{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted);margin-bottom:8px}
+.work.add{border:2px dashed var(--line);box-shadow:none;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:238px;color:var(--muted);gap:10px;background:transparent}
+.work.add:hover{border-color:var(--primary);color:var(--primary)}
+.work.add .plus{width:44px;height:44px;border-radius:50%;background:var(--primary-soft);color:var(--primary);display:grid;place-items:center;font-size:24px}
+/* ---------- v2 产品资料 ---------- */
+.p2{display:grid;grid-template-columns:300px 1fr 320px;gap:18px;align-items:start}
+.panel{padding:22px}
+.panel h3{font-size:15px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between}
+.form-stack{display:flex;flex-direction:column;gap:14px}
+.photos{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.photo{aspect-ratio:1;border-radius:10px;display:grid;place-items:center;color:rgba(255,255,255,.92);font-size:12px;position:relative;overflow:hidden}
+.photo.add{border:2px dashed var(--line);cursor:pointer;background:#FAFBFD;color:var(--muted)}
+.fact-row{display:flex;gap:10px;align-items:flex-start;padding:11px 4px;border-bottom:1px solid var(--line);font-size:13px}
+.fact-row:last-child{border:0}
+.fact-row .dot{width:8px;height:8px;border-radius:50%;margin-top:7px;flex:none}
+.fact-row b{font-weight:500;display:block;font-size:13px}
+.fact-row span{font-size:11.5px;color:var(--muted)}
+.fact-row .pill{margin-left:auto;flex:none}
+/* ---------- v3 创意分镜 ---------- */
+.stepper{display:flex;align-items:center;gap:0;margin-bottom:22px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 26px;box-shadow:var(--shadow)}
+.stp{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+.stp .n{width:28px;height:28px;border-radius:50%;border:1.5px solid var(--line);display:grid;place-items:center;font-size:12.5px;font-weight:700;background:#fff}
+.stp.done{color:var(--ink)}.stp.done .n{background:var(--green);border-color:var(--green);color:#fff}
+.stp.cur{color:var(--primary);font-weight:700}.stp.cur .n{background:var(--primary);border-color:var(--primary);color:#fff}
+.stp-line{flex:1;height:1.5px;background:var(--line);margin:0 14px;min-width:24px}
+.tabs{display:flex;gap:10px;margin-bottom:16px}
+.tab{border:1px solid var(--line);background:#fff;border-radius:10px;padding:10px 22px;font-size:13.5px;cursor:pointer;color:var(--ink2);font-family:inherit;transition:all .18s}
+.tab.active{border-color:var(--primary);color:#1D55C9;font-weight:700;background:var(--primary-soft)}
+.sb-table{width:100%;border-collapse:collapse;font-size:13px}
+.sb-table th{text-align:left;font-size:12px;color:var(--muted);font-weight:500;padding:12px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+.sb-table td{padding:13px 14px;border-bottom:1px solid #F0F3F7;vertical-align:top}
+.sb-table tr:last-child td{border:0}
+.sb-table tr:hover td{background:#FAFBFE}
+.thumb{width:64px;height:40px;border-radius:7px;flex:none}
+.op{display:flex;gap:8px}
+.op button{border:1px solid var(--line);background:#fff;border-radius:7px;font-size:12px;padding:5px 12px;cursor:pointer;color:var(--ink2);font-family:inherit}
+.op button:hover{border-color:var(--primary);color:var(--primary)}
+/* ---------- v4 海报 ---------- */
+.p4{display:grid;grid-template-columns:200px 1fr 280px;gap:18px;align-items:start}
+.tpl{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tpl .t{aspect-ratio:3/4;border-radius:10px;cursor:pointer;border:2px solid transparent;transition:all .18s;position:relative;overflow:hidden}
+.tpl .t.active{border-color:var(--primary);box-shadow:0 0 0 3px rgba(46,107,240,.18)}
+.poster{border-radius:16px;overflow:hidden;color:#fff;position:relative;min-height:520px;display:flex;flex-direction:column;justify-content:flex-end;padding:30px;
+  background:linear-gradient(160deg,#6E2A18 0%,#9E4423 45%,#BC6E2B 80%,#C07F33 100%)
+.poster::before{content:"";position:absolute;inset:0;background:radial-gradient(400px 400px at 50% 30%,rgba(255,220,160,.55),transparent 65%)}
+.poster .pt{position:relative;font-size:42px;font-weight:900;line-height:1.3;letter-spacing:.06em}
+.poster .ps{position:relative;font-size:14px;color:#FFF6E3;margin-top:10px;letter-spacing:.3em;background:rgba(60,20,0,.38);padding:8px 18px;border-radius:999px;width:max-content}
+.poster .pb{position:relative;margin-top:18px;display:inline-flex;background:#fff;color:#B4502E;font-weight:700;font-size:13px;padding:9px 22px;border-radius:999px;width:max-content}
+/* ---------- v5 拍摄 ---------- */
+.p5{display:grid;grid-template-columns:1fr 340px;gap:18px;align-items:start}
+.check{display:flex;gap:12px;align-items:flex-start;padding:13px 6px;border-bottom:1px solid #F0F3F7;font-size:13.5px;cursor:pointer}
+.check:last-child{border:0}
+.box{width:20px;height:20px;flex:none;border:1.5px solid #C6CEDB;border-radius:6px;margin-top:3px;display:grid;place-items:center;transition:all .18s;color:#fff;font-size:13px}
+.check.done .box{background:var(--green);border-color:var(--green)}
+.check.done .box::after{content:"✓"}
+.check.done .t{color:var(--muted);text-decoration:line-through}
+.check .note{margin-left:auto;flex:none}
+.mat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.mat{border-radius:10px;aspect-ratio:1;position:relative;overflow:hidden;cursor:pointer}
+.mat .st{position:absolute;bottom:8px;left:8px}
+/* ---------- v6 交付 ---------- */
+.p6{display:grid;grid-template-columns:1fr 340px;gap:18px;align-items:start}
+.dl-row{display:flex;align-items:center;gap:12px;padding:12px 6px;border-bottom:1px solid #F0F3F7;font-size:13.5px}
+.dl-row:last-child{border:0}
+.dl-ic{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;flex:none;font-weight:900;font-size:12px;color:#fff}
+.dl-row .meta{margin-left:auto;text-align:right;font-size:11.5px;color:var(--muted)}
+.notice{background:var(--amber-soft);border:1px solid #F3DFAE;border-radius:12px;padding:14px 18px;font-size:12.5px;color:#8A5A12;margin-top:18px}
+@media (max-width:1100px){.p2,.p4{grid-template-columns:1fr 1fr}.p5,.p6{grid-template-columns:1fr}.feat-grid,.quick{grid-template-columns:1fr 1fr}.work-grid{grid-template-columns:1fr 1fr}}
+@media (max-width:760px){
+  .sidebar{display:none}.view{padding:18px 14px 60px}.hero{padding:40px 26px}.hero h1{font-size:30px}
+  .p2,.p4,.quick,.feat-grid,.work-grid{grid-template-columns:1fr}.topbar{padding:10px 14px}.search{display:none}
+}
+
+/* ===== 真机适配追加 ===== */
+#toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(20px);background:#1B2436;color:#fff;
+padding:12px 22px;border-radius:12px;font-size:13.5px;opacity:0;pointer-events:none;transition:all .3s;z-index:999;max-width:80vw;box-shadow:0 12px 32px -10px rgba(0,0,0,.4)}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#ai_loading{position:fixed;inset:0;background:rgba(27,36,54,.45);backdrop-filter:blur(3px);z-index:998;display:none;place-items:center}
+#ai_loading.show{display:grid}
+.load-box{background:#fff;border-radius:18px;padding:34px 44px;text-align:center;box-shadow:0 24px 60px -20px rgba(0,0,0,.4)}
+.spinner{width:44px;height:44px;margin:0 auto 16px;border-radius:50%;border:4px solid var(--line);border-top-color:var(--primary);animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.load-box p{font-size:14px;color:var(--ink)}.load-box span{font-size:12px;color:var(--muted)}
+.modal-mask{position:fixed;inset:0;background:rgba(27,36,54,.45);z-index:997;display:none;place-items:center;padding:20px}
+.modal-mask.show{display:grid}
+.modal{background:#fff;border-radius:18px;padding:28px;width:440px;max-width:94vw;box-shadow:0 24px 60px -20px rgba(0,0,0,.4)}
+.modal h3{font-size:17px;font-weight:900;margin-bottom:6px}
+.qa-disabled{opacity:.55;cursor:not-allowed!important}
+.idea-card{background:var(--bg);border-radius:10px;padding:16px;cursor:pointer;border:2px solid transparent;transition:all .18s}
+.idea-card:hover{border-color:#C9D8F8}
+.idea-card.sel{border-color:var(--primary);background:var(--primary-soft)}
+.idea-card b{font-size:13.5px;display:block;margin-bottom:6px}
+.idea-card p{font-size:12.5px;color:var(--ink2)}
+.kv{display:flex;gap:8px;font-size:12.5px;padding:5px 0;color:var(--ink2)}
+.kv b{color:var(--ink);font-weight:500;flex:none;min-width:64px}
+.risk-item{border:1px solid var(--line);border-radius:10px;padding:13px 15px;margin-bottom:10px;display:flex;gap:12px;align-items:flex-start}
+.risk-item input[type=checkbox]{width:18px;height:18px;margin-top:3px;flex:none}
+.feas-ok{border-left:4px solid var(--green)}.feas-warn{border-left:4px solid var(--amber)}.feas-bad{border-left:4px solid var(--red)}
+.tl-item{display:flex;gap:12px;padding:10px 4px;border-bottom:1px solid #F0F3F7;font-size:13px}
+.tl-item:last-child{border:0}
+.tl-time{flex:none;width:86px;color:var(--muted);font-size:12px}
+.login-seal{position:absolute;top:16px;right:16px;width:62px;height:62px;border-radius:12px;background:#B23727;color:#FFF3E2;
+display:grid;place-content:center;text-align:center;font-weight:900;font-size:14px;line-height:1.4;letter-spacing:.12em;
+transform:rotate(-8deg);box-shadow:inset 0 0 0 2px rgba(255,243,226,.55)}
+.err-text{color:var(--red);font-size:13px;min-height:22px;margin-top:10px}
+.ok-text{color:var(--green);font-size:13px}
+.shot-edit{background:var(--bg);border-radius:10px;padding:14px;margin-top:10px}
+.shot-edit .form-stack{gap:10px}
+.dl-row button{margin-left:auto}
+input[type=file]{display:none}
+@media (prefers-reduced-motion:reduce){.spinner{animation:none}}
+
+</style>
 </head>
 <body>
-<div class="app-shell">
-  <aside class="sidebar" aria-label="工作台导航">
-    <a class="brand" href="#v0" onclick="showView('v0'); return false;" aria-label="鲁品开拍工作台首页"><span class="brand-mark" aria-hidden="true">鲁</span><span>鲁品开拍<small>田野档案馆</small></span></a>
-    <div class="sidebar-caption">创作流程 <span class="seal">齐鲁</span></div>
-    <nav class="steps" aria-label="创作阶段">
-      <button data-view="v0" class="step active"><span class="n">⌂</span><span class="lbl">作品总览</span></button>
-      <button data-view="v1" class="step"><span class="n">01</span><span class="lbl">产品档案与事实库</span></button>
-      <button data-view="v2" class="step"><span class="n">02</span><span class="lbl">创意方向</span></button>
-      <button data-view="v3" class="step"><span class="n">03</span><span class="lbl">分镜编辑</span></button>
-      <button data-view="v5" class="step"><span class="n">04</span><span class="lbl">拍摄执行</span></button>
-      <button data-view="v4" class="step"><span class="n">05</span><span class="lbl">风险审核与交付</span></button>
-    </nav>
-    <div class="sidebar-foot"><span class="grain-mark" aria-hidden="true">田</span><span>山东 · 物产档案</span></div>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">鲁</span><b>鲁品开拍</b></div>
+    <button class="nav-item active" data-v="v0"><svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a2 2 0 01-2 2h-4v-7h-6v7H5a2 2 0 01-2-2z"/></svg>首页</button>
+    <div class="nav-cap">创作</div>
+    <button class="nav-item" data-v="v1"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>工作台</button>
+    <button class="nav-item" data-v="v2"><svg viewBox="0 0 24 24"><path d="M4 7V5a2 2 0 012-2h12a2 2 0 012 2v2M4 7h16M4 7v12a2 2 0 002 2h12a2 2 0 002-2V7M10 11h4"/></svg>产品资料</button>
+    <button class="nav-item" data-v="v3"><svg viewBox="0 0 24 24"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6l2.1 2.1m0-12.8l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>创意策划</button>
+    <button class="nav-item" data-v="v4"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18M8 5v4"/></svg>海报制作</button>
+    <button class="nav-item" data-v="v5"><svg viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>拍摄执行</button>
+    <button class="nav-item" data-v="v6"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>交付中心</button>
+    <div class="nav-cap">系统</div>
+    <button class="nav-item" id="nav_api_cfg"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>模型配置</button>
+    <div class="side-foot" id="side_user" style="cursor:pointer"><span class="avatar" id="user_avatar">鲁</span><div><div id="user_name" style="font-size:13px;color:var(--ink)">未登录</div><span style="font-size:11px" id="user_sub">点击登录</span></div></div>
   </aside>
-  <div class="workspace">
-    <header class="topbar"><div class="topbar-context"><span class="eyebrow">山东特色农产品</span><span class="topbar-divider"></span><span>AI 营销与短视频创作工作台</span></div><span id="save_status" class="save-status saved">✓ 已保存</span></header>
-    <div id="stage_progress" class="stage-progress" aria-live="polite"></div>
-    <main>
-      <section id="v0" class="view active">
-        <h2>作品管理</h2>
-        <div class="overview-heading"><div><p class="eyebrow">FIELD ARCHIVE / 作品档案</p><h1>工作台总览</h1><p class="overview-subtitle">从产品事实到拍摄交付，管理每一件山东好物的创作进度。</p></div><span class="archive-stamp" aria-label="齐鲁物产档案">齐鲁<br><small>物产</small></span></div>
-        <div class="actions overview-actions"><button id="btn_new_work" class="primary">＋ 新建作品</button><button id="btn_api_settings" class="ghost">模型配置</button></div>
-        <div id="overview_metrics" class="overview-metrics" aria-label="作品进度摘要"></div>
-        <div id="api_settings_panel" class="hidden card">
-          <h3>模型 API 配置</h3>
-          <p class="muted">用于 AI 生成（创意/分镜/可行性/风险检查）。Key 仅保存在当前浏览器标签页内存中，关闭标签页即清除，不会写入服务器或本地持久存储。</p>
-          <div class="form-grid"><label class="wide">API Base URL<input id="cfg_base" placeholder="如：https://api.openai.com/v1（留空用默认）"></label><label class="wide">API Key<input id="cfg_key" type="password" placeholder="sk-..." autocomplete="off"></label><label>模型名称<input id="cfg_model" placeholder="如：gpt-4o（留空用默认）"></label></div>
-          <div class="actions"><button id="btn_save_cfg" class="primary">保存到当前会话</button><button id="btn_clear_cfg" class="ghost danger">清除配置</button></div><p id="cfg_status" class="muted"></p>
+  <div class="main">
+    <header class="topbar">
+      <label class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input placeholder="搜索作品、产品、镜头…"></label>
+      <div class="top-actions">
+        <span class="pill blue" id="top_user" style="display:none"></span>
+        <button class="btn ghost sm" id="btn_logout" style="display:none">退出</button>
+        <button class="btn primary sm" id="btn_new_work_top">＋ 新建作品</button>
+      </div>
+    </header>
+
+    <!-- ============ v-login 登录 ============ -->
+    <section class="view" id="v-login">
+      <div style="max-width:430px;margin:7vh auto 0">
+        <div class="card panel" style="position:relative;overflow:hidden">
+          <span class="login-seal">齐鲁<br>年画</span>
+          <h2 style="font-size:22px;font-weight:900;margin-bottom:6px">欢迎回来</h2>
+          <p class="page-sub">登录后开始创作你的山东好物短视频</p>
+          <div class="tabs" style="margin-bottom:16px">
+            <button class="tab active" id="tab_login">登录</button>
+            <button class="tab" id="tab_register">注册</button>
+          </div>
+          <div class="form-stack">
+            <label class="f" id="row_display_name" style="display:none">昵称<input id="login_name" placeholder="如：山东好品店" maxlength="32"></label>
+            <label class="f">邮箱 <span class="req">*</span><input id="login_email" type="email" placeholder="you@example.com" autocomplete="username"></label>
+            <label class="f">密码 <span class="req">*</span><input id="login_password" type="password" placeholder="至少 6 位" autocomplete="current-password"></label>
+          </div>
+          <div class="err-text" id="login_err"></div>
+          <button class="btn primary" id="btn_do_auth" style="width:100%;justify-content:center;margin-top:8px">登录</button>
+          <p style="font-size:12px;color:var(--muted);margin-top:14px">首次使用请点「注册」，注册成功会自动为你创建个人工作室。</p>
         </div>
-        <div class="overview-section-head"><div><h3>作品档案</h3><p class="muted">继续处理最近的作品，或从一份新的田野记录开始。</p></div><span class="section-rule"></span></div>
-        <div id="works_list" class="cards work-grid"></div><div id="stage_panel" class="stage-panel"></div>
-      </section>
-      <section id="v1" class="view">
-        <div class="view-header"><div><p class="eyebrow">01 / PRODUCT ARCHIVE</p><h2>产品档案与事实库</h2></div><span id="save_status_v1" class="save-status saved"></span></div>
-        <div class="section-intro"><span class="section-seal">产地</span><p>先记录可核实的产品信息与拍摄条件，让后续创意有据可依。</p></div>
-        <div class="form-grid">
-          <label>产品名称 *<input id="f_name" placeholder="如：烟台红富士苹果"></label><label>价格<input id="f_price" placeholder="如：10斤装 39.9元"></label>
-          <label class="wide">产品信息<textarea id="f_desc" rows="2" placeholder="产地、品种、种植方式等"></textarea></label><label class="wide">卖点（每行一条）<textarea id="f_points" rows="3" placeholder="脆甜多汁&#10;果园现摘现发"></textarea></label>
-          <label class="wide">目标受众<input id="f_audience" placeholder="如：25-40岁宝妈"></label><label class="wide">证明材料（检测报告/证书等，没有可空）<textarea id="f_evidence" rows="2" placeholder="如：有机认证证书编号…"></textarea></label>
-          <label>拍摄设备<select id="f_device"><option>手机</option><option>相机</option><option>摄像机</option></select></label><label>拍摄人数<input id="f_people" type="number" min="1" value="1"></label><label>拍摄场景<input id="f_location" placeholder="如：果园、厨房"></label><label>灯光条件<input id="f_lighting" placeholder="如：自然光"></label><label>目标时长（秒）<input id="f_duration" type="number" min="10" value="60"></label><label class="wide">限制说明<textarea id="f_note" rows="2" placeholder="如：只有一部手机、独自一人、无专业灯光"></textarea></label>
+      </div>
+    </section>
+
+    <!-- ============ v0 首页 ============ -->
+    <section class="view active" id="v0">
+      <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><g id="pf" fill="none" stroke="currentColor" stroke-width="2.5">
+<circle cx="50" cy="50" r="45" stroke-dasharray="7 6"/><ellipse cx="50" cy="25" rx="11" ry="24"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(45 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(90 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(135 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(180 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(225 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(270 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(315 50 50)"/><circle cx="50" cy="50" r="9"/><circle cx="50" cy="50" r="3" fill="currentColor" stroke="none"/></g></defs></svg><div class="hero">
+      <div class="hero-deco" style="top:24px;right:5%;width:170px;height:170px;--rr:14deg;animation:floatY 8s ease-in-out infinite"><svg viewBox="0 0 100 100"><use href="#pf"/></svg></div>
+      <div class="hero-deco" style="bottom:30px;left:3%;width:110px;height:110px;--rr:-12deg;animation:floatY 10s ease-in-out infinite reverse"><svg viewBox="0 0 100 100"><use href="#pf"/></svg></div>
+      <div class="hero-deco" style="top:46%;left:44%;width:70px;height:70px;--rr:8deg;animation:floatY 12s ease-in-out infinite"><svg viewBox="0 0 100 100"><use href="#pf"/></svg></div>
+      <span class="seal">齐鲁<br>年画</span>
+      <div class="hero-inner">
+        <h1>让好产品<br>被更多人看见</h1>
+        <p>基于真实产品资料的 AI 营销与短视频创作工作台，助力山东特色农产品走向更大的市场。</p>
+        <div class="hero-cta"><button class="btn primary shine" data-goto="v1">立即使用 →</button></div>
+        <div class="hero-badges">
+          <span class="hb"><svg viewBox="0 0 24 24"><path d="M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 17.3 5.9 20.6l1.4-6.8L2.2 9.1l6.9-.8z"/></svg>AI 创意策划</span>
+          <span class="hb"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9l5 3-5 3z"/></svg>可视化分镜</span>
+          <span class="hb"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>海报与文案</span>
+          <span class="hb"><svg viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>风险审核</span>
+          <span class="hb"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>一键导出</span>
         </div>
-        <div class="actions"><button id="btn_ideas" class="primary">生成 3 个创意方向 →</button><button id="btn_fill_demo" class="ghost">填入演示案例（烟台苹果）</button></div><div id="err1" class="error"></div>
-        <h3>产品事实库 <span class="muted">（已确认事实将用于 AI 生成）</span></h3><div id="facts_list" class="cards"></div><div class="actions"><button id="btn_add_fact" class="ghost">＋ 添加事实</button></div>
-        <div id="fact_editor" class="hidden card"><h4 id="fact_editor_title">添加事实</h4><div class="form-grid"><label class="wide">事实内容 *<textarea id="fact_content" rows="2" placeholder="如：章丘大葱产自山东济南章丘区"></textarea></label><label>分类<select id="fact_category"><option>产地</option><option>品种</option><option>口感</option><option>工艺</option><option>规格</option><option>保存方式</option><option>认证</option><option>其他</option></select></label><label>状态<select id="fact_status"><option value="confirmed">已确认</option><option value="pending">待核实</option></select></label><label class="wide">来源/证明材料<input id="fact_source" placeholder="如：检测报告编号、实地拍摄"></label><label><input type="checkbox" id="fact_allow" checked> 允许用于内容生成</label></div><div class="actions"><button id="btn_save_fact" class="primary">保存</button><button id="btn_cancel_fact" class="ghost">取消</button></div></div>
-      </section>
-      <section id="v2" class="view"><div class="view-header"><div><p class="eyebrow">02 / CREATIVE DIRECTION</p><h2>选择创意方向</h2></div></div><div id="ideas" class="cards"></div><div class="actions"><button id="btn_back1" class="ghost">← 返回修改产品信息</button><button id="btn_regen_ideas" class="ghost">重新生成方向</button></div><div id="err2" class="error"></div></section>
-      <section id="v3" class="view"><div class="view-header"><div><p class="eyebrow">03 / STORYBOARD</p><h2>分镜编辑器 <span id="sb_meta" class="muted"></span></h2></div></div><div id="validate_bar" class="validate-bar"></div><div id="shots" class="cards"></div><div class="actions"><button id="btn_back2" class="ghost">← 返回重选方向</button><button id="btn_feasibility" class="ghost">检查拍摄可行性</button><button id="btn_shoot_mode" class="ghost">进入现场拍摄模式</button><button id="btn_goto_risk" class="primary">风险检查与导出 →</button></div><div id="feasibility_panel" class="hidden"></div><div id="err3" class="error"></div></section>
-      <section id="v4" class="view"><div class="view-header"><div><p class="eyebrow">05 / DELIVERY</p><h2>风险审核与交付</h2></div></div><div class="actions"><button id="btn_risk" class="primary">运行风险检查</button></div><div id="err4" class="error"></div><h3>宣传事实风险提示 <span class="muted">（勾选 = 人工已确认）</span></h3><div id="risks" class="cards"><p class="muted">尚未运行风险检查。</p></div><h3>素材准备清单</h3><ul id="materials" class="checklist"></ul><h3>用户待确认事项</h3><ul id="pendings" class="checklist"></ul><div class="actions"><button id="btn_back3" class="ghost">← 返回分镜编辑</button><button id="btn_export" class="primary">生成 DOCX 拍摄执行单</button></div><div class="actions" id="delivery_actions"><button id="btn_delivery_check" class="ghost">检查交付状态</button><button id="btn_export_srt" class="ghost">导出 SRT 字幕</button></div><div id="delivery_panel" class="delivery-panel hidden"></div><p class="disclaimer">说明：风险提示仅为"依据缺失"提醒，由人工核实确认。本工具不保证广告合规。</p></section>
-      <section id="v5" class="view"><div class="view-header"><div><p class="eyebrow">04 / PRODUCTION</p><h2>拍摄执行 <span id="shoot_meta" class="muted"></span></h2></div></div><div id="shoot_stats" class="stats-bar"></div><div class="filter-bar"><button data-filter="all" class="filter-btn active">全部</button><button data-filter="todo" class="filter-btn">待拍摄</button><button data-filter="done" class="filter-btn">已拍摄</button><button data-filter="reshoot" class="filter-btn">需要补拍</button><button id="btn_filter_todo_only" class="ghost small">只看未完成</button></div><div id="shoot_cards" class="cards"></div><div class="actions"><button id="btn_back_shoot" class="ghost">← 返回分镜编辑</button><button id="btn_export_checklist" class="primary">导出拍摄清单 DOCX</button></div><div id="err5" class="error"></div></section>
-    </main>
-    <div id="loading" class="loading hidden"><div class="spinner"></div><div id="loading_text">处理中…</div></div>
+      </div></div>
+      <div class="meander"></div>
+      <div class="card marquee"><div class="marquee-track">
+        <span>章丘大葱</span><i>✦</i><span>烟台苹果</span><i>✦</i><span>莱阳梨</span><i>✦</i><span>金乡大蒜</span><i>✦</i><span>德州扒鸡</span><i>✦</i><span>潍坊萝卜</span><i>✦</i><span>沾化冬枣</span><i>✦</i><span>肥城桃</span><i>✦</i>
+        <span>章丘大葱</span><i>✦</i><span>烟台苹果</span><i>✦</i><span>莱阳梨</span><i>✦</i><span>金乡大蒜</span><i>✦</i><span>德州扒鸡</span><i>✦</i><span>潍坊萝卜</span><i>✦</i><span>沾化冬枣</span><i>✦</i><span>肥城桃</span><i>✦</i>
+      </div></div>
+      <div class="feat-grid stagger">
+        <div class="card feat"><svg viewBox="0 0 24 24"><path d="M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 17.3 5.9 20.6l1.4-6.8L2.2 9.1l6.9-.8z"/></svg><h2>事实先行</h2><p>产品事实库沉淀可核实信息，AI 生成有据可依，拒绝胡编。</p></div>
+        <div class="card feat"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9l5 3-5 3z"/></svg><h2>分镜到秒</h2><p>11 个镜头自动排布，时长、景别、口播一次给齐。</p></div>
+        <div class="card feat"><svg viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg><h2>拍摄友好</h2><p>一人一机也能拍，执行清单打勾推进，不漏镜头。</p></div>
+        <div class="card feat"><svg viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg><h2>人工把关</h2><p>风险提示只提醒依据缺失，每条都由你亲自确认。</p></div>
+      </div>
+    </section>
+
+    <!-- ============ v1 工作台总览 ============ -->
+    <section class="view" id="v1">
+      <div class="greet"><h2 id="greet_title">你好，让山东好产品，被更多人看见！</h2><p id="greet_text">正在加载工作台数据…</p></div>
+      <div class="quick stagger">
+        <div class="card qa" id="qa_new"><span class="ic" style="background:linear-gradient(135deg,#2E6BF0,#5F3DE8)"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span><div><b>创建新作品</b><span>从产品资料开始</span></div></div>
+        <div class="card qa qa-disabled" data-todo="产品文档导入"><span class="ic" style="background:linear-gradient(135deg,#157A57,#1FA97A)"><svg viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg></span><div><b>导入已有产品</b><span>功能待接入</span></div></div>
+        <div class="card qa qa-disabled" data-todo="示例案例库"><span class="ic" style="background:linear-gradient(135deg,#F59E0B,#EF4444)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 9l5 3-5 3z"/></svg></span><div><b>查看示例案例</b><span>功能待接入</span></div></div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <h3 style="font-size:16px">我的作品</h3>
+        <div style="display:flex;gap:8px;align-items:center"><span class="pill blue" data-filter="all" style="cursor:pointer">全部</span> <span class="pill gray" data-filter="active" style="cursor:pointer">进行中</span> <span class="pill gray" data-filter="done" style="cursor:pointer">已完成</span>
+        <button class="btn primary sm" id="btn_new_work" style="margin-left:8px">＋ 新建作品</button></div>
+      </div>
+      <div class="work-grid stagger" id="work_grid"><p style="color:var(--muted)">正在加载作品…</p></div>
+    </section>
+
+    <!-- ============ v2 产品资料与事实库 ============ -->
+    <section class="view" id="v2">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">
+        <h2 class="page-title" style="margin:0" id="w2_title">产品资料</h2><span class="pill amber" id="w2_status">草稿</span>
+        <span style="margin-left:auto;display:flex;gap:10px"><button class="btn ghost sm" id="btn_save_product">保存</button><button class="btn primary sm" id="btn_to_v3">下一步 →</button></span>
+      </div>
+      <div class="p2">
+        <div class="card panel"><h3>产品基本信息</h3><div class="form-stack">
+          <label class="f">产品名称 <span class="req">*</span><input id="p_name" placeholder="如：章丘大葱"></label>
+          <label class="f">产品品类<input id="p_category" placeholder="如：蔬菜 / 大葱"></label>
+          <label class="f">产地<input id="p_origin" placeholder="如：山东 · 济南章丘"></label>
+          <label class="f">规格<input id="p_spec" placeholder="如：5斤装"></label>
+          <label class="f">价格<input id="p_price" placeholder="如：5斤装 19.9元"></label>
+          <label class="f">销售方式<input id="p_channel" placeholder="如：线上零售"></label>
+          <label class="f">特色卖点（每行一条）<textarea id="p_points" rows="3" placeholder="脆甜多汁&#10;果园现摘现发"></textarea></label>
+          <label class="f">目标时长（秒）<input id="p_duration" type="number" min="10" value="60"></label>
+        </div>
+        <div class="err-text" id="product_err"></div></div>
+        <div class="card panel"><h3>产品图片</h3>
+          <p style="font-size:13px;color:var(--ink2)">产品相关图片请在「拍摄执行」页统一上传管理，素材会自动关联到当前作品。</p>
+          <button class="btn ghost sm" style="margin-top:12px" data-goto="v5">前往拍摄执行 →</button></div>
+        <div class="card panel"><h3>核心事实 <span style="font-size:11.5px;color:var(--muted);font-weight:400" id="fact_summary"></span></h3>
+          <div id="fact_stale_warn"></div>
+          <div id="fact_list"><p style="font-size:12.5px;color:var(--muted)">正在加载事实库…</p></div>
+          <button class="btn ghost sm" id="btn_add_fact" style="margin-top:12px;width:100%;justify-content:center">＋ 补充事实</button>
+          <div id="fact_editor" style="display:none;margin-top:12px;padding:16px;background:var(--bg);border-radius:10px">
+            <h4 id="fact_editor_title" style="font-size:14px;margin-bottom:12px">添加事实</h4>
+            <div class="form-stack">
+              <label class="f">事实内容 <span class="req">*</span><textarea id="f_content" rows="2" placeholder="如：章丘大葱产自山东济南章丘区"></textarea></label>
+              <label class="f">分类<select id="f_category"><option>产地</option><option>品种</option><option>口感</option><option>工艺</option><option>规格</option><option>保存方式</option><option>认证</option><option>其他</option></select></label>
+              <label class="f">来源<input id="f_source" placeholder="如：检测报告编号、农户确认"></label>
+              <label class="f" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="f_allow" checked style="width:auto"> 允许用于 AI 生成</label>
+            </div>
+            <div style="display:flex;gap:10px;margin-top:12px"><button class="btn primary sm" id="btn_save_fact">保存</button><button class="btn ghost sm" id="btn_cancel_fact">取消</button></div>
+            <div class="err-text" id="fact_err"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ v3 AI 创意策划与分镜编辑 ============ -->
+    <section class="view" id="v3">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">
+        <h2 class="page-title" style="margin:0" id="w3_title">创意策划</h2>
+        <span style="margin-left:auto;display:flex;gap:10px"><button class="btn ghost sm" data-goto="v2">上一步</button><button class="btn primary sm" data-goto="v5">去拍摄 →</button></span>
+      </div>
+      <div class="stepper" id="stepper"></div>
+      <div class="card panel" style="margin-bottom:18px">
+        <h3>创意方案 <span class="pill gray" id="ideas_count">尚未生成</span></h3>
+        <div id="ideas_stale_warn"></div>
+        <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+          <button class="btn primary sm" id="btn_gen_ideas">✦ 生成创意方案</button>
+          <button class="btn ghost sm" id="btn_regen_ideas" style="display:none">重新生成</button>
+        </div>
+        <div class="tabs" id="ideas_tabs" style="display:none"></div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px" id="ideas_cards">
+          <p style="font-size:13px;color:var(--muted);grid-column:1/-1">先在「产品资料」页填写产品信息并保存，然后点击「生成创意方案」。AI 生成约需半分钟。</p>
+        </div>
+        <div class="err-text" id="ideas_err"></div>
+      </div>
+      <div class="card panel">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:8px">
+          <h3 style="margin:0">分镜列表 <span style="font-size:12px;color:var(--muted);font-weight:400" id="sb_meta"></span></h3>
+          <div style="display:flex;gap:8px"><button class="btn primary sm" id="btn_gen_storyboard">✦ 生成分镜</button><button class="btn ghost sm" id="btn_add_shot">＋ 添加镜头</button><button class="btn ghost sm" id="btn_regen_all">重新生成</button></div>
+        </div>
+        <div id="sb_stale_warn"></div>
+        <div class="err-text" id="sb_err"></div>
+        <table class="sb-table"><thead><tr><th>#</th><th>景别</th><th>画面描述</th><th>拍摄动作</th><th>时长</th><th>台词/字幕</th><th>操作</th></tr></thead><tbody id="sb_tbody">
+          <tr><td colspan="7" style="color:var(--muted)">暂无分镜，请先选择创意方向并生成。</td></tr>
+          </tbody></table>
+      </div>
+      <div class="card panel" style="margin-top:18px">
+        <div class="tabs" style="margin-bottom:14px">
+          <button class="tab active" id="tab_risk">风险检查</button>
+          <button class="tab" id="tab_feas">可行性检查</button>
+        </div>
+        <div id="pane_risk">
+          <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap">
+            <button class="btn primary sm" id="btn_run_risk">运行风险检查</button>
+            <span style="font-size:12px;color:var(--muted)">检查宣传用语是否有事实依据支撑，勾选 = 人工已确认</span>
+          </div>
+          <div id="risk_results"><p style="font-size:13px;color:var(--muted)">尚未运行风险检查。</p></div>
+          <div class="err-text" id="risk_err"></div>
+        </div>
+        <div id="pane_feas" style="display:none">
+          <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap">
+            <button class="btn primary sm" id="btn_run_feas">检查拍摄可行性</button>
+            <span style="font-size:12px;color:var(--muted)">结合你的拍摄条件逐镜头评估，不构成绝对保证</span>
+          </div>
+          <div id="feas_results"><p style="font-size:13px;color:var(--muted)">尚未检查。</p></div>
+          <div class="err-text" id="feas_err"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ v4 海报制作 ============ -->
+    <section class="view" id="v4">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">
+        <h2 class="page-title" style="margin:0" id="w4_title">海报制作</h2>
+        <span style="margin-left:auto;display:flex;gap:10px"><button class="btn ghost sm" data-goto="v3">← 返回</button><button class="btn ghost sm" id="btn_poster_save">存草稿</button><button class="btn primary sm" id="btn_poster_png">导出 PNG</button></span>
+      </div>
+      <div class="p4">
+        <div class="card panel"><h3>模板库</h3><div class="tpl" id="poster_tpls">
+          <div class="t active" data-tpl="harvest" data-name="丰收橙" style="background:linear-gradient(160deg,#7A2E1D,#E8A25C)"></div>
+          <div class="t" data-tpl="ocean" data-name="海洋蓝" style="background:linear-gradient(160deg,#1B4D6B,#5BA4CF)"></div>
+          <div class="t" data-tpl="orchard" data-name="果园绿" style="background:linear-gradient(160deg,#2C4A2E,#A3D65C)"></div>
+          <div class="t" data-tpl="grape" data-name="葡萄紫" style="background:linear-gradient(160deg,#5B2A86,#C99AF2)"></div>
+        </div><button class="btn ghost sm qa-disabled" data-todo="更多海报模板" style="margin-top:12px;width:100%;justify-content:center">＋ 更多模板</button></div>
+        <div class="poster" id="poster_preview"><div class="pt" id="pp_title">产品名称<br>宣传语</div><div class="ps" id="pp_promo">促 销 信 息</div><span class="pb" id="pp_btn">行动按钮 →</span></div>
+        <div class="card panel"><h3>编辑内容</h3><div class="form-stack">
+          <label class="f">主标题<input id="pe_title" placeholder="如：章丘大葱"></label>
+          <label class="f">副标题<input id="pe_sub" placeholder="如：葱香四溢"></label>
+          <label class="f">促销语<input id="pe_promo" placeholder="如：现挖现发 · 坏菜包赔"></label>
+          <label class="f">按钮文案<input id="pe_btn" placeholder="如：立即抢购"></label>
+        </div>
+        <div class="actions" style="margin-top:14px;display:flex;gap:8px;flex-direction:column">
+          <button class="btn primary sm" id="btn_gen_poster" style="justify-content:center">✦ AI 生成海报</button>
+          <p style="font-size:12px;color:var(--muted);margin:0">图片生成能力待接入：当前可手动排版并导出 PNG，AI 生图后续版本支持。</p>
+        </div>
+        <h3 style="margin-top:18px">发布文案</h3>
+        <textarea rows="4" style="margin-top:10px" id="pe_copy" placeholder="写下你的发布文案…"></textarea>
+        <div class="actions" style="margin-top:14px"><button class="btn primary sm" id="btn_copy_copy" style="flex:1;justify-content:center">复制文案</button></div>
+        <div class="ok-text" id="poster_msg" style="margin-top:8px"></div></div>
+      </div>
+    </section>
+
+    <!-- ============ v5 现场拍摄 ============ -->
+    <section class="view" id="v5">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">
+        <h2 class="page-title" style="margin:0" id="w5_title">拍摄执行</h2><span class="pill blue" id="shoot_progress">拍摄进度</span>
+        <span style="margin-left:auto;display:flex;gap:10px"><button class="btn ghost sm" id="btn_print">台本打印预览</button><button class="btn primary sm" data-goto="v6">去交付 →</button></span>
+      </div>
+      <div class="p5">
+        <div class="card panel"><h3>拍摄清单 <span style="font-size:12px;color:var(--muted);font-weight:400">点击勾选完成</span></h3>
+          <div id="shoot_list"><p style="font-size:13px;color:var(--muted)">暂无分镜，请先在「创意策划」页生成分镜。</p></div>
+          <div style="margin-top:16px"><div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted);margin-bottom:8px"><span>总体进度</span><span id="shoot_pct">0%</span></div><div class="progress"><i id="shoot_bar" style="width:0%"></i></div></div>
+        </div>
+        <div class="card panel"><h3>拍摄素材 <span class="pill gray" id="asset_count"></span></h3>
+          <div class="mat-grid" id="asset_grid"><p style="font-size:12.5px;color:var(--muted);grid-column:1/-1">暂无素材，点击下方按钮上传。</p></div>
+          <input type="file" id="file_asset" accept="image/*,video/*">
+          <button class="btn ghost sm" id="btn_upload_asset" style="margin-top:14px;width:100%;justify-content:center">＋ 上传素材</button>
+          <div class="err-text" id="asset_err"></div>
+          <h3 style="margin-top:18px">拍摄备注</h3>
+          <textarea id="shoot_note" rows="3" placeholder="记录拍摄中的注意事项…"></textarea>
+          <button class="btn ghost sm" id="btn_save_note" style="margin-top:10px">保存备注</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ v6 交付中心 ============ -->
+    <section class="view" id="v6">
+      <div class="meander" style="margin-top:0"></div>
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">
+        <h2 class="page-title" style="margin:0" id="w6_title">交付中心</h2><span class="pill green" id="w6_status">待交付</span>
+      </div>
+      <div class="p6">
+        <div>
+          <div class="card panel"><h3>交付检查 <span style="font-size:12px;color:var(--muted);font-weight:400">勾选 = 人工已确认</span></h3>
+            <button class="btn primary sm" id="btn_delivery_check" style="margin-bottom:14px">运行交付检查</button>
+            <div id="delivery_results"><p style="font-size:13px;color:var(--muted)">点击运行，检查分镜、事实、拍摄状态是否满足交付条件。</p></div>
+            <div class="err-text" id="delivery_err"></div>
+          </div>
+          <div class="card panel" style="margin-top:18px"><h3>创作时间轴</h3>
+            <div id="timeline_panel"><p style="font-size:13px;color:var(--muted)">进入交付中心时自动加载。</p></div>
+          </div>
+          <div class="card panel" style="margin-top:18px"><h3>效果复盘 <span class="pill gray">发布后回填</span></h3>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;text-align:center">
+              <div style="background:var(--bg);border-radius:10px;padding:16px"><div style="font-size:22px;font-weight:900">—</div><div style="font-size:12px;color:var(--muted)">播放量</div></div>
+              <div style="background:var(--bg);border-radius:10px;padding:16px"><div style="font-size:22px;font-weight:900">—</div><div style="font-size:12px;color:var(--muted)">完播率</div></div>
+              <div style="background:var(--bg);border-radius:10px;padding:16px"><div style="font-size:22px;font-weight:900">—</div><div style="font-size:12px;color:var(--muted)">转化订单</div></div>
+            </div>
+            <p style="font-size:12.5px;color:var(--muted);margin-top:12px">视频发布 7 天后回来填写数据，沉淀为下次创作的经验。</p>
+          </div>
+        </div>
+        <div class="card panel"><h3>导出文件</h3>
+          <div class="dl-row"><span class="dl-ic" style="background:#2E6BF0">DOC</span><div><b style="font-size:13.5px">拍摄执行单</b><div style="font-size:11.5px;color:var(--muted)">分镜＋口播＋清单</div></div><button class="btn ghost sm" id="exp_docx">下载</button></div>
+          <div class="dl-row"><span class="dl-ic" style="background:#7C5CFC">SRT</span><div><b style="font-size:13.5px">口播字幕</b><div style="font-size:11.5px;color:var(--muted)">按镜头切分时间轴</div></div><button class="btn ghost sm" id="exp_srt">下载</button></div>
+          <div class="dl-row"><span class="dl-ic" style="background:#1FA97A">PNG</span><div><b style="font-size:13.5px">宣传海报</b><div style="font-size:11.5px;color:var(--muted)">在海报制作页排版后导出</div></div><button class="btn ghost sm" data-goto="v4">去制作</button></div>
+          <div class="dl-row"><span class="dl-ic" style="background:#A05E05">TXT</span><div><b style="font-size:13.5px">发布文案</b><div style="font-size:11.5px;color:var(--muted)">标题＋正文＋话题</div></div><button class="btn ghost sm" id="exp_txt">下载</button></div>
+          <div class="dl-row"><span class="dl-ic" style="background:#5B6B7A">MP4</span><div><b style="font-size:13.5px">成片归档</b><div style="font-size:11.5px;color:var(--muted)">发布后上传回填</div></div><button class="btn ghost sm qa-disabled" data-todo="成片上传归档">待上传</button></div>
+          <button class="btn primary" id="btn_export_all" style="width:100%;justify-content:center;margin-top:16px">全部导出打包</button>
+          <div class="err-text" id="export_err"></div>
+          <div class="notice">风险提示仅为"依据缺失"提醒，由人工核实确认。本工具不保证广告合规，发布前请自行把关。</div>
+        </div>
+      </div>
+    </section>
   </div>
 </div>
-<script src="/static/js/utils/hash.js"></script><script src="/static/js/services/api-client.js"></script><script src="/static/js/services/auth-client.js"></script><script src="/static/js/store/work-store.js"></script><script src="/static/js/services/op-queue.js"></script><script src="/static/js/services/request-guard.js"></script><script src="/static/js/components/status.js"></script><script src="/static/js/components/expiry.js"></script><script src="/static/js/components/conflict-dialog.js"></script><script src="/static/js/components/store-bridge.js"></script><script src="/static/js/core.js"></script><script src="/static/js/product.js"></script><script src="/static/js/ideas.js"></script><script src="/static/js/storyboard.js"></script><script src="/static/js/risk.js"></script><script src="/static/js/feasibility.js"></script><script src="/static/js/shoot.js"></script><script src="/static/js/works.js"></script><script src="/static/js/workbench.js"></script><script src="/static/js/facts.js"></script>
+<div id="toast"></div>
+<div id="ai_loading"><div class="load-box"><div class="spinner"></div><p id="ai_loading_text">AI 生成中…</p><span>约需半分钟，请勿关闭页面</span></div></div>
+<div class="modal-mask" id="cfg_modal"><div class="modal">
+  <h3>模型配置</h3>
+  <p style="font-size:12.5px;color:var(--muted);margin-bottom:14px">自带 Key 调用 AI（走 deepkey 兼容接口）。Key 只保存在当前浏览器标签页，关闭即清除，不会上传到服务器。</p>
+  <div class="form-stack">
+    <label class="f">API Base URL<input id="cfg_base" placeholder="留空用服务端默认"></label>
+    <label class="f">API Key<input id="cfg_key" type="password" placeholder="sk-..." autocomplete="off"></label>
+    <label class="f">模型名称<input id="cfg_model" placeholder="留空用服务端默认"></label>
+  </div>
+  <div style="display:flex;gap:10px;margin-top:16px"><button class="btn primary sm" id="btn_save_cfg">保存到当前会话</button><button class="btn ghost sm" id="btn_clear_cfg">清除</button><button class="btn ghost sm" id="btn_close_cfg" style="margin-left:auto">关闭</button></div>
+  <p id="cfg_status" style="font-size:12.5px;color:var(--muted);margin-top:12px"></p>
+</div></div>
+<script src="/static/js/services/api-client.js"></script>
+<script src="/static/js/services/auth-client.js"></script>
+<script src="/static/js/app.js"></script>
 </body>
 </html>

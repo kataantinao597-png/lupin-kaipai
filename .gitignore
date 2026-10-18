@@ -7,3 +7,4 @@ __pycache__/
 backend/data/
 *.db
 *.sqlite
+backend/media_files/

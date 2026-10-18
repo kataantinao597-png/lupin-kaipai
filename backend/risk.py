@@ -121,7 +121,8 @@ def dedup(flags: List[Dict]) -> List[Dict]:
     return out
 
 
-def risk_check_storyboard(ai_service, sb: dict,  # ai_service: AIGateway 或 AIService evidence: str = "",
+def risk_check_storyboard(ai_service, sb: dict,  # ai_service: AIGateway 或 AIService
+                          evidence: str = "",
                           input_claims: List[str] | None = None,
                           product_info: str = "",
                           model: Optional[str] = None) -> Dict:
