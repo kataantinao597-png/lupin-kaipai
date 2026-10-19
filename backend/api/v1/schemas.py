@@ -249,6 +249,7 @@ class AITaskOut(BaseModel):
     created_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
+    idempotent_replay: Optional[bool] = None  # V3.1 P0：幂等回放标识
 
 
 class AITaskCancelOut(BaseModel):

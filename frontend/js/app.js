@@ -1703,6 +1703,7 @@ async function genLivestreamScript() {
   const duration = parseInt($("live_duration").value, 10) || 120;
   errText("live_err", "");
   aiLoading("正在生成场控脚本…");
+  setBtnsDisabled(["btn_gen_live"], true); // V3.1 P0：防双击重复扣费
   try {
     const t = RAW(await ApiClient.post("/api/v1/ai-tasks", {
       task_type: "livestream_script",
@@ -1713,7 +1714,7 @@ async function genLivestreamScript() {
         category: category,
         duration_minutes: duration,
       },
-    }));
+    }, { idempotencyKey: newIdempotencyKey() })); // V3.1 P0：同 key 只建一个任务
     const result = await pollAiTask(t.id, "场控脚本");
     if (!result.livestream_script || !(result.livestream_script.segments || []).length) {
       throw new Error("AI 返回的脚本结构异常，请重试");
@@ -1725,6 +1726,7 @@ async function genLivestreamScript() {
   } catch (e) {
     errText("live_err", e.message || "生成失败");
   } finally {
+    setBtnsDisabled(["btn_gen_live"], false);
     aiLoadingDone();
   }
 }

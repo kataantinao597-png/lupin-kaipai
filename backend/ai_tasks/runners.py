@@ -26,6 +26,21 @@ def _cancelled():
     raise _TaskCancelled()
 
 
+def _gateway_for_runner(task_id: str, payload: dict[str, Any], service=None):
+    """runner 专用网关：带上 org_id + 独立 db 会话，使预算/用量生效。
+
+    org 取自 payload["_org_id"]（API 层 S6.1 注入，已做成员校验）。
+    返回 (gateway, db_session)，调用方必须在 finally 中 db.close()。
+    无 _org_id 时行为与旧版一致（跳过预算），向后兼容。
+    """
+    from ..ai.gateway import AIGateway
+    from ..auth.database import get_session_factory
+    db = get_session_factory()()
+    gw = AIGateway(service=service if service is not None else _get_server_ai(),
+                   org_id=payload.get("_org_id"), db=db, task_id=task_id)
+    return gw, db
+
+
 def _resolve_payload_product_facts(payload: dict[str, Any],
                                      facts: list) -> tuple[list, dict | None]:
     """V3.0 B-4：异步任务 payload 带 product_id 时，解析其已确认事实并入。
@@ -76,31 +91,33 @@ def run_ideas(task_id: str, is_cancelled: Callable[[], bool],
 
     if is_cancelled():
         _cancelled()
-    from ..ai.gateway import AIGateway
-    gw = AIGateway(service=_get_server_ai(), task_id=task_id)
-    product = payload.get("product") or {}
-    facts = payload.get("facts") or []
-    # V3.0 B-4：产品档案的已确认事实并入 grounding
-    facts, _prod_ref = _resolve_payload_product_facts(payload, facts)
-    _check_fact_refs(payload, facts)  # S6.1：gateway 调用前检查引用事实
+    gw, _gw_db = _gateway_for_runner(task_id, payload)
+    try:
+        product = payload.get("product") or {}
+        facts = payload.get("facts") or []
+        # V3.0 B-4：产品档案的已确认事实并入 grounding
+        facts, _prod_ref = _resolve_payload_product_facts(payload, facts)
+        _check_fact_refs(payload, facts)  # S6.1：gateway 调用前检查引用事实
 
-    def make_messages(feedback):
-        msgs = build_idea_messages(product, facts)
-        if feedback:
-            msgs.append({"role": "user", "content": feedback})
-        return msgs
+        def make_messages(feedback):
+            msgs = build_idea_messages(product, facts)
+            if feedback:
+                msgs.append({"role": "user", "content": feedback})
+            return msgs
 
-    ideas, meta = gw.generate_with_retry(
-        "ideas", make_messages, _validate_ideas,
-        model=payload.get("model") or None, temperature=0.7,
-        prompt_version=get_prompt_version("ideas"))
-    if is_cancelled():
-        _cancelled()
-    return {
-        "ideas": [i.model_dump() for i in ideas],
-        "attempts": meta["attempts"],
-        "usage": meta["usage"],
-    }
+        ideas, meta = gw.generate_with_retry(
+            "ideas", make_messages, _validate_ideas,
+            model=payload.get("model") or None, temperature=0.7,
+            prompt_version=get_prompt_version("ideas"))
+        if is_cancelled():
+            _cancelled()
+        return {
+            "ideas": [i.model_dump() for i in ideas],
+            "attempts": meta["attempts"],
+            "usage": meta["usage"],
+        }
+    finally:
+        _gw_db.close()
 
 
 def run_storyboard(task_id: str, is_cancelled: Callable[[], bool],
@@ -112,48 +129,70 @@ def run_storyboard(task_id: str, is_cancelled: Callable[[], bool],
 
     if is_cancelled():
         _cancelled()
-    from ..ai.gateway import AIGateway
-    gw = AIGateway(service=_get_server_ai(), task_id=task_id)
-    product = payload.get("product") or {}
-    direction = payload.get("direction") or ""
-    facts = payload.get("facts") or []
-    # V3.0 B-4：产品档案的已确认事实并入 grounding
-    facts, _prod_ref = _resolve_payload_product_facts(payload, facts)
-    _check_fact_refs(payload, facts)  # S6.1：gateway 调用前检查引用事实
+    gw, _gw_db = _gateway_for_runner(task_id, payload)
+    try:
+        product = payload.get("product") or {}
+        direction = payload.get("direction") or ""
+        facts = payload.get("facts") or []
+        # V3.0 B-4：产品档案的已确认事实并入 grounding
+        facts, _prod_ref = _resolve_payload_product_facts(payload, facts)
+        _check_fact_refs(payload, facts)  # S6.1：gateway 调用前检查引用事实
 
-    _purpose = (payload.get("video_purpose") or "").strip()
-    _use_v2 = _purpose in {"brand", "sales", "intro", "record"}
-    _v2_purpose = _purpose if _use_v2 else "intro"
-    _resources = payload.get("available_resources") or []
+        _purpose = (payload.get("video_purpose") or "").strip()
+        _use_v2 = _purpose in {"brand", "sales", "intro", "record"}
+        _v2_purpose = _purpose if _use_v2 else "intro"
+        _resources = payload.get("available_resources") or []
 
-    def make_messages(feedback):
-        if _use_v2:
-            return build_storyboard_v2_messages(
-                product, direction, _v2_purpose, _resources, facts, feedback)
-        return build_storyboard_messages(product, direction, facts, feedback)
+        def make_messages(feedback):
+            if _use_v2:
+                return build_storyboard_v2_messages(
+                    product, direction, _v2_purpose, _resources, facts, feedback)
+            return build_storyboard_messages(product, direction, facts, feedback)
 
-    sb, meta = gw.generate_with_retry(
-        "storyboard", make_messages, validate_dict,
-        model=payload.get("model") or None, temperature=0.3,
-        prompt_version=get_prompt_version("storyboard_v2" if _use_v2 else "storyboard"))
-    if is_cancelled():
-        _cancelled()
-    return {
-        "storyboard": sb.model_dump() if hasattr(sb, "model_dump") else sb,
-        "attempts": meta["attempts"],
-        "usage": meta["usage"],
-    }
+        sb, meta = gw.generate_with_retry(
+            "storyboard", make_messages, validate_dict,
+            model=payload.get("model") or None, temperature=0.3,
+            prompt_version=get_prompt_version("storyboard_v2" if _use_v2 else "storyboard"))
+        if is_cancelled():
+            _cancelled()
+        return {
+            "storyboard": sb.model_dump() if hasattr(sb, "model_dump") else sb,
+            "attempts": meta["attempts"],
+            "usage": meta["usage"],
+        }
+    finally:
+        _gw_db.close()
 
 
-def _validate_livestream(data: dict):
-    """校验店播场控脚本结构。返回 (errors, validated)。"""
+LIVESTREAM_PHASES = ("开场留人", "讲品", "互动", "逼单", "返场", "收尾")
+
+
+def _validate_livestream(data: dict, duration=None):
+    """校验店播场控脚本结构。返回 (errors, validated)。
+
+    V3.1 P0-3：补全时间轴校验——phase 合法枚举、start<end、段间连续
+    无重叠无空洞、覆盖 0→total_minutes、total 与请求时长一致、
+    每段 script 非空。duration 为 None 时跳过"与请求时长一致"检查
+    （兼容旧调用）。
+    """
     errors = []
     if not isinstance(data, dict):
         return ["返回不是 JSON 对象"], None
+    title = data.get("title")
+    if not isinstance(title, str) or not title.strip():
+        errors.append("[结构] 缺少 title")
+    total = data.get("total_minutes")
+    total_ok = isinstance(total, (int, float)) and total > 0
+    if not total_ok:
+        errors.append("[结构] total_minutes 非法（须为正数）")
+    if duration is not None and total_ok and total != duration:
+        errors.append(
+            f"[时间轴] total_minutes({total}) 与请求时长({duration}) 不一致")
     segs = data.get("segments")
     if not isinstance(segs, list) or not segs:
         errors.append("segments 为空或不是数组")
     else:
+        prev_end = 0
         for i, s in enumerate(segs):
             if not isinstance(s, dict):
                 errors.append(f"segments[{i}] 不是对象")
@@ -161,6 +200,29 @@ def _validate_livestream(data: dict):
             for k in ("phase", "start_minute", "end_minute", "script"):
                 if k not in s:
                     errors.append(f"segments[{i}] 缺少字段 {k}")
+            ph = s.get("phase")
+            if ph not in LIVESTREAM_PHASES:
+                errors.append(
+                    f"segments[{i}] phase 非法: {ph!r}（允许 {list(LIVESTREAM_PHASES)}）")
+            st, en = s.get("start_minute"), s.get("end_minute")
+            if (not isinstance(st, (int, float))
+                    or not isinstance(en, (int, float))
+                    or st < 0 or en <= st):
+                errors.append(f"segments[{i}] 起止时间非法: {st}-{en}")
+                continue
+            if st != prev_end:
+                errors.append(
+                    f"segments[{i}] 时间不连续：上一段结束于 {prev_end}，"
+                    f"本段开始于 {st}")
+            prev_end = en
+            sc = s.get("script")
+            if (not isinstance(sc, list)
+                    or not any(isinstance(x, str) and x.strip() for x in sc)):
+                errors.append(f"segments[{i}] script 为空")
+        if total_ok and prev_end != total:
+            errors.append(
+                f"[时间轴] 未完整覆盖：最后一段结束于 {prev_end}，"
+                f"总时长为 {total}")
     if errors:
         return errors, None
     return [], data
@@ -174,35 +236,41 @@ def run_livestream_script(task_id: str, is_cancelled: Callable[[], bool],
 
     if is_cancelled():
         _cancelled()
-    from ..ai.gateway import AIGateway
-    gw = AIGateway(service=_get_server_ai(), task_id=task_id)
-    product = payload.get("product") or {}
-    facts = payload.get("facts") or []
-    category = payload.get("category") or "水果"
+    gw, _gw_db = _gateway_for_runner(task_id, payload)
     try:
-        duration = int(payload.get("duration_minutes") or 120)
-    except (TypeError, ValueError):
-        duration = 120
-    duration = max(30, min(duration, 480))
-    _check_fact_refs(payload, facts)  # S6.1：gateway 调用前检查引用事实
+        product = payload.get("product") or {}
+        facts = payload.get("facts") or []
+        category = payload.get("category") or "水果"
+        try:
+            duration = int(payload.get("duration_minutes") or 120)
+        except (TypeError, ValueError):
+            duration = 120
+        duration = max(30, min(duration, 480))
+        _check_fact_refs(payload, facts)  # S6.1：gateway 调用前检查引用事实
 
-    def make_messages(feedback):
-        msgs = build_livestream_messages(product, facts, category, duration)
-        if feedback:
-            msgs.append({"role": "user", "content": feedback})
-        return msgs
+        def make_messages(feedback):
+            msgs = build_livestream_messages(product, facts, category, duration)
+            if feedback:
+                msgs.append({"role": "user", "content": feedback})
+            return msgs
 
-    script, meta = gw.generate_with_retry(
-        "livestream_script", make_messages, _validate_livestream,
-        model=payload.get("model") or None, temperature=0.7,
-        prompt_version=get_prompt_version("livestream_script"))
-    if is_cancelled():
-        _cancelled()
-    return {
-        "livestream_script": script,
-        "attempts": meta["attempts"],
-        "usage": meta["usage"],
-    }
+        # V3.1 P0-3：校验器带上请求时长做时间轴一致性检查；
+        # 多次重试仍不合格 → generate_with_retry 抛 AIFatalError → 任务明确失败，
+        # 残缺结果不会写入作品（前端 saveWork 只在 succeeded 时执行）
+        script, meta = gw.generate_with_retry(
+            "livestream_script", make_messages,
+            lambda data: _validate_livestream(data, duration),
+            model=payload.get("model") or None, temperature=0.7,
+            prompt_version=get_prompt_version("livestream_script"))
+        if is_cancelled():
+            _cancelled()
+        return {
+            "livestream_script": script,
+            "attempts": meta["attempts"],
+            "usage": meta["usage"],
+        }
+    finally:
+        _gw_db.close()
 
 
 # 034：task_type → runner 映射

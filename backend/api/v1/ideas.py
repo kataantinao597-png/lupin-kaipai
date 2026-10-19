@@ -13,11 +13,15 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError, DEFAULT_MODEL
 from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
+from ...auth.database import get_db
+from ...auth.models import User
 from ...core.deps import get_ai_gateway, get_request_model
 from ...core.idempotency import (idempotency_begin, idempotency_invalidate)
+from ...rbac import get_membership
 from ...ai.prompts import get_prompt_version
 from ...prompts import (
     build_idea_messages,
@@ -143,11 +147,34 @@ def _validate_shot(data: dict):
 
 # ---------- 034：异步任务入口 ----------
 
-def _enqueue_ai_task(task_type: str, payload: dict, request: Request) -> dict:
+def _optional_user(request: Request,
+                   db: Session = Depends(get_db)) -> Optional[User]:
+    """可选登录：合法 Bearer 返回用户，否则 None。
+
+    同步 MVP 流程保持匿名可用；?async=true 分支要求登录（见下）。
+    """
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:].strip() if auth.startswith("Bearer ") else ""
+    if not token:
+        return None
+    from ...auth.security import decode_access_token
+    from ...repositories.user_repository import UserRepository
+    user_id = decode_access_token(token)
+    if not user_id:
+        return None
+    user = UserRepository(db).get_by_id(user_id)
+    return user if user is not None and user.is_active else None
+
+
+def _enqueue_ai_task(task_type: str, payload: dict, request: Request,
+                     user: User, db: Session) -> dict:
     """034：同步接口的 ?async=true 入口——创建任务并返回 task_id。
 
     约束：异步任务只用服务端 AI 配置；请求头自带 Key（X-Lupin-Key）
     的不允许转异步（Key 不能落库），直接 400 提示走同步。
+
+    V3.1 P0：强制登录；org_id 必传且调用者须为该组织成员
+    （不存在/无权一律 404，防组织枚举）；created_by 取服务端登录用户。
     """
     if request.headers.get("X-Lupin-Key", "").strip():
         raise HTTPException(
@@ -158,43 +185,43 @@ def _enqueue_ai_task(task_type: str, payload: dict, request: Request) -> dict:
     from ...ai_tasks.repository import AITaskRepository
     from ...ai_tasks.runners import RUNNERS
     from ...auth.database import get_session_factory
-    from .ai_tasks import _resolve_org_id
     if task_type not in RUNNERS:
         raise HTTPException(status_code=400,
                             detail=f"任务类型 {task_type} 暂不支持异步")
+    org_id = (payload or {}).get("org_id")
+    ms = get_membership(db, user.id, org_id or "")
+    if not org_id or ms is None:
+        raise HTTPException(status_code=404, detail="组织不存在")
+    org_id = ms.org_id
     session_factory = get_session_factory()
-    db = session_factory()
-    try:
-        org_id = _resolve_org_id(db, None)
-        repo = AITaskRepository(db)
-        # S6.1：payload 注入 org_id，供 runner 在 gateway 调用前做事实引用检查
-        payload = dict(payload or {})
-        payload["_org_id"] = org_id
-        # V2.1 #3：同 Idempotency-Key + 同请求体 → 直接返回已有任务，不重复建任务
+    repo = AITaskRepository(db)
+    # S6.1：payload 注入 org_id，供 runner 在 gateway 调用前做事实引用检查
+    payload = dict(payload or {})
+    payload["_org_id"] = org_id
+    # V2.1 #3：同 Idempotency-Key + 同请求体 → 直接返回已有任务，不重复建任务
+    idem = idempotency_begin("enqueue:" + task_type, request, payload)
+    if idem.replay is not None:
+        old_task = repo.get((idem.replay or {}).get("task_id") or "",
+                            org_id)
+        if old_task is not None:
+            return {"task_id": old_task.id, "status": old_task.status,
+                    "query_url": f"/api/v1/ai-tasks/{old_task.id}",
+                    "idempotent_replay": True}
+        # 任务记录已不在：清掉失效的幂等记录，重新建任务（不静默返回死链接）
+        idempotency_invalidate(
+            "enqueue:" + task_type,
+            request.headers.get("Idempotency-Key", ""))
         idem = idempotency_begin("enqueue:" + task_type, request, payload)
-        if idem.replay is not None:
-            old_task = repo.get((idem.replay or {}).get("task_id") or "",
-                                org_id)
-            if old_task is not None:
-                return {"task_id": old_task.id, "status": old_task.status,
-                        "query_url": f"/api/v1/ai-tasks/{old_task.id}",
-                        "idempotent_replay": True}
-            # 任务记录已不在：清掉失效的幂等记录，重新建任务（不静默返回死链接）
-            idempotency_invalidate(
-                "enqueue:" + task_type,
-                request.headers.get("Idempotency-Key", ""))
-            idem = idempotency_begin("enqueue:" + task_type, request, payload)
-        try:
-            # 137：同步接口转异步（用户在等待结果）→ high 优先级
-            task = repo.create(org_id=org_id, task_type=task_type,
-                               payload=payload, priority="high")
-            task_id = task.id
-        except Exception:
-            idem.abort()
-            raise
-        idem.finish({"task_id": task_id})
-    finally:
-        db.close()
+    try:
+        # 137：同步接口转异步（用户在等待结果）→ high 优先级
+        task = repo.create(org_id=org_id, task_type=task_type,
+                           payload=payload, created_by=user.id,
+                           priority="high")
+        task_id = task.id
+    except Exception:
+        idem.abort()
+        raise
+    idem.finish({"task_id": task_id})
     runner = RUNNERS[task_type]
 
     def _runner(tid: str, is_cancelled):
@@ -213,16 +240,20 @@ def create_ideas(
     request: Request,
     gw=Depends(get_ai_gateway),
     async_mode: bool = Query(default=False, alias="async"),
+    user: Optional[User] = Depends(_optional_user),
+    db: Session = Depends(get_db),
 ):
-    # 034：?async=true 走异步任务模式
+    # 034：?async=true 走异步任务模式（V3.1 P0：异步建任务强制登录）
     if async_mode:
+        if user is None:
+            raise HTTPException(status_code=401, detail="异步任务需要登录")
         return _enqueue_ai_task("ideas", {
             "product": req.product.model_dump(),
             "facts": req.facts,
             # V3.0 B-4：异步 runner 在执行时解析产品事实
             "product_id": req.product_id,
             "org_id": req.org_id,
-        }, request)
+        }, request, user, db)
     _model = get_request_model(request)
     # V2.1 #3：Idempotency-Key 去重——同 key 同体直接回放，不重复调模型扣费
     idem = idempotency_begin("ideas", request, req.model_dump(),
@@ -272,9 +303,13 @@ def create_storyboard(
     request: Request,
     gw=Depends(get_ai_gateway),
     async_mode: bool = Query(default=False, alias="async"),
+    user: Optional[User] = Depends(_optional_user),
+    db: Session = Depends(get_db),
 ):
-    # 034：?async=true 走异步任务模式
+    # 034：?async=true 走异步任务模式（V3.1 P0：异步建任务强制登录）
     if async_mode:
+        if user is None:
+            raise HTTPException(status_code=401, detail="异步任务需要登录")
         return _enqueue_ai_task("storyboard", {
             "product": req.product.model_dump(),
             "direction": req.direction,
@@ -285,7 +320,7 @@ def create_storyboard(
             # V3.0 B-4：异步 runner 在执行时解析产品事实
             "product_id": req.product_id,
             "org_id": req.org_id,
-        }, request)
+        }, request, user, db)
     _model = get_request_model(request)
     product = req.product.model_dump()
 

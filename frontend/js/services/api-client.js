@@ -70,12 +70,20 @@
     return headers;
   }
 
+  // V3.1 P0：AI 网关经 X-Org-Id 头取组织做预算；登录后自动带上
+  function orgHeaders(headers) {
+    try {
+      if (typeof S === "object" && S && S.org && S.org.id) headers["X-Org-Id"] = S.org.id;
+    } catch (e) { /* 忽略，降级为无组织头 */ }
+    return headers;
+  }
+
   async function doFetch(method, path, body, opts) {
     opts = opts || {};
     var requestId = opts.requestId || genRequestId();
     var headers = { "Content-Type": "application/json", "X-Request-ID": requestId };
     if (opts.idempotencyKey) headers["Idempotency-Key"] = opts.idempotencyKey;
-    authHeaders(userKeyHeaders(headers));
+    authHeaders(orgHeaders(userKeyHeaders(headers)));
 
     var controller = null, timer = null;
     if (typeof AbortController !== "undefined") {

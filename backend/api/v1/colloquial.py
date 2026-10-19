@@ -9,11 +9,16 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError
 from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
+from ...auth.database import get_db
+from ...auth.deps import get_current_user
+from ...auth.models import User
 from ...core.deps import get_ai_gateway, get_request_model
 from ...core.idempotency import idempotency_begin
+from ...rbac import get_membership
 from ...ai.prompts import get_prompt_version
 from ...ai.prompts.colloquial_v1 import build_colloquial_messages
 
@@ -47,9 +52,19 @@ def _validate_colloquial(data: dict):
 def rewrite_colloquial(
     req: ColloquialRewriteRequest,
     request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
     gw=Depends(get_ai_gateway),
 ):
-    """农人口语改写：书面口播 → 山东农人口语味。"""
+    """农人口语改写：书面口播 → 山东农人口语味。
+
+    V3.1 P0-2：强制登录；网关经 X-Org-Id 头取组织做预算——若携带
+    该头则校验调用者为该组织成员（不存在/无权一律 404，防组织枚举），
+    避免用别人的组织配额刷接口。
+    """
+    header_org = (request.headers.get("X-Org-Id") or "").strip() or None
+    if header_org and get_membership(db, user.id, header_org) is None:
+        raise HTTPException(status_code=404, detail="组织不存在")
     _model = get_request_model(request)
     # V2.1 #3：Idempotency-Key 去重——同 key 同体直接回放，不重复调模型扣费
     idem = idempotency_begin("colloquial-rewrite", request, req.model_dump(),
