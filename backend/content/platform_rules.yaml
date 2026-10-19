@@ -1,0 +1,48 @@
+# V3.0 E：多平台发布规则参考配置
+#
+# 重要声明（同时展示在前端界面）：
+# - 以下规则为可核实的常见公开配置整理，仅供参考；各平台规则可能随时变化，
+#   发布前请以平台官方最新创作者规范为准。
+# - 本文件不包含任何流量公式、爆款规律或"保证曝光"的承诺；凡涉及效果的表述
+#   均为建议口径，不得写成绝对事实。
+# - 数值均为"建议上限/建议值"，AI 改写时作为参考目标，不做硬性截断
+#   （硬截断可能破坏文案完整性）；最终发布内容由用户人工审核确认。
+
+disclaimer: "平台规则可能变化，以下为常见公开配置整理，仅供参考；发布前请以各平台官方最新规范为准。本工具不承诺任何流量效果。"
+
+platforms:
+  douyin:
+    name: "抖音"
+    tone_guide: "节奏快、口语化、开头 3 秒留人；评论区互动感强，适当引导评论"
+    title: {suggest_max_chars: 30, tip: "标题宜短促有力，点明看点但不做标题党"}
+    body: {suggest_max_chars: 500, tip: "正文讲清产品信息与购买方式，重要信息前置"}
+    hashtags: {suggest_max_count: 5, tip: "话题宜精，带 1-2 个产品/地域相关话题"}
+    cover_text: {tip: "封面文案 8-12 字，突出人物或产品主体"}
+    cta_style: "行动引导宜自然，如“评论区聊聊”“主页有同款”"
+
+  kuaishou:
+    name: "快手"
+    tone_guide: "实在、接地气、像跟老乡拉呱；信任感优先，不端着"
+    title: {suggest_max_chars: 30, tip: "标题实在，少用夸张修辞"}
+    body: {suggest_max_chars: 500, tip: "正文多讲真实过程与细节，建立信任"}
+    hashtags: {suggest_max_count: 5, tip: "话题可带地域标签"}
+    cover_text: {tip: "封面文案突出真实场景"}
+    cta_style: "行动引导宜实在，如“想看的评论区说”"
+
+  xiaohongshu:
+    name: "小红书"
+    tone_guide: "种草感、细节控、多用分段和 emoji 点缀；标题可稍长，信息密度高"
+    title: {suggest_max_chars: 40, tip: "标题可带 1-2 个关键词，方便搜索"}
+    body: {suggest_max_chars: 1000, tip: "正文可分段展开，细节越多越可信；价格/规格以页面为准"}
+    hashtags: {suggest_max_count: 10, tip: "话题可多带，覆盖产品词、场景词、地域词"}
+    cover_text: {tip: "封面文案突出卖点关键词"}
+    cta_style: "行动引导宜种草式，如“收藏这篇去买不踩雷”"
+
+  shipinhao:
+    name: "视频号"
+    tone_guide: "偏正式、信息完整；受众年龄层偏大，表达清晰、少用网络黑话"
+    title: {suggest_max_chars: 30, tip: "标题清晰完整，避免缩写黑话"}
+    body: {suggest_max_chars: 600, tip: "正文信息完整，购买方式写清楚"}
+    hashtags: {suggest_max_count: 5, tip: "话题适量即可"}
+    cover_text: {tip: "封面文案简洁大方"}
+    cta_style: "行动引导宜明确，如“点击下方链接了解”"

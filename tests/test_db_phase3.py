@@ -100,10 +100,11 @@ def test_082_migration_tables(db: Session):
     assert {"users", "organizations", "memberships", "invitations", "works",
             "storyboards", "shots", "facts", "work_versions",
             "refresh_tokens", "password_resets", "products",
-            "copy_docs", "copy_versions", "content_tasks"} <= names
+            "copy_docs", "copy_versions", "content_tasks",
+            "platform_versions"} <= names
     row = db.execute(__import__("sqlalchemy").text(
         "select version_num from alembic_version")).fetchone()
-    assert row[0] == "0014_plan"  # V3.0 C：内容策划表，head 前移
+    assert row[0] == "0015_platform_versions"  # V3.0 E：多平台版本表，head 前移
 
 
 # ---------- 083/084/085 CRUD ----------

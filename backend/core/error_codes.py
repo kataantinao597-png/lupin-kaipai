@@ -52,6 +52,8 @@ COPY_DOC_NOT_FOUND = 3008   # 文案文档不存在（V3.0 D）
 COPY_VERSION_NOT_FOUND = 3009  # 文案版本不存在（V3.0 D）
 PLAN_TASK_NOT_FOUND = 3010    # 策划任务不存在（V3.0 C）
 PLAN_IDEA_NOT_SELECTED = 3011  # 未选择创意方向（V3.0 C）
+PLATFORM_VERSION_NOT_FOUND = 3012  # 平台版本不存在（V3.0 E）
+PLATFORM_NOT_SUPPORTED = 3013  # 不支持的目标平台（V3.0 E）
 
 # ---- 4xxx 组织与权限 ----
 PERMISSION_DENIED = 4001
@@ -100,6 +102,8 @@ ERROR_MESSAGES: dict[int, str] = {
     COPY_VERSION_NOT_FOUND: "文案版本不存在",
     PLAN_TASK_NOT_FOUND: "策划任务不存在",
     PLAN_IDEA_NOT_SELECTED: "请先选择一个创意方向",
+    PLATFORM_VERSION_NOT_FOUND: "平台版本不存在",
+    PLATFORM_NOT_SUPPORTED: "不支持的目标平台",
     PERMISSION_DENIED: "权限不足",
     ORG_NOT_FOUND: "组织不存在",
     MEMBER_NOT_FOUND: "成员不存在",

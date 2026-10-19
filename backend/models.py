@@ -1092,6 +1092,67 @@ COPY_RISK_UNCHECKED = "unchecked"  # 尚未跑风险检查
 COPY_RISK_CHECKED = "checked"      # 规则层（rule_scan + fact grounding）已跑
 COPY_RISK_FAILED = "failed"        # 风险检查执行失败
 
+# V3.0 E：多平台内容适配
+PLATFORM_IDS = (
+    "douyin",       # 抖音
+    "kuaishou",     # 快手
+    "xiaohongshu",  # 小红书
+    "shipinhao",    # 视频号
+)
+
+PLATFORM_REVIEW_UNREVIEWED = "unreviewed"  # 未人工审核
+PLATFORM_REVIEW_REVIEWED = "reviewed"      # 已人工审核
+
+
+class PlatformVersion(Base):
+    """V3.0 E：平台发布版本（从已确认文案版本派生的独立平台版本）。
+
+    - 每个 (doc_id, platform) 可有多个 revision_no，各版本独立保存人工调整；
+      修改一个平台版本绝不触及其他平台版本。
+    - copy_version_id 关联源文案版本；源版本删除时 SET NULL，
+      source_version_no 快照保留，保证关联可追溯。
+    - 首期只做可检查、可复制、可导出的发布内容；不做自动发布。
+    """
+
+    __tablename__ = "platform_versions"
+    __table_args__ = (
+        Index("ix_platver_org", "org_id"),
+        Index("ix_platver_doc", "doc_id"),
+        Index("ix_platver_doc_platform", "doc_id", "platform"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="CASCADE"),
+                    nullable=False)
+    doc_id = Column(String(32), ForeignKey("copy_docs.id", ondelete="CASCADE"),
+                    nullable=False)
+    copy_version_id = Column(String(32),
+                             ForeignKey("copy_versions.id", ondelete="SET NULL"),
+                             nullable=True)
+    source_version_no = Column(Integer, nullable=False, default=0)
+    platform = Column(String(32), nullable=False)
+    revision_no = Column(Integer, nullable=False, default=1)
+    # 发布内容
+    title = Column(String(256), nullable=False, default="")
+    body = Column(Text, nullable=False, default="")
+    hashtags = Column(JSON, nullable=False, default=list)
+    cover_text = Column(String(256), nullable=False, default="")
+    pinned_comment = Column(Text, nullable=False, default="")
+    cta = Column(String(256), nullable=False, default="")
+    # 人工审核
+    review_status = Column(String(16), nullable=False,
+                           default=PLATFORM_REVIEW_UNREVIEWED)
+    # AI 元信息与风险（可追溯）
+    changes_summary = Column(Text, nullable=False, default="")
+    fact_ids = Column(JSON, nullable=False, default=list)
+    risk_status = Column(String(16), nullable=False, default=COPY_RISK_UNCHECKED)
+    risk_flags = Column(JSON, nullable=False, default=list)
+    ai_meta = Column(JSON, nullable=False, default=dict)
+    created_by = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)
+
 
 class CopyDoc(Base):
     """V3.0 D：文案文档（一次独立文案任务）。

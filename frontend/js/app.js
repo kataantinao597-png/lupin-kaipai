@@ -2507,6 +2507,12 @@ const COPY_KINDS = [
   ["optimize", "优化已有文案"], ["generate", "从零生成新文案"],
   ["script", "完整视频脚本"], ["platform", "平台发布文案"], ["adapt", "平台适配调整"],
 ];
+/* V3.0 E：多平台内容适配 */
+const PLATFORM_IDS = [
+  ["douyin", "抖音"], ["kuaishou", "快手"],
+  ["xiaohongshu", "小红书"], ["shipinhao", "视频号"],
+];
+const PLATFORM_DISCLAIMER = "平台规则可能变化，以下为常见公开配置整理，仅供参考；发布前请以各平台官方最新规范为准。本工具不承诺任何流量效果。";
 const COPY_MODES = [
   ["natural", "自然口语化"], ["premium", "品牌高级感"], ["shandong", "山东本土表达"],
   ["ecommerce", "电商转化表达"], ["hook", "开头吸引力优化"], ["concise", "结构精简"],
@@ -2753,7 +2759,8 @@ function renderCopyVersions() {
           <button class="btn ghost sm" data-a="cmp" data-id="${v.id}">对比</button>
           ${isDraft ? `<button class="btn primary sm" data-a="ok" data-id="${v.id}">确认采用</button>
             <button class="btn ghost sm" data-a="drop" data-id="${v.id}">放弃草稿</button>` : ""}
-          ${!isDraft ? `<button class="btn ghost sm" data-a="back" data-id="${v.id}">恢复此版</button>` : ""}
+          ${!isDraft ? `<button class="btn ghost sm" data-a="back" data-id="${v.id}">恢复此版</button>
+            <button class="btn ghost sm" data-a="plat" data-id="${v.id}">平台版本</button>` : ""}
           <button class="btn ghost sm" data-a="rw" data-id="${v.id}">段落重写</button>
           <button class="btn ghost sm" data-a="load" data-id="${v.id}">载入为原文</button>
         </div></div>
@@ -2761,6 +2768,7 @@ function renderCopyVersions() {
       ${v.changes_summary ? `<div class="muted" style="font-size:12px;white-space:pre-line">改动说明：\n${esc(v.changes_summary)}</div>` : ""}
       ${v.risk_status === "checked" && (v.risk_flags || []).length ? `<div class="muted" style="font-size:12px;color:#a16207">风险提醒：${esc(v.risk_flags.map((f) => f.text || f.reason || "").filter(Boolean).join("；"))}</div>` : ""}
       <div class="copy-rw" id="rw_${v.id}" style="display:none"></div>
+      <div class="copy-plat" id="plat_${v.id}" style="display:none"></div>
     </div>`;
   }).join("");
   el.querySelectorAll("button[data-a]").forEach((b) => {
@@ -2770,6 +2778,7 @@ function renderCopyVersions() {
     else if (a === "drop") b.addEventListener("click", () => dropCopyVersion(id));
     else if (a === "back") b.addEventListener("click", () => restoreCopyVersion(id));
     else if (a === "rw") b.addEventListener("click", () => showRewritePanel(id));
+    else if (a === "plat") b.addEventListener("click", () => showPlatformPanel(id));
     else if (a === "load") b.addEventListener("click", () => {
       const v = COPY.doc.versions.find((x) => x.id === id);
       if (v && $("copy_source")) { $("copy_source").value = copyVersionText(v); toast("已载入编辑区"); }
@@ -2886,6 +2895,220 @@ function renderCopyCompare() {
   const ok = $("cmp_ok");
   if (ok) ok.addEventListener("click", () => confirmCopyVersion(v.id));
 }
+/* ================= V3.0 E：多平台内容适配（v7 文案优化器内，零 HTML 改动） ================= */
+function platName(pid) {
+  const f = PLATFORM_IDS.find((x) => x[0] === pid);
+  return f ? f[1] : pid;
+}
+
+async function showPlatformPanel(versionId) {
+  const box = $("plat_" + versionId);
+  if (!box || !COPY.doc) return;
+  const v = COPY.doc.versions.find((x) => x.id === versionId);
+  if (!v) return;
+  const showing = box.style.display !== "none";
+  document.querySelectorAll(".copy-plat").forEach((d) => { d.style.display = "none"; });
+  if (showing) return;
+  box.style.display = "";
+  box.innerHTML = `
+    <div class="card" style="margin-top:10px;background:#fafaf9">
+      <h4>平台版本 <span class="muted" style="font-weight:normal">（源自 v${v.version_no}，各平台版本独立保存）</span></h4>
+      <p class="muted" style="font-size:12px">${esc(PLATFORM_DISCLAIMER)}</p>
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0">
+        <select id="plat_sel_${versionId}" class="input" style="min-width:120px">
+          ${PLATFORM_IDS.map((p) => `<option value="${p[0]}">${p[1]}</option>`).join("")}
+        </select>
+        <button class="btn primary sm" id="plat_ai_${versionId}">AI 生成该平台版本</button>
+        <button class="btn ghost sm" id="plat_manual_${versionId}">手动填写</button>
+      </div>
+      <div id="plat_form_${versionId}"></div>
+      <div id="plat_list_${versionId}"><p class="muted">加载中…</p></div>
+    </div>`;
+  $("plat_ai_" + versionId).addEventListener("click", () => genPlatformVersion(versionId, true));
+  $("plat_manual_" + versionId).addEventListener("click", () => showPlatformForm(versionId, false));
+  await loadPlatformList(versionId);
+}
+
+async function loadPlatformList(versionId) {
+  const el = $("plat_list_" + versionId);
+  if (!el || !COPY.doc) return;
+  try {
+    const r = V1(await ApiClient.get(
+      `/api/v1/platforms/copy/docs/${COPY.doc.id}/platforms?org_id=` + encodeURIComponent(S.org.id)));
+    const items = r.items || [];
+    if (!items.length) { el.innerHTML = '<p class="muted">还没有平台版本，先选平台生成一个</p>'; return; }
+    el.innerHTML = items.map((p) => `
+      <div class="copy-ver" style="margin-top:8px">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <div><b>${esc(platName(p.platform))}</b> <span class="pill">修订 ${p.revision_no}</span>
+            ${p.review_status === "reviewed" ? '<span class="pill green">已人工审核</span>' : '<span class="pill amber">未审核</span>'}
+            <span class="muted" style="font-size:12px">源 v${p.source_version_no}</span></div>
+          <div class="row" style="gap:6px;flex-wrap:wrap">
+            <button class="btn ghost sm" data-pa="view" data-pid="${p.id}" data-vid="${versionId}">查看</button>
+            <button class="btn ghost sm" data-pa="edit" data-pid="${p.id}" data-vid="${versionId}">编辑</button>
+            <button class="btn ghost sm" data-pa="review" data-pid="${p.id}" data-vid="${versionId}">${p.review_status === "reviewed" ? "取消审核" : "标记已审核"}</button>
+            <button class="btn ghost sm" data-pa="copy" data-pid="${p.id}">复制</button>
+            <button class="btn ghost sm" data-pa="exp" data-pid="${p.id}">导出TXT</button>
+            <button class="btn ghost sm" data-pa="del" data-pid="${p.id}" data-vid="${versionId}">删除</button>
+          </div>
+        </div>
+        <div class="copy-ver-body" id="plat_body_${p.id}" style="display:none"></div>
+        <div id="plat_edit_${p.id}" style="display:none"></div>
+      </div>`).join("");
+    el.querySelectorAll("button[data-pa]").forEach((b) => {
+      const pid = b.dataset.pid, vid = b.dataset.vid, a = b.dataset.pa;
+      if (a === "view") b.addEventListener("click", () => togglePlatformView(pid, items));
+      else if (a === "edit") b.addEventListener("click", () => showPlatformEdit(pid, vid, items));
+      else if (a === "review") b.addEventListener("click", () => reviewPlatform(pid, vid, items));
+      else if (a === "copy") b.addEventListener("click", () => copyPlatformText(pid));
+      else if (a === "exp") b.addEventListener("click", () => exportPlatform(pid));
+      else if (a === "del") b.addEventListener("click", () => deletePlatform(pid, vid));
+    });
+  } catch (e) { el.innerHTML = '<p class="muted">加载失败：' + esc(e.message || e) + '</p>'; }
+}
+
+function togglePlatformView(pid, items) {
+  const p = items.find((x) => x.id === pid);
+  const body = $("plat_body_" + pid);
+  if (!p || !body) return;
+  if (body.style.display === "none") {
+    body.style.display = "";
+    body.innerHTML = `
+      <div><b>${esc(p.title)}</b></div>
+      <div style="white-space:pre-line">${esc(p.body)}</div>
+      <div class="muted" style="font-size:12px">${esc((p.hashtags || []).map((t) => "#" + t).join(" "))}</div>
+      <div class="muted" style="font-size:12px">封面：${esc(p.cover_text || "—")} · 置顶：${esc(p.pinned_comment || "—")} · 行动引导：${esc(p.cta || "—")}</div>
+      ${p.changes_summary ? `<div class="muted" style="font-size:12px;white-space:pre-line">调整说明：\n${esc(p.changes_summary)}</div>` : ""}`;
+  } else body.style.display = "none";
+}
+
+function showPlatformForm(versionId, useAi, preset) {
+  const form = $("plat_form_" + versionId);
+  if (!form) return;
+  const p = preset || {};
+  form.innerHTML = `
+    <div class="card" style="margin:8px 0">
+      <h4>${useAi ? "AI 将按平台调性改写" : "手动填写平台版本"}（${esc(platName($("plat_sel_" + versionId).value))}）</h4>
+      ${useAi ? "" : `
+      <label class="fld"><span>标题</span><input id="pf_title_${versionId}" class="input" value="${esc(p.title || "")}"></label>
+      <label class="fld"><span>正文</span><textarea id="pf_body_${versionId}" class="input" rows="4">${esc(p.body || "")}</textarea></label>
+      <label class="fld"><span>话题（空格分隔，不用加#）</span><input id="pf_tags_${versionId}" class="input" value="${esc((p.hashtags || []).join(" "))}"></label>
+      <label class="fld"><span>封面文案</span><input id="pf_cover_${versionId}" class="input" value="${esc(p.cover_text || "")}"></label>
+      <label class="fld"><span>置顶评论建议</span><input id="pf_pin_${versionId}" class="input" value="${esc(p.pinned_comment || "")}"></label>
+      <label class="fld"><span>行动引导</span><input id="pf_cta_${versionId}" class="input" value="${esc(p.cta || "")}"></label>`}
+      <div class="row" style="gap:8px;margin-top:8px">
+        <button class="btn primary sm" id="pf_save_${versionId}">${useAi ? "开始生成" : "保存版本"}</button>
+        <button class="btn ghost sm" id="pf_cancel_${versionId}">取消</button>
+      </div>
+      ${useAi ? '<p class="muted" style="font-size:12px">AI 只调整表达与结构，不添加新事实主张；结果保存后仍需你人工审核</p>' : ""}
+    </div>`;
+  $("pf_cancel_" + versionId).addEventListener("click", () => { form.innerHTML = ""; });
+  $("pf_save_" + versionId).addEventListener("click", () => genPlatformVersion(versionId, useAi));
+}
+
+async function genPlatformVersion(versionId, useAi) {
+  const platform = $("plat_sel_" + versionId).value;
+  const body = { copy_version_id: versionId, platform, use_ai: useAi };
+  if (!useAi) {
+    body.title = $("pf_title_" + versionId).value.trim();
+    body.body = $("pf_body_" + versionId).value.trim();
+    body.hashtags = $("pf_tags_" + versionId).value.trim().split(/\s+/).filter(Boolean);
+    body.cover_text = $("pf_cover_" + versionId).value.trim();
+    body.pinned_comment = $("pf_pin_" + versionId).value.trim();
+    body.cta = $("pf_cta_" + versionId).value.trim();
+    if (!body.title || !body.body) { toast("手动模式请填写标题和正文"); return; }
+  }
+  const btn = $("pf_save_" + versionId);
+  btn.disabled = true; btn.textContent = useAi ? "AI 生成中…" : "保存中…";
+  try {
+    const r = V1(await ApiClient.post(
+      `/api/v1/platforms/copy/docs/${COPY.doc.id}/platforms?org_id=` + encodeURIComponent(S.org.id),
+      body, { idempotencyKey: crypto.randomUUID() }));
+    $("plat_form_" + versionId).innerHTML = "";
+    await loadPlatformList(versionId);
+    toast(`${platName(platform)}版本已保存（修订 ${r.platform_version.revision_no}），请人工审核`);
+    if (r.review_reminder) toast(r.review_reminder, 6000);
+  } catch (e) { toast("生成失败：" + (e.message || e)); }
+  finally { btn.disabled = false; btn.textContent = useAi ? "开始生成" : "保存版本"; }
+}
+
+function showPlatformEdit(pid, versionId, items) {
+  const p = items.find((x) => x.id === pid);
+  const box = $("plat_edit_" + pid);
+  if (!p || !box) return;
+  box.style.display = "";
+  box.innerHTML = `
+    <div class="card" style="margin:8px 0">
+      <h4>编辑${esc(platName(p.platform))}版本（只改本版本，其他平台不受影响）</h4>
+      <label class="fld"><span>标题</span><input id="pe_title_${pid}" class="input" value="${esc(p.title)}"></label>
+      <label class="fld"><span>正文</span><textarea id="pe_body_${pid}" class="input" rows="4">${esc(p.body)}</textarea></label>
+      <label class="fld"><span>话题（空格分隔）</span><input id="pe_tags_${pid}" class="input" value="${esc((p.hashtags || []).join(" "))}"></label>
+      <label class="fld"><span>封面文案</span><input id="pe_cover_${pid}" class="input" value="${esc(p.cover_text || "")}"></label>
+      <label class="fld"><span>置顶评论建议</span><input id="pe_pin_${pid}" class="input" value="${esc(p.pinned_comment || "")}"></label>
+      <label class="fld"><span>行动引导</span><input id="pe_cta_${pid}" class="input" value="${esc(p.cta || "")}"></label>
+      <div class="row" style="gap:8px;margin-top:8px">
+        <button class="btn primary sm" id="pe_save_${pid}">保存</button>
+        <button class="btn ghost sm" id="pe_cancel_${pid}">取消</button>
+      </div>
+    </div>`;
+  $("pe_cancel_" + pid).addEventListener("click", () => { box.style.display = "none"; });
+  $("pe_save_" + pid).addEventListener("click", async () => {
+    try {
+      await ApiClient.patch(`/api/v1/platforms/${pid}?org_id=` + encodeURIComponent(S.org.id), {
+        title: $("pe_title_" + pid).value,
+        body: $("pe_body_" + pid).value,
+        hashtags: $("pe_tags_" + pid).value.trim().split(/\s+/).filter(Boolean),
+        cover_text: $("pe_cover_" + pid).value,
+        pinned_comment: $("pe_pin_" + pid).value,
+        cta: $("pe_cta_" + pid).value,
+      });
+      toast("已保存");
+      await loadPlatformList(versionId);
+    } catch (e) { toast("保存失败：" + (e.message || e)); }
+  });
+}
+
+async function reviewPlatform(pid, versionId, items) {
+  const p = items.find((x) => x.id === pid);
+  const reviewed = p && p.review_status !== "reviewed";
+  if (reviewed && !confirm("确认该平台版本已人工审核无误？")) return;
+  try {
+    await ApiClient.post(`/api/v1/platforms/${pid}/review?org_id=` + encodeURIComponent(S.org.id), { reviewed });
+    toast(reviewed ? "已标记为人工审核" : "已取消审核标记");
+    await loadPlatformList(versionId);
+  } catch (e) { toast("操作失败：" + (e.message || e)); }
+}
+
+async function copyPlatformText(pid) {
+  try {
+    const r = V1(await ApiClient.get(`/api/v1/platforms/${pid}/export?org_id=` + encodeURIComponent(S.org.id)));
+    await navigator.clipboard.writeText(r.text);
+    toast("发布文本已复制到剪贴板");
+  } catch (e) { toast("复制失败：" + (e.message || e)); }
+}
+
+async function exportPlatform(pid) {
+  try {
+    const r = V1(await ApiClient.get(`/api/v1/platforms/${pid}/export?org_id=` + encodeURIComponent(S.org.id)));
+    const blob = new Blob([r.text], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `平台发布_${r.platform_name}_${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast("已导出 TXT");
+  } catch (e) { toast("导出失败：" + (e.message || e)); }
+}
+
+async function deletePlatform(pid, versionId) {
+  if (!confirm("删除这个平台版本？不影响其他平台版本。")) return;
+  try {
+    await ApiClient.del(`/api/v1/platforms/${pid}?org_id=` + encodeURIComponent(S.org.id));
+    toast("已删除");
+    await loadPlatformList(versionId);
+  } catch (e) { toast("删除失败：" + (e.message || e)); }
+}
+
 
 
 
