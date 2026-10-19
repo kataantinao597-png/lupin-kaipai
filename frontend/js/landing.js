@@ -57,9 +57,18 @@
   /* Hero 视频背景：自动播放被拒/加载失败/减少动效时回退静态封面，绝不黑屏 */
   var heroVideo = document.getElementById("heroVideo");
   if(heroVideo){
+    /* 移动端减负（桌面端保持原样）：窄屏或触屏设备不自动播放、只加载元数据，优先显示静态封面 */
+    var mobileVideo = window.matchMedia("(max-width: 768px)").matches ||
+                      window.matchMedia("(pointer: coarse)").matches;
     if(reduced){
       /* 减少动效：直接移除视频，只留封面图 */
       heroVideo.remove();
+    } else if(mobileVideo){
+      heroVideo.removeAttribute("autoplay");
+      heroVideo.preload = "metadata";
+      heroVideo.pause();
+      /* 保留 poster 静态封面展示；加载失败时隐藏视频露出底层封面图 */
+      heroVideo.addEventListener("error", function(){ heroVideo.style.display = "none"; }, true);
     } else {
       heroVideo.addEventListener("error", function(){ heroVideo.style.display = "none"; }, true);
       var hpr = heroVideo.play();
