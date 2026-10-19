@@ -81,7 +81,7 @@ class TestValidator:
                 {"phase": "开场留人", "start_minute": 0, "end_minute": 5,
                  "goal": "留人", "script": ["欢迎来到直播间"],
                  "tips": ["发福袋"]},
-                {"phase": "讲品", "start_minute": 5, "end_minute": 20,
+                {"phase": "讲品", "start_minute": 5, "end_minute": 120,
                  "goal": "讲透产品", "script": ["看这个果"],
                  "tips": []},
             ],

@@ -92,9 +92,23 @@ def api_client(tmp_path, monkeypatch):
     cfg = Config(os.path.join(PROJECT_ROOT, "alembic.ini"))
     command.upgrade(cfg, "heads")
 
+    # V3.1 P0：改写接口强制登录——fixture 用真实 Bearer token（u1）
+    from backend.models import Organization, Membership
+    from backend.auth.models import User as AuthUser
+    from backend.auth.security import create_access_token
+    db0 = get_session_factory()()
+    db0.add(Organization(id="org-cq", name="口语测试合作社", created_by="u1"))
+    db0.add(AuthUser(id="u1", email="u1@test.local", password_hash="x"))
+    db0.flush()
+    db0.add(Membership(user_id="u1", org_id="org-cq", role="owner"))
+    db0.commit()
+    db0.close()
+    token, _exp = create_access_token("u1")
+
     from fastapi.testclient import TestClient
     from backend.app import app
-    client = TestClient(app, raise_server_exceptions=False)
+    client = TestClient(app, raise_server_exceptions=False,
+                        headers={"Authorization": f"Bearer {token}"})
     yield client
     app.dependency_overrides.clear()
 

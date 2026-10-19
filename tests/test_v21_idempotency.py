@@ -33,7 +33,7 @@ def api_client(tmp_path, monkeypatch):
     from backend.core import deps as core_deps
     if hasattr(core_deps.get_ai_service, "_singleton"):
         delattr(core_deps.get_ai_service, "_singleton")
-    from backend.auth.database import reset_engine
+    from backend.auth.database import reset_engine, get_session_factory
     from backend.media import reset_storage
     from backend.media.signing import reset_sign_secret
     from backend.core.idempotency import reset_idempotency_store
@@ -48,9 +48,25 @@ def api_client(tmp_path, monkeypatch):
     cfg = Config(os.path.join(PROJECT_ROOT, "alembic.ini"))
     command.upgrade(cfg, "heads")
 
+    # V3.1 P0：生成接口强制登录——fixture 用真实 Bearer token（u1，组织 org1 的 owner）
+    from backend.models import Organization, Membership
+    from backend.auth.models import User as AuthUser
+    from backend.auth.security import create_access_token
+    db0 = get_session_factory()()
+    org1 = Organization(id="org-v31-test", name="幂等测试合作社",
+                        created_by="u1")
+    db0.add(org1)
+    db0.add(AuthUser(id="u1", email="u1@test.local", password_hash="x"))
+    db0.flush()
+    db0.add(Membership(user_id="u1", org_id="org-v31-test", role="owner"))
+    db0.commit()
+    db0.close()
+    token, _exp = create_access_token("u1")
+
     from fastapi.testclient import TestClient
     from backend.app import app
-    client = TestClient(app, raise_server_exceptions=False)
+    client = TestClient(app, raise_server_exceptions=False,
+                        headers={"Authorization": f"Bearer {token}"})
     yield client
     app.dependency_overrides.clear()
     reset_idempotency_store()
@@ -172,7 +188,8 @@ class TestEnqueue:
                             lambda self, *a, **k: None)
         # 异步入口的 gw 依赖在函数体之前求值：无 AI 配置会 503，mock 掉
         app.dependency_overrides[get_ai_gateway] = lambda: FakeGateway()
-        body = {"product": {"product_name": "测试樱桃"}, "facts": []}
+        body = {"product": {"product_name": "测试樱桃"}, "facts": [],
+                "org_id": "org-v31-test"}  # V3.1 P0：异步建任务需登录 + 组织成员
         h = {"Idempotency-Key": "k-enqueue-1"}
         r1 = api_client.post("/api/ideas?async=true", json=body, headers=h)
         r2 = api_client.post("/api/ideas?async=true", json=body, headers=h)
