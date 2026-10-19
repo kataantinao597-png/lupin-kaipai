@@ -25,6 +25,20 @@ def api_client(tmp_path, monkeypatch):
     url = f"sqlite:///{tmp_path}/api.db"
     monkeypatch.setenv("DATABASE_URL", url)
     monkeypatch.setenv("LUPIN_DB_AUTO_CREATE", "0")
+    # V2.1：test_ai_observability.py 会泄漏 daemon 写库线程（lupin-ai-recorder），
+    # 它按进程级 DATABASE_URL 懒解析引擎，可能与本 fixture 的 tmp 库并发写
+    # 触发 SQLite "database is locked"。此处截断新记录入队并排空残留，
+    # 让写线程在测试期间保持空闲。
+    import queue as _queue_mod
+    import time as _time
+    from backend import ai_observability as _obs
+    monkeypatch.setattr(_obs, "record_call_async", lambda rec: None)
+    while True:
+        try:
+            _obs._record_q.get_nowait()
+        except _queue_mod.Empty:
+            break
+    _time.sleep(0.2)  # 让已出队、正在提交的记录落定
     from backend.auth.database import reset_engine, get_session_factory, get_db
     from backend.auth.deps import get_current_user
     from backend.media.storage import reset_storage
