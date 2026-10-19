@@ -76,7 +76,7 @@ function blankData() {
 }
 
 /* ---------- 路由（含登录守卫） ---------- */
-const NEED_AUTH = ["v1", "v2", "v3", "v4", "v5", "v6", "v7"];
+const NEED_AUTH = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"];
 function loggedIn() { return !!(AuthClient && AuthClient.isLoggedIn()); }
 
 function go(v) {
@@ -102,6 +102,7 @@ function onEnter(v) {
   else if (v === "v5") { renderShoot(); loadAssets(); fillNote(); }
   else if (v === "v6") { renderDeliveryTitles(); loadTimeline(); renderFinalArchive(); }
   else if (v === "v7") { renderCopyOpt(); }
+  else if (v === "v8") { renderPublishCenter(); }
 }
 
 /* ---------- 认证 ---------- */
@@ -2335,6 +2336,7 @@ function bindTodo5() {
 function bindAll() {
 initCopyOptView(); // V3.0 D：注入文案优化器导航与视图（零 HTML 改动）
 initPlanSection(); // V3.0 C：注入内容策划面板（零 HTML 改动）
+initPublishView(); // V3.0 F：注入发布中心导航与视图（零 HTML 改动）
 document.querySelectorAll(".nav-item[data-v]").forEach((b) => b.addEventListener("click", () => go(b.dataset.v)));
 document.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => go(b.dataset.goto)));
 document.querySelectorAll("[data-todo]").forEach((b) => b.addEventListener("click", () => todo(b.dataset.todo)));
@@ -3360,6 +3362,260 @@ async function planLinkWork(createNew) {
     toast(createNew ? "已新建拍摄项目，创意方向已带入" : "已关联拍摄项目，创意方向已带入");
     go("v3");
   } catch (e) { errText("plan_link_err", e.message || "关联失败"); }
+}
+/* ================= V3.0 F：发布中心（独立 v8 视图，零 HTML 改动） ================= */
+const PUB_STATUSES = [
+  ["pending", "待准备"], ["review", "待审核"], ["ready", "待发布"],
+  ["published", "已发布"], ["reviewed", "已复盘"],
+  ["failed", "失败"], ["postponed", "暂缓"], ["cancelled", "取消"],
+];
+const PUB_TRANSITIONS = {
+  pending: ["review", "cancelled"],
+  review: ["ready", "pending", "cancelled"],
+  ready: ["published", "postponed", "cancelled"],
+  published: ["reviewed", "failed"],
+  reviewed: [], failed: ["pending"], postponed: ["pending"], cancelled: [],
+};
+const PUB = { records: [], rec: null, filter: "", busy: false };
+
+function pubStatusLabel(s) { const f = PUB_STATUSES.find((x) => x[0] === s); return f ? f[1] : s; }
+function pubPlatformLabel(p) {
+  return { douyin: "抖音", kuaishou: "快手", xiaohongshu: "小红书", shipinhao: "视频号" }[p] || p || "未指定";
+}
+
+function initPublishView() {
+  if (!document.querySelector('.nav-item[data-v="v8"]')) {
+    const navV7 = document.querySelector('.nav-item[data-v="v7"]');
+    const b = document.createElement("button");
+    b.className = "nav-item"; b.dataset.v = "v8";
+    b.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 12v7a1 1 0 001 1h14a1 1 0 001-1v-7M12 3v13M7 8l5-5 5 5"/></svg>发布中心';
+    b.addEventListener("click", () => go("v8"));
+    if (navV7) navV7.after(b); else document.querySelector(".nav")?.appendChild(b);
+  }
+  if (!$("v8")) {
+    const anchor = $("v7") || $("v6");
+    if (anchor) {
+      const s = document.createElement("section");
+      s.className = "view"; s.id = "v8";
+      anchor.after(s);
+    }
+  }
+}
+
+function pubApi(path, opts) {
+  const q = "?org_id=" + encodeURIComponent(S.org.id);
+  const url = "/api/v1/publish" + path + q;
+  const method = (opts && opts.method) || "GET";
+  const body = (opts && opts.body) || {};
+  if (method === "POST") return ApiClient.post(url, body);
+  if (method === "PATCH") return ApiClient.patch(url, body);
+  if (method === "DELETE") return ApiClient.del(url);
+  return ApiClient.get(url);
+}
+
+async function loadPublishRecords() {
+  try {
+    const r = V1(await pubApi("/records" + (PUB.filter ? "&status=" + PUB.filter : "")));
+    PUB.records = r || [];
+  } catch (e) { PUB.records = []; }
+}
+
+async function renderPublishCenter() {
+  const sec = $("v8");
+  if (!sec) return;
+  if (!S.org) { sec.innerHTML = '<div class="page-head"><h2>发布中心</h2><p class="muted">请先登录并选择组织</p></div>'; return; }
+  initPublishView();
+  await loadPublishRecords();
+  renderPublishList();
+}
+
+function renderPublishList() {
+  const sec = $("v8");
+  const opts = ['<option value="">全部状态</option>'].concat(
+    PUB_STATUSES.map(([v, l]) => `<option value="${v}"${PUB.filter === v ? " selected" : ""}>${l}</option>`)).join("");
+  const cards = PUB.records.map((r) => `
+    <div class="card pub-card" data-id="${esc(r.id)}">
+      <div class="pub-card-head"><strong>${esc(r.title)}</strong>
+        <span class="pill">${esc(pubPlatformLabel(r.platform))}</span>
+        <span class="pill ${r.status === "published" ? "green" : r.status === "reviewed" ? "blue" : ""}">${esc(pubStatusLabel(r.status))}</span>
+      </div>
+      <div class="muted small">${r.publish_url ? "链接：" + esc(r.publish_url) : "未发布"}</div>
+      <div class="row"><button class="btn sm" data-act="open">打开</button>
+      ${["pending", "cancelled", "failed", "postponed"].includes(r.status) ? '<button class="btn sm danger" data-act="del">删除</button>' : ""}</div>
+    </div>`).join("");
+  sec.innerHTML = `
+    <div class="page-head"><h2>发布中心</h2>
+    <p class="muted">为每次发布建立独立记录：发布前检查 → 手动状态流转 → 记录发布时间与链接。本工具仅支持人工复制发布。</p></div>
+    <div class="row">
+      <select id="pub_filter" class="input">${opts}</select>
+      <input id="pub_new_title" class="input" placeholder="新建发布记录标题" style="flex:1;min-width:160px">
+      <select id="pub_new_platform" class="input">
+        <option value="douyin">抖音</option><option value="kuaishou">快手</option>
+        <option value="xiaohongshu">小红书</option><option value="shipinhao">视频号</option>
+      </select>
+      <button class="btn primary" id="pub_new_btn">新建</button>
+    </div>
+    <div id="pub_detail"></div>
+    <div class="pub-list">${cards || '<p class="muted">暂无发布记录</p>'}</div>`;
+  $("pub_filter").addEventListener("change", async (e) => { PUB.filter = e.target.value; await loadPublishRecords(); renderPublishList(); });
+  $("pub_new_btn").addEventListener("click", createPublishRecord);
+  sec.querySelectorAll(".pub-card").forEach((c) => {
+    c.querySelector('[data-act="open"]').addEventListener("click", () => openPublishRecord(c.dataset.id));
+    const del = c.querySelector('[data-act="del"]');
+    if (del) del.addEventListener("click", () => deletePublishRecord(c.dataset.id));
+  });
+  if (PUB.rec) renderPublishDetail();
+}
+
+async function createPublishRecord() {
+  const title = $("pub_new_title").value.trim() || "未命名发布";
+  const platform = $("pub_new_platform").value;
+  try {
+    const d = V1(await pubApi("/records", { method: "POST", body: { title, platform } }));
+    PUB.records.unshift(d);
+    PUB.rec = d;
+    renderPublishList();
+    toast("已创建发布记录");
+  } catch (e) { toast("创建失败：" + (e.message || e)); }
+}
+
+async function deletePublishRecord(id) {
+  if (!confirm("确定删除这条发布记录吗？（只删除记录，不删除已关联的文件）")) return;
+  try {
+    await pubApi(`/records/${id}`, { method: "DELETE" });
+    PUB.records = PUB.records.filter((r) => r.id !== id);
+    if (PUB.rec && PUB.rec.id === id) PUB.rec = null;
+    renderPublishList();
+    toast("已删除");
+  } catch (e) { toast("删除失败：" + (e.message || e)); }
+}
+
+async function openPublishRecord(id) {
+  try {
+    PUB.rec = V1(await pubApi(`/records/${id}`));
+    renderPublishDetail();
+    $("pub_detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) { toast("打开失败：" + (e.message || e)); }
+}
+
+function renderPublishDetail() {
+  const box = $("pub_detail");
+  const r = PUB.rec;
+  if (!box || !r) return;
+  const allowed = PUB_TRANSITIONS[r.status] || [];
+  const transBtns = allowed.map((s) => `<button class="btn sm" data-to="${s}">→ ${pubStatusLabel(s)}</button>`).join("");
+  const checks = (r.check_result || []).map((i) => `
+    <div class="check-item ${i.passed ? "ok" : "fail"}">
+      <span>${i.passed ? "✓" : "✗"}</span>
+      <span><strong>${esc(i.label)}</strong>${i.blocking ? "（必须）" : "（参考）"}</span>
+      <span class="muted">${esc(i.detail || "")}</span>
+    </div>`).join("");
+  box.innerHTML = `
+    <div class="card pub-detail">
+      <div class="pub-card-head"><h3>${esc(r.title)}</h3>
+        <span class="pill">${esc(pubPlatformLabel(r.platform))}</span>
+        <span class="pill">${esc(pubStatusLabel(r.status))}</span></div>
+      <div class="grid2 small">
+        <div>源拍摄项目：${esc(r.work_id || "未关联")}</div>
+        <div>文案版本：${esc(r.copy_version_id || "未关联")}</div>
+        <div>平台版本：${esc(r.platform_version_id || "未关联")}</div>
+        <div>视频文件：${esc(r.video_asset_id || "未关联")}</div>
+        <div>授权确认：${r.authorization_confirmed ? "已确认" : '<span class="warn">未确认</span>'}
+          ${r.status === "pending" || r.status === "review" ? '<button class="btn sm" id="pub_auth_btn">确认授权</button>' : ""}</div>
+        <div>发布时间：${esc(r.published_at || "—")}</div>
+      </div>
+      <div class="row"><button class="btn" id="pub_check_btn">运行发布前检查</button>
+        <button class="btn" id="pub_export_btn">复制发布包</button>
+        <button class="btn" id="pub_dl_btn">下载发布包</button>
+        <button class="btn sm" id="pub_close_btn">收起</button></div>
+      <div id="pub_checks">${checks || '<p class="muted">尚未运行发布前检查</p>'}</div>
+      ${r.checked_at ? `<div class="muted small">检查时间：${esc(r.checked_at)}</div>` : ""}
+      <div class="row" style="margin-top:8px"><span class="muted">状态流转：</span>${transBtns || '<span class="muted">终态，无可用操作</span>'}</div>
+      <div class="row" id="pub_pubinfo" style="${r.status === "ready" ? "" : "display:none"}">
+        <input id="pub_at" class="input" placeholder="发布时间，如 2026-10-20T18:00:00+08:00" value="${esc(r.published_at || "")}">
+        <input id="pub_url" class="input" placeholder="发布链接" style="flex:1" value="${esc(r.publish_url || "")}">
+      </div>
+      <div class="row"><input id="pub_notes" class="input" placeholder="备注 / 复盘记录" style="flex:1" value="${esc(r.notes || "")}">
+        <button class="btn sm" id="pub_notes_btn">保存备注</button></div>
+    </div>`;
+  $("pub_check_btn").addEventListener("click", () => runPublishCheck(r.id));
+  $("pub_export_btn").addEventListener("click", () => copyPublishPackage(r.id));
+  $("pub_dl_btn").addEventListener("click", () => downloadPublishPackage(r.id));
+  $("pub_close_btn").addEventListener("click", () => { PUB.rec = null; renderPublishList(); });
+  $("pub_notes_btn").addEventListener("click", () => savePublishNotes(r.id));
+  const authBtn = $("pub_auth_btn");
+  if (authBtn) authBtn.addEventListener("click", () => setPublishAuth(r.id));
+  box.querySelectorAll("[data-to]").forEach((b) => b.addEventListener("click", () => transitionPublish(r.id, b.dataset.to)));
+}
+
+async function runPublishCheck(id) {
+  try {
+    const d = V1(await pubApi(`/records/${id}/check`, { method: "POST", body: {} }));
+    PUB.rec.check_result = d.items;
+    PUB.rec.checked_at = d.checked_at;
+    renderPublishDetail();
+    toast(d.blocking_passed ? "检查通过，可以进入待发布" : "检查未通过，请看清单补齐");
+  } catch (e) { toast("检查失败：" + (e.message || e)); }
+}
+
+async function transitionPublish(id, to) {
+  const body = { to_status: to };
+  if (to === "published") {
+    body.published_at = $("pub_at")?.value.trim() || undefined;
+    body.publish_url = $("pub_url")?.value.trim() || undefined;
+  }
+  try {
+    PUB.rec = V1(await pubApi(`/records/${id}/transition`, { method: "POST", body }));
+    const i = PUB.records.findIndex((r) => r.id === id);
+    if (i >= 0) PUB.records[i] = PUB.rec;
+    renderPublishList();
+    toast("已流转到" + pubStatusLabel(to));
+  } catch (e) { toast("流转失败：" + (e.message || e)); }
+}
+
+async function setPublishAuth(id) {
+  try {
+    PUB.rec = V1(await pubApi(`/records/${id}`, { method: "PATCH", body: { authorization_confirmed: true } }));
+    renderPublishDetail();
+    toast("已确认授权与声明");
+  } catch (e) { toast("操作失败：" + (e.message || e)); }
+}
+
+async function savePublishNotes(id) {
+  try {
+    PUB.rec = V1(await pubApi(`/records/${id}`, { method: "PATCH", body: { notes: $("pub_notes").value } }));
+    toast("备注已保存");
+  } catch (e) { toast("保存失败：" + (e.message || e)); }
+}
+
+async function fetchPublishText(id) {
+  const token = (typeof AuthClient === "object" && AuthClient.getAccessToken) ? AuthClient.getAccessToken() : "";
+  const r = await fetch(`/api/v1/publish/records/${id}/export?org_id=` + encodeURIComponent(S.org.id), {
+    headers: token ? { "Authorization": "Bearer " + token } : {},
+    credentials: "include",
+  });
+  if (!r.ok) throw new Error("导出失败（" + r.status + "）");
+  return await r.text();
+}
+
+async function copyPublishPackage(id) {
+  try {
+    await navigator.clipboard.writeText(await fetchPublishText(id));
+    toast("发布包已复制，去对应平台粘贴发布即可");
+  } catch (e) { toast("复制失败：" + (e.message || e)); }
+}
+
+async function downloadPublishPackage(id) {
+  try {
+    const text = await fetchPublishText(id);
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "发布包_" + (PUB.rec?.title || id) + ".txt";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast("已下载");
+  } catch (e) { toast("下载失败：" + (e.message || e)); }
 }
 
 document.addEventListener("DOMContentLoaded", init);

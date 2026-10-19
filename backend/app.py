@@ -280,12 +280,14 @@ try:
     from .api.v1.copyopt import router as copyopt_router  # noqa: E402  # V3.0 D
     from .api.v1.plan import router as plan_router  # noqa: E402  # V3.0 C
     from .api.v1.platforms import router as platforms_router  # noqa: E402  # V3.0 E
+    from .api.v1.publish import router as publish_router  # noqa: E402  # V3.0 F
     _mount(facts_router, prefix="/api/v1")
     _mount(fact_import_router, prefix="/api/v1")
     _mount(products_router, prefix="/api/v1")
     _mount(copyopt_router, prefix="/api/v1")
     _mount(plan_router, prefix="/api/v1")
     _mount(platforms_router, prefix="/api/v1")
+    _mount(publish_router, prefix="/api/v1")
 except Exception as e:  # noqa: BLE001
     log.info(f"事实库 API 加载跳过: {type(e).__name__}: {e}")
 

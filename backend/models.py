@@ -1294,3 +1294,88 @@ class ContentTask(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
                         onupdate=_now)
+
+
+# ---- V3.0 F：发布中心状态常量 ----
+PUBLISH_PENDING = "pending"        # 待准备
+PUBLISH_REVIEW = "review"         # 待审核
+PUBLISH_READY = "ready"           # 待发布
+PUBLISH_PUBLISHED = "published"   # 已发布
+PUBLISH_REVIEWED = "reviewed"     # 已复盘
+PUBLISH_FAILED = "failed"         # 失败
+PUBLISH_POSTPONED = "postponed"   # 暂缓
+PUBLISH_CANCELLED = "cancelled"   # 取消
+
+PUBLISH_STATUSES = (
+    PUBLISH_PENDING, PUBLISH_REVIEW, PUBLISH_READY, PUBLISH_PUBLISHED,
+    PUBLISH_REVIEWED, PUBLISH_FAILED, PUBLISH_POSTPONED, PUBLISH_CANCELLED,
+)
+
+# 合法状态转换（后端强制；各阶段独立，绝不自动推进）
+PUBLISH_TRANSITIONS = {
+    PUBLISH_PENDING: (PUBLISH_REVIEW, PUBLISH_CANCELLED),
+    PUBLISH_REVIEW: (PUBLISH_READY, PUBLISH_PENDING, PUBLISH_CANCELLED),
+    PUBLISH_READY: (PUBLISH_PUBLISHED, PUBLISH_POSTPONED, PUBLISH_CANCELLED),
+    PUBLISH_PUBLISHED: (PUBLISH_REVIEWED, PUBLISH_FAILED),
+    PUBLISH_REVIEWED: (),
+    PUBLISH_FAILED: (PUBLISH_PENDING,),
+    PUBLISH_POSTPONED: (PUBLISH_PENDING,),
+    PUBLISH_CANCELLED: (),
+}
+
+# 发布平台（与多平台适配共用同一套 id）
+PUBLISH_PLATFORMS = PLATFORM_IDS
+
+
+class PublishRecord(Base):
+    """V3.0 F：发布中心（一次独立的发布任务）。
+
+    - 关联源拍摄项目 / 文案版本 / 平台版本 / 最终视频与封面文件。
+    - 状态机见 PUBLISH_TRANSITIONS；生成文案、完成剪辑、实际发布是不同阶段，
+      后端绝不因前一阶段成功自动推进后续状态。
+    - 发布前检查（check_result）由后端 run_prepublish_check 生成；
+      review → ready 要求所有 blocking 项通过；有未处理重大风险时阻止。
+    - 首期只支持复制、下载、手动记录发布结果；不做自动发布接口。
+    """
+    __tablename__ = "publish_records"
+    __table_args__ = (
+        Index("ix_pubrec_org", "org_id"),
+        Index("ix_pubrec_org_status", "org_id", "status"),
+        Index("ix_pubrec_work", "work_id"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="CASCADE"),
+                    nullable=False)
+    title = Column(String(256), nullable=False, default="")
+    # 关联：源拍摄项目 / 文案版本 / 平台版本 / 最终视频与封面
+    work_id = Column(String(32), ForeignKey("works.id", ondelete="SET NULL"),
+                     nullable=True)
+    copy_version_id = Column(String(32),
+                             ForeignKey("copy_versions.id", ondelete="SET NULL"),
+                             nullable=True)
+    platform_version_id = Column(String(32),
+                                 ForeignKey("platform_versions.id",
+                                            ondelete="SET NULL"),
+                                 nullable=True)
+    video_asset_id = Column(String(32), ForeignKey("assets.id", ondelete="SET NULL"),
+                            nullable=True)
+    cover_asset_id = Column(String(32), ForeignKey("assets.id", ondelete="SET NULL"),
+                            nullable=True)
+    platform = Column(String(32), nullable=False, default="")
+    status = Column(String(16), nullable=False, default=PUBLISH_PENDING)
+    # 发布前检查
+    check_result = Column(JSON, nullable=False, default=list)
+    checked_at = Column(DateTime(timezone=True), nullable=True)
+    authorization_confirmed = Column(Boolean, nullable=False, default=False,
+                                     server_default="0")
+    # 发布
+    published_at = Column(DateTime(timezone=True), nullable=True)
+    publish_url = Column(String(1024), nullable=False, default="")
+    # 发布后数据（阶段 H 效果复盘用；首期手动录入）
+    post_metrics = Column(JSON, nullable=False, default=dict)
+    notes = Column(Text, nullable=False, default="")
+    created_by = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)

@@ -54,6 +54,9 @@ PLAN_TASK_NOT_FOUND = 3010    # 策划任务不存在（V3.0 C）
 PLAN_IDEA_NOT_SELECTED = 3011  # 未选择创意方向（V3.0 C）
 PLATFORM_VERSION_NOT_FOUND = 3012  # 平台版本不存在（V3.0 E）
 PLATFORM_NOT_SUPPORTED = 3013  # 不支持的目标平台（V3.0 E）
+PUBLISH_RECORD_NOT_FOUND = 3014  # 发布记录不存在（V3.0 F）
+PUBLISH_INVALID_TRANSITION = 3015  # 非法发布状态转换（V3.0 F）
+PUBLISH_CHECK_BLOCKED = 3016  # 发布前检查未通过，阻止流转（V3.0 F）
 
 # ---- 4xxx 组织与权限 ----
 PERMISSION_DENIED = 4001
@@ -104,6 +107,9 @@ ERROR_MESSAGES: dict[int, str] = {
     PLAN_IDEA_NOT_SELECTED: "请先选择一个创意方向",
     PLATFORM_VERSION_NOT_FOUND: "平台版本不存在",
     PLATFORM_NOT_SUPPORTED: "不支持的目标平台",
+    PUBLISH_RECORD_NOT_FOUND: "发布记录不存在",
+    PUBLISH_INVALID_TRANSITION: "非法的发布状态转换",
+    PUBLISH_CHECK_BLOCKED: "发布前检查未通过",
     PERMISSION_DENIED: "权限不足",
     ORG_NOT_FOUND: "组织不存在",
     MEMBER_NOT_FOUND: "成员不存在",

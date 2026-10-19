@@ -58,6 +58,8 @@ ALL_PERMISSIONS = frozenset({
     "copy:create", "copy:read", "copy:update", "copy:delete",
     # 内容策划工作台（V3.0 C）
     "plan:create", "plan:read", "plan:update", "plan:delete",
+    # 发布中心（V3.0 F：发布记录与状态流转）
+    "publish:create", "publish:read", "publish:update", "publish:delete",
     # 审核
     "review:submit", "review:approve",
     # 媒体资产（S8.1）
@@ -74,6 +76,7 @@ ROLE_PERMISSIONS: dict[str, frozenset] = {
         "product:create", "product:read", "product:update",
         "copy:create", "copy:read", "copy:update",
         "plan:create", "plan:read", "plan:update",
+        "publish:create", "publish:read", "publish:update",
         "review:submit",
         "asset:upload", "asset:read",
     }),
@@ -84,6 +87,7 @@ ROLE_PERMISSIONS: dict[str, frozenset] = {
         "product:read",
         "copy:read",
         "plan:read",
+        "publish:read",
         "review:submit", "review:approve",
         "asset:read",
     }),
@@ -94,6 +98,7 @@ ROLE_PERMISSIONS: dict[str, frozenset] = {
         "product:read",
         "copy:read",
         "plan:read",
+        "publish:read",
         "asset:read",
     }),
 }
