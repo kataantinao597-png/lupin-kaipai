@@ -3587,6 +3587,9 @@ async function renderReviewPanel(recId) {
     const r = V1(await reviewApi(`/records/${recId}/review`));
     REV.review = r;
   } catch (e) { REV.review = null; }
+  // 竞态保护：await 期间用户可能已切走/列表重渲染，面板 detached 则直接放弃
+  box = $("rev_panel");
+  if (!box || !box.isConnected) return;
   const r = REV.review;
   if (!r) { box.innerHTML = '<p class="warn">复盘数据加载失败</p>'; return; }
   const metricFields = METRIC_FIELD_LABELS.map(([k, l]) =>
@@ -3692,6 +3695,9 @@ async function renderReviewDashboard() {
   box.innerHTML = '<p class="muted">加载效果看板…</p>';
   try {
     const d = V1(await reviewApi("/dashboard"));
+    // 竞态保护：await 期间视图可能已切换
+    box = $("rev_dash");
+    if (!box || !box.isConnected) return;
     const items = (d.records || []).map((it) => {
       const latest = it.latest;
       const pairs = latest ? Object.entries(latest.metrics || {}).map(([k, v]) => `${esc(k)}=${esc(String(v))}`).join("、") : "";
