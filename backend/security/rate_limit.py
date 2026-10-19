@@ -45,6 +45,9 @@ _SKIP_PREFIXES = (
 
 _WINDOW = 60.0
 
+#: 存活的中间件实例（仅测试隔离用：reset_rate_limit_buckets 清空所有桶）
+_instances: list = []
+
 
 def _tier_for(path: str) -> tuple[str, int] | None:
     for skip in _SKIP_PREFIXES:
@@ -77,6 +80,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._buckets: dict[str, deque] = {}
         self._lock = threading.Lock()
+        _instances.append(self)
 
     def _allow(self, key: str, limit: int) -> tuple[bool, int]:
         """返回 (是否放行, 还需等待秒数)。仅测试与内部用。"""
@@ -111,3 +115,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if not ok:
             return self._too_many(request, retry_after)
         return await call_next(request)
+
+
+def reset_rate_limit_buckets() -> None:
+    """清空所有限流桶（仅测试隔离用）。"""
+    for inst in _instances:
+        with inst._lock:
+            inst._buckets.clear()

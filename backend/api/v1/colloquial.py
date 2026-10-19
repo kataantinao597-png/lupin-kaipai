@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError
 from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
 from ...core.deps import get_ai_gateway, get_request_model
+from ...core.idempotency import idempotency_begin
 from ...ai.prompts import get_prompt_version
 from ...ai.prompts.colloquial_v1 import build_colloquial_messages
 
@@ -50,25 +51,35 @@ def rewrite_colloquial(
 ):
     """农人口语改写：书面口播 → 山东农人口语味。"""
     _model = get_request_model(request)
+    # V2.1 #3：Idempotency-Key 去重——同 key 同体直接回放，不重复调模型扣费
+    idem = idempotency_begin("colloquial-rewrite", request, req.model_dump(),
+                             scope=_model or "")
+    if idem.replay is not None:
+        return idem.replay
 
     def make_messages(feedback):
         return build_colloquial_messages(req.text.strip(),
                                          req.product_name.strip())
 
     try:
-        result, meta = gw.generate_with_retry(
-            "colloquial_rewrite", make_messages, _validate_colloquial,
-            model=_model or None, temperature=0.8,
-            prompt_version=get_prompt_version("colloquial_rewrite"))
-    except BudgetExceededError as e:
-        raise HTTPException(status_code=402, detail=str(e))
-    except TaskLimitExceededError as e:
-        raise HTTPException(status_code=429, detail=str(e))
-    except (AIFatalError, AIRetryableError, AIConfigError) as e:
-        # 无 AI 可用时诚实失败：改写无确定性规则可降级，不伪造内容
-        raise HTTPException(
-            status_code=503,
-            detail=f"AI 改写服务暂不可用（{e}），请稍后再试")
-    return {"rewritten": result["rewritten"],
-            "changes": result.get("changes") or [],
-            "attempts": meta["attempts"]}
+        try:
+            result, meta = gw.generate_with_retry(
+                "colloquial_rewrite", make_messages, _validate_colloquial,
+                model=_model or None, temperature=0.8,
+                prompt_version=get_prompt_version("colloquial_rewrite"))
+        except BudgetExceededError as e:
+            raise HTTPException(status_code=402, detail=str(e))
+        except TaskLimitExceededError as e:
+            raise HTTPException(status_code=429, detail=str(e))
+        except (AIFatalError, AIRetryableError, AIConfigError) as e:
+            # 无 AI 可用时诚实失败：改写无确定性规则可降级，不伪造内容
+            raise HTTPException(
+                status_code=503,
+                detail=f"AI 改写服务暂不可用（{e}），请稍后再试")
+        resp = {"rewritten": result["rewritten"],
+                "changes": result.get("changes") or [],
+                "attempts": meta["attempts"]}
+    except Exception:
+        idem.abort()
+        raise
+    return idem.finish(resp)

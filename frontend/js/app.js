@@ -30,6 +30,17 @@ function aiLoadingDone() { $("ai_loading").classList.remove("show"); }
 
 function errText(id, msg) { const el = $(id); if (el) el.textContent = msg || ""; }
 
+/* V2.1 #3：生成类按钮请求期间禁用（防双击重复扣费），完成后恢复 */
+function setBtnsDisabled(ids, disabled) {
+  (ids || []).forEach((id) => { const el = $(id); if (el) el.disabled = !!disabled; });
+}
+function newIdempotencyKey() {
+  try {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  } catch (e) { /* 降级 */ }
+  return "idem-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+}
+
 /* 用户自带 Key（只存 sessionStorage，关闭标签页清除）——ApiClient 会自动读取 */
 function getApiConfig() {
   try {
@@ -552,9 +563,12 @@ async function genIdeas() {
   if (!p) { go("v2"); toast("请先填写产品资料"); return; }
   S.data.product = p;
   errText("ideas_err", "");
+  const ideasBtnIds = ["btn_gen_ideas", "btn_regen_ideas"];
+  setBtnsDisabled(ideasBtnIds, true);
   aiLoading("正在生成 3 个创意方向…");
   try {
-    const d = RAW(await ApiClient.post("/api/ideas", { product: p, facts: usableFacts() }));
+    const d = RAW(await ApiClient.post("/api/ideas", { product: p, facts: usableFacts() },
+      { idempotencyKey: newIdempotencyKey() }));
     S.data.ideas = d.ideas || [];
     S.data.ideasFactsHash = factsHash();
     S.ideaSel = -1;
@@ -565,6 +579,7 @@ async function genIdeas() {
   } catch (e) {
     errText("ideas_err", e.message || "生成失败");
   } finally {
+    setBtnsDisabled(ideasBtnIds, false);
     aiLoadingDone();
   }
 }
@@ -751,6 +766,8 @@ async function genStoryboard() {
   if (oldShots.length && locked.length && !confirm(`有 ${locked.length} 个锁定镜头将保留，其余重新生成。继续？`)) return;
   pushSbVersion();
   errText("sb_err", "");
+  const sbBtnIds = ["btn_gen_storyboard", "btn_regen_all"];
+  setBtnsDisabled(sbBtnIds, true);
   aiLoading("正在生成结构化分镜…（约半分钟）");
   try {
     const cond = getShootCond();
@@ -758,7 +775,7 @@ async function genStoryboard() {
       product: p, direction, facts: usableFacts(),
       video_purpose: cond.video_purpose,
       available_resources: cond.available_resources,
-    }));
+    }, { idempotencyKey: newIdempotencyKey() }));
     let shots = d.storyboard.shots || [];
     // V2.0：恢复锁定镜头（按 shot_number 对位）
     if (locked.length) {
@@ -777,6 +794,7 @@ async function genStoryboard() {
   } catch (e) {
     errText("sb_err", e.message || "生成失败");
   } finally {
+    setBtnsDisabled(sbBtnIds, false);
     aiLoadingDone();
   }
 }
@@ -1537,11 +1555,14 @@ function exportLivestreamTxt() {
 let colloqShotIdx = -1;
 
 async function openColloquialModal(i) {
+  // V2.1 #3：改写请求进行中不再重复触发（防双击重复扣费）
+  if (openColloquialModal._busy) return;
   const shots = (S.data.storyboard || {}).shots || [];
   const s = shots[i];
   if (!s) return;
   const orig = String(s.voiceover || s.subtitle || "").trim();
   if (!orig) { toast("该镜头暂无口播文案"); return; }
+  openColloquialModal._busy = true;
   colloqShotIdx = i;
   $("colloq_orig").textContent = orig;
   $("colloq_new").textContent = "改写中…";
@@ -1552,13 +1573,15 @@ async function openColloquialModal(i) {
     const d = RAW(await ApiClient.post("/api/colloquial-rewrite", {
       text: orig,
       product_name: (S.data.product || {}).product_name || "",
-    }));
+    }, { idempotencyKey: newIdempotencyKey() }));
     $("colloq_new").textContent = d.rewritten || "—";
     $("colloq_changes").innerHTML =
       (d.changes || []).map((c) => `<li>${esc(c)}</li>`).join("");
   } catch (e) {
     $("colloq_new").textContent = "—";
     errText("colloq_err", e.message || "改写失败");
+  } finally {
+    openColloquialModal._busy = false;
   }
 }
 

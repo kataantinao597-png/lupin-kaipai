@@ -38,6 +38,7 @@ AI_BAD_RESPONSE = 2003      # 模型返回无法解析
 AI_RATE_LIMITED = 2004      # 触发限流（429 / 本地限流）
 AI_NOT_CONFIGURED = 2005    # 未配置可用 Key
 AI_PROVIDER_ERROR = 2006    # 提供商 5xx 等服务端错误
+IDEMPOTENCY_KEY_CONFLICT = 2007  # 同一幂等键被用于不同请求体（V2.1 #3）
 
 # ---- 3xxx 产品事实库 ----
 FACT_UNVERIFIED = 3001      # 事实未核实 / 不允许使用
@@ -80,6 +81,7 @@ ERROR_MESSAGES: dict[int, str] = {
     AI_RATE_LIMITED: "请求过于频繁，请稍后再试",
     AI_NOT_CONFIGURED: "模型服务未配置",
     AI_PROVIDER_ERROR: "模型服务异常",
+    IDEMPOTENCY_KEY_CONFLICT: "该幂等键已用于另一份不同的请求内容，请更换幂等键后重试",
     FACT_UNVERIFIED: "事实未经核实或不允许使用",
     FACT_NOT_FOUND: "事实不存在",
     FACT_EXPIRED: "事实已过期，需重新核实",

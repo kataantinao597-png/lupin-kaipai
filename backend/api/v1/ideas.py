@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError, DEFAULT_MODEL
 from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
 from ...core.deps import get_ai_gateway, get_request_model
+from ...core.idempotency import (idempotency_begin, idempotency_invalidate)
 from ...ai.prompts import get_prompt_version
 from ...prompts import (
     build_idea_messages,
@@ -137,10 +138,29 @@ def _enqueue_ai_task(task_type: str, payload: dict, request: Request) -> dict:
         # S6.1：payload 注入 org_id，供 runner 在 gateway 调用前做事实引用检查
         payload = dict(payload or {})
         payload["_org_id"] = org_id
-        # 137：同步接口转异步（用户在等待结果）→ high 优先级
-        task = repo.create(org_id=org_id, task_type=task_type,
-                           payload=payload, priority="high")
-        task_id = task.id
+        # V2.1 #3：同 Idempotency-Key + 同请求体 → 直接返回已有任务，不重复建任务
+        idem = idempotency_begin("enqueue:" + task_type, request, payload)
+        if idem.replay is not None:
+            old_task = repo.get((idem.replay or {}).get("task_id") or "",
+                                org_id)
+            if old_task is not None:
+                return {"task_id": old_task.id, "status": old_task.status,
+                        "query_url": f"/api/v1/ai-tasks/{old_task.id}",
+                        "idempotent_replay": True}
+            # 任务记录已不在：清掉失效的幂等记录，重新建任务（不静默返回死链接）
+            idempotency_invalidate(
+                "enqueue:" + task_type,
+                request.headers.get("Idempotency-Key", ""))
+            idem = idempotency_begin("enqueue:" + task_type, request, payload)
+        try:
+            # 137：同步接口转异步（用户在等待结果）→ high 优先级
+            task = repo.create(org_id=org_id, task_type=task_type,
+                               payload=payload, priority="high")
+            task_id = task.id
+        except Exception:
+            idem.abort()
+            raise
+        idem.finish({"task_id": task_id})
     finally:
         db.close()
     runner = RUNNERS[task_type]
@@ -169,30 +189,40 @@ def create_ideas(
             "facts": req.facts,
         }, request)
     _model = get_request_model(request)
-    product = req.product.model_dump()
-
-    def make_messages(feedback: Optional[str]):
-        msgs = build_idea_messages(product, req.facts)
-        if feedback:
-            msgs.append({"role": "user", "content": feedback})
-        return msgs
-
+    # V2.1 #3：Idempotency-Key 去重——同 key 同体直接回放，不重复调模型扣费
+    idem = idempotency_begin("ideas", request, req.model_dump(),
+                             scope=_model or "")
+    if idem.replay is not None:
+        return idem.replay
     try:
-        ideas, meta = gw.generate_with_retry(
-            "ideas", make_messages, _validate_ideas,
-            model=_model or None, temperature=0.7,
-            prompt_version=get_prompt_version("ideas"))
-    except BudgetExceededError as e:
-        raise HTTPException(status_code=402, detail=str(e))
-    except TaskLimitExceededError as e:
-        raise HTTPException(status_code=429, detail=str(e))
-    except (AIFatalError, AIRetryableError, AIConfigError) as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    return {
-        "ideas": [i.model_dump() for i in ideas],
-        "attempts": meta["attempts"],
-        "usage": meta["usage"],
-    }
+        product = req.product.model_dump()
+
+        def make_messages(feedback: Optional[str]):
+            msgs = build_idea_messages(product, req.facts)
+            if feedback:
+                msgs.append({"role": "user", "content": feedback})
+            return msgs
+
+        try:
+            ideas, meta = gw.generate_with_retry(
+                "ideas", make_messages, _validate_ideas,
+                model=_model or None, temperature=0.7,
+                prompt_version=get_prompt_version("ideas"))
+        except BudgetExceededError as e:
+            raise HTTPException(status_code=402, detail=str(e))
+        except TaskLimitExceededError as e:
+            raise HTTPException(status_code=429, detail=str(e))
+        except (AIFatalError, AIRetryableError, AIConfigError) as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        resp = {
+            "ideas": [i.model_dump() for i in ideas],
+            "attempts": meta["attempts"],
+            "usage": meta["usage"],
+        }
+    except Exception:
+        idem.abort()
+        raise
+    return idem.finish(resp)
 
 
 @router.post("/api/storyboard")
@@ -215,6 +245,12 @@ def create_storyboard(
     _model = get_request_model(request)
     product = req.product.model_dump()
 
+    # V2.1 #3：Idempotency-Key 去重——同 key 同体直接回放，不重复调模型扣费
+    idem = idempotency_begin("storyboard", request, req.model_dump(),
+                             scope=_model or "")
+    if idem.replay is not None:
+        return idem.replay
+
     # v2 分流：前端传了合法 video_purpose 即用 storyboard_v2（含验收标准/时长拆分等）
     use_v2 = (req.video_purpose or "").strip() in VIDEO_PURPOSES
     v2_purpose = req.video_purpose.strip() if use_v2 else "intro"
@@ -227,21 +263,26 @@ def create_storyboard(
         return build_storyboard_messages(product, req.direction, req.facts, feedback)
 
     try:
-        sb, meta = gw.generate_with_retry(
-            "storyboard", make_messages, validate_dict,
-            model=_model or None, temperature=0.3,
-            prompt_version=get_prompt_version("storyboard_v2" if use_v2 else "storyboard"))
-    except BudgetExceededError as e:
-        raise HTTPException(status_code=402, detail=str(e))
-    except TaskLimitExceededError as e:
-        raise HTTPException(status_code=429, detail=str(e))
-    except (AIFatalError, AIRetryableError, AIConfigError) as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    return {
-        "storyboard": sb.model_dump(),
-        "attempts": meta["attempts"],
-        "usage": meta["usage"],
-    }
+        try:
+            sb, meta = gw.generate_with_retry(
+                "storyboard", make_messages, validate_dict,
+                model=_model or None, temperature=0.3,
+                prompt_version=get_prompt_version("storyboard_v2" if use_v2 else "storyboard"))
+        except BudgetExceededError as e:
+            raise HTTPException(status_code=402, detail=str(e))
+        except TaskLimitExceededError as e:
+            raise HTTPException(status_code=429, detail=str(e))
+        except (AIFatalError, AIRetryableError, AIConfigError) as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        resp = {
+            "storyboard": sb.model_dump(),
+            "attempts": meta["attempts"],
+            "usage": meta["usage"],
+        }
+    except Exception:
+        idem.abort()
+        raise
+    return idem.finish(resp)
 
 
 @router.post("/api/regenerate-shot")
@@ -251,42 +292,54 @@ def regenerate_shot(
     gw=Depends(get_ai_gateway),
 ):
     _model = get_request_model(request)
+    # V2.1 #3：Idempotency-Key 去重——同 key 同体直接回放，不重复调模型扣费
+    idem = idempotency_begin("regenerate-shot", request, req.model_dump(),
+                             scope=_model or "")
+    if idem.replay is not None:
+        return idem.replay
     sb = req.storyboard
     shots = sb.get("shots", [])
     if not any(s.get("shot_number") == req.shot_number for s in shots):
+        idem.abort()
         raise HTTPException(status_code=400, detail=f"镜头 {req.shot_number} 不存在")
     if req.shot_number in req.locked:
+        idem.abort()
         raise HTTPException(status_code=400, detail=f"镜头 {req.shot_number} 已锁定，不能重生成")
 
     def make_messages(feedback: Optional[str]):
         return build_regen_shot_messages(sb, req.shot_number, req.instruction, req.locked, feedback)
 
     try:
-        new_shot, meta = gw.generate_with_retry(
-            "regen_shot", make_messages, _validate_shot,
-            model=_model or None, temperature=0.4,
-            prompt_version=get_prompt_version("regen_shot"))
-    except BudgetExceededError as e:
-        raise HTTPException(status_code=402, detail=str(e))
-    except TaskLimitExceededError as e:
-        raise HTTPException(status_code=429, detail=str(e))
-    except (AIFatalError, AIRetryableError, AIConfigError) as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        try:
+            new_shot, meta = gw.generate_with_retry(
+                "regen_shot", make_messages, _validate_shot,
+                model=_model or None, temperature=0.4,
+                prompt_version=get_prompt_version("regen_shot"))
+        except BudgetExceededError as e:
+            raise HTTPException(status_code=402, detail=str(e))
+        except TaskLimitExceededError as e:
+            raise HTTPException(status_code=429, detail=str(e))
+        except (AIFatalError, AIRetryableError, AIConfigError) as e:
+            raise HTTPException(status_code=502, detail=str(e))
 
-    if new_shot.shot_number != req.shot_number:
-        raise HTTPException(status_code=502, detail="模型返回了错误的镜头序号，已丢弃该结果")
+        if new_shot.shot_number != req.shot_number:
+            raise HTTPException(status_code=502, detail="模型返回了错误的镜头序号，已丢弃该结果")
 
-    new_sb = json.loads(json.dumps(sb))  # 深拷贝
-    for i, s in enumerate(new_sb["shots"]):
-        if s.get("shot_number") == req.shot_number:
-            new_sb["shots"][i] = new_shot.model_dump()
-            break
-    # 锁定镜头保护：确认 locked 镜头内容未被改动
-    for s_old, s_new in zip(sb["shots"], new_sb["shots"]):
-        if s_old.get("shot_number") in req.locked and s_old != s_new:
-            raise HTTPException(status_code=502, detail=f"锁定镜头 {s_old.get('shot_number')} 被意外改动，已中止")
+        new_sb = json.loads(json.dumps(sb))  # 深拷贝
+        for i, s in enumerate(new_sb["shots"]):
+            if s.get("shot_number") == req.shot_number:
+                new_sb["shots"][i] = new_shot.model_dump()
+                break
+        # 锁定镜头保护：确认 locked 镜头内容未被改动
+        for s_old, s_new in zip(sb["shots"], new_sb["shots"]):
+            if s_old.get("shot_number") in req.locked and s_old != s_new:
+                raise HTTPException(status_code=502, detail=f"锁定镜头 {s_old.get('shot_number')} 被意外改动，已中止")
 
-    errors, _ = validate_dict(new_sb)
-    warning = "; ".join(errors) if errors else ""
-    return {"shot": new_shot.model_dump(), "storyboard": new_sb,
-            "warning": warning, "attempts": meta["attempts"]}
+        errors, _ = validate_dict(new_sb)
+        warning = "; ".join(errors) if errors else ""
+        resp = {"shot": new_shot.model_dump(), "storyboard": new_sb,
+                "warning": warning, "attempts": meta["attempts"]}
+    except Exception:
+        idem.abort()
+        raise
+    return idem.finish(resp)
