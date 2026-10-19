@@ -435,6 +435,8 @@ input[type=file]{display:none}
       <div class="card panel" style="margin-bottom:18px">
         <h3>创意方案 <span class="pill gray" id="ideas_count">尚未生成</span></h3>
         <div id="ideas_stale_warn"></div>
+        <!-- V3.0 B-4：可选关联产品档案（不选也能用；关联后自动带入已确认事实） -->
+        <div id="gen_product_host" style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap"></div>
         <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
           <button class="btn primary sm" id="btn_gen_ideas">✦ 生成创意方案</button>
           <button class="btn ghost sm" id="btn_regen_ideas" style="display:none">重新生成</button>

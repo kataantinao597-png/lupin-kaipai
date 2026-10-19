@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from ..models import Fact, Product
+from ..models import Fact, Product, ProductRef
 from .base import EntityNotFound, OptimisticLockError, transactional_method
 
 
@@ -160,3 +160,52 @@ class ProductRepository:
                 f"该产品仍有 {n} 条事实引用，无法删除")
         self.db.delete(product)
         self.db.flush()
+
+    # ---------- V3.0 B-5：引用标记 ----------
+
+    def sync_work_ref(self, work_id: str, product: Product,
+                      product_version: int) -> None:
+        """作品保存时同步产品引用（一个作品最多一条引用记录）。
+
+        - product_version=None 表示前端清除了引用 → 删除旧记录。
+        - recorded_version < 产品当前 version 时直接标为 stale（避免
+          重新保存把"已过期"标记洗掉）。
+        - 只做标记，不读写作品内容本身。
+        """
+        self.db.query(ProductRef).filter(
+            ProductRef.ref_type == "work",
+            ProductRef.ref_id == work_id).delete()
+        if product is None:
+            self.db.flush()
+            return
+        cur_ver = product.version or 1
+        self.db.add(ProductRef(
+            org_id=product.org_id, product_id=product.id,
+            ref_type="work", ref_id=work_id,
+            product_version=product_version,
+            product_code=product.code, product_name=product.name,
+            stale=bool(product_version < cur_ver)))
+        self.db.flush()
+
+    @transactional_method
+    def mark_refs_stale(self, product: Product, new_version: int) -> int:
+        """产品资料更新后：把引用旧版本的记录标为 stale。
+
+        返回被标记的条数。只标记不改写任何内容。
+        """
+        result = self.db.execute(
+            update(ProductRef)
+            .where(ProductRef.product_id == product.id,
+                   ProductRef.product_version < new_version,
+                   ProductRef.stale.is_(False))
+            .values(stale=True, updated_at=_utcnow()))
+        self.db.flush()
+        return result.rowcount or 0
+
+    def is_ref_stale(self, ref_type: str, ref_id: str) -> bool:
+        """某条引用是否为旧版本（供作品详情展示提示）。"""
+        return self.db.scalar(
+            select(func.count()).select_from(ProductRef).where(
+                ProductRef.ref_type == ref_type,
+                ProductRef.ref_id == ref_id,
+                ProductRef.stale.is_(True))) > 0

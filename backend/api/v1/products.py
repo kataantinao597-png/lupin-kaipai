@@ -13,7 +13,10 @@ facts.product_id 自由字符串可引用产品 id 或 code（B-2 兼容）；
 删除产品时任一命中都视为有关联引用。
 """
 from fastapi import APIRouter, Depends, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+from datetime import datetime, timezone
 
 from ...auth.deps import get_current_user
 from ...auth.models import User
@@ -64,6 +67,63 @@ def _require_product_perm(db: Session, user: User, org_id: str,
                             code=error_codes.ORG_NOT_FOUND, http_status=404)
     assert_can(ms.role, action, what)  # 050 二次验证
     return ms
+
+
+# ---------- V3.0 B-4：产品事实 grounding ----------
+
+def get_product_grounding(db: Session, org_id: str,
+                          product_id: str) -> tuple[dict, list[dict]]:
+    """取产品的已确认事实，供 ideas/storyboard prompt grounding。
+
+    - 产品必须属于该组织（跨产品隔离：不存在或不属于该组织 → 404）。
+    - 只返回 status=confirmed 且 allow_use 且未过期的事实；
+      未确认/已驳回/已过期的一律不返回（复用 list_usable 语义，
+      facts.product_id 可引用产品 id 或 code）。
+    - 返回 (product 摘要 dict, fact dict 列表)。
+    """
+    repo = ProductRepository(db)
+    product = repo.get(product_id, org_id)
+    if product is None:
+        raise BusinessError("产品档案不存在",
+                            code=error_codes.PRODUCT_NOT_FOUND, http_status=404)
+    now = datetime.now(timezone.utc)
+    facts = list(db.scalars(
+        select(models.Fact).where(
+            models.Fact.org_id == org_id,
+            models.Fact.status == "confirmed",
+            models.Fact.allow_use.is_(True),
+            models.Fact.product_id.in_([product.id, product.code]),
+            (models.Fact.expires_at.is_(None))
+            | (models.Fact.expires_at > now),
+        ).order_by(models.Fact.updated_at.desc()).limit(200)))
+    fact_dicts = [{
+        "id": f.id, "content": f.content, "category": f.category or "其他",
+        "source": f.source_ref or "用户提供",
+        # 查询已保证 confirmed+allow_use+未过期；带上标记以便 facts_block 复用
+        "status": "confirmed", "allow_use": True,
+    } for f in facts]
+    prod = {
+        "id": product.id, "code": product.code, "name": product.name,
+        "category": product.category or "", "origin": product.origin or "",
+        "version": product.version or 1,
+    }
+    return prod, fact_dicts
+
+
+def merge_grounding_facts(client_facts: list, product_facts: list) -> list:
+    """合并客户端事实与产品档案事实（按事实 id 去重）。
+
+    客户端显式传入的优先；产品档案补上缺失的已确认事实。
+    """
+    seen = {f.get("id") for f in (client_facts or []) if f.get("id")}
+    merged = list(client_facts or [])
+    for f in product_facts or []:
+        if f.get("id") and f["id"] in seen:
+            continue
+        merged.append(f)
+        if f.get("id"):
+            seen.add(f["id"])
+    return merged
 
 
 @router.post("", response_model=ApiResponse[ProductOut],
@@ -145,7 +205,12 @@ def update_product(
             f"产品档案已被他人修改（期望版本 {e.expected}，当前 {e.actual}），"
             "请刷新后重试",
             code=error_codes.VERSION_CONFLICT, http_status=409)
-    return success(_product_out(product))
+    # V3.0 B-5：资料更新成功后，把引用旧版本的引用记录标为 stale。
+    # 只标记不改写任何历史内容；新版本号来自本次更新后的 version。
+    stale_n = repo.mark_refs_stale(product, product.version or 1)
+    out = _product_out(product)
+    out.stale_refs_marked = stale_n
+    return success(out)
 
 
 @router.delete("/{product_id}", response_model=ApiResponse[dict])

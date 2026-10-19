@@ -169,6 +169,8 @@ class WorkOut(BaseModel):
     version: int = 1
     created_at: datetime
     updated_at: datetime
+    # V3.0 B-5：作品引用的产品档案是否为旧版本（仅详情接口计算）
+    product_ref_stale: bool = False
 
 
 # ---- 作品历史版本（091） ----
@@ -393,3 +395,5 @@ class ProductOut(BaseModel):
     version: int = 1
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    # V3.0 B-5：本次 PATCH 被标记为旧版本引用的条数（仅 PATCH 响应有意义）
+    stale_refs_marked: int = 0

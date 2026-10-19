@@ -102,7 +102,7 @@ def test_082_migration_tables(db: Session):
             "refresh_tokens", "password_resets", "products"} <= names
     row = db.execute(__import__("sqlalchemy").text(
         "select version_num from alembic_version")).fetchone()
-    assert row[0] == "0011_product"  # V3.0 B-1：products 表，head 前移
+    assert row[0] == "0012_product_refs"  # V3.0 B-4/B-5：product_refs 表，head 前移
 
 
 # ---------- 083/084/085 CRUD ----------

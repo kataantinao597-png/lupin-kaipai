@@ -26,6 +26,26 @@ def _cancelled():
     raise _TaskCancelled()
 
 
+def _resolve_payload_product_facts(payload: dict[str, Any],
+                                     facts: list) -> tuple[list, dict | None]:
+    """V3.0 B-4：异步任务 payload 带 product_id 时，解析其已确认事实并入。
+
+    返回 (合并后的 facts, product 摘要或 None)。无 product_id 时原样返回。
+    只带入 confirmed+allow_use+未过期的事实（get_product_grounding 保证）。
+    """
+    if not payload.get("product_id"):
+        return facts, None
+    org_id = payload.get("_org_id") or payload.get("org_id")
+    from ..auth.database import get_session_factory
+    from ..api.v1.products import get_product_grounding, merge_grounding_facts
+    db = get_session_factory()()
+    try:
+        prod, pfacts = get_product_grounding(db, org_id, payload["product_id"])
+        return merge_grounding_facts(facts, pfacts), prod
+    finally:
+        db.close()
+
+
 def _check_fact_refs(payload: dict[str, Any], facts: list) -> None:
     """S6.1：在 gateway 调用前检查引用事实状态。
 
@@ -60,6 +80,8 @@ def run_ideas(task_id: str, is_cancelled: Callable[[], bool],
     gw = AIGateway(service=_get_server_ai(), task_id=task_id)
     product = payload.get("product") or {}
     facts = payload.get("facts") or []
+    # V3.0 B-4：产品档案的已确认事实并入 grounding
+    facts, _prod_ref = _resolve_payload_product_facts(payload, facts)
     _check_fact_refs(payload, facts)  # S6.1：gateway 调用前检查引用事实
 
     def make_messages(feedback):
@@ -95,6 +117,8 @@ def run_storyboard(task_id: str, is_cancelled: Callable[[], bool],
     product = payload.get("product") or {}
     direction = payload.get("direction") or ""
     facts = payload.get("facts") or []
+    # V3.0 B-4：产品档案的已确认事实并入 grounding
+    facts, _prod_ref = _resolve_payload_product_facts(payload, facts)
     _check_fact_refs(payload, facts)  # S6.1：gateway 调用前检查引用事实
 
     _purpose = (payload.get("video_purpose") or "").strip()

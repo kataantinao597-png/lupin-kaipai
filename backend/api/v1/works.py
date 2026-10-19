@@ -49,6 +49,35 @@ router = APIRouter(prefix="/works", tags=["v1-works"])
 MAX_VERSIONS_PER_WORK = 50
 
 
+def _sync_product_ref(db, work) -> None:
+    """V3.0 B-5：作品保存后同步产品引用标记。
+
+    data_json.product_ref = {product_id, product_version, ...} 由前端在
+    用产品档案生成内容后写入；后端只做标记，不读写作品内容。
+    product_id 为空或产品不存在 → 清除旧标记。
+    """
+    from ...repositories.product_repository import ProductRepository
+    try:
+        data = json.loads(work.data_json or "{}")
+    except (ValueError, TypeError):
+        data = {}
+    ref = (data.get("product_ref") or {}) if isinstance(data, dict) else {}
+    repo = ProductRepository(db)
+    pid = (ref.get("product_id") or "").strip() if isinstance(ref, dict) else ""
+    if not pid:
+        repo.sync_work_ref(work.id, None, 0)
+        return
+    product = repo.get(pid, work.org_id)
+    if product is None:
+        repo.sync_work_ref(work.id, None, 0)
+        return
+    try:
+        pver = int(ref.get("product_version") or 0) or (product.version or 1)
+    except (TypeError, ValueError):
+        pver = product.version or 1
+    repo.sync_work_ref(work.id, product, pver)
+
+
 def _work_out(work: models.Work) -> WorkOut:
     try:
         data = json.loads(work.data_json or "{}")
@@ -154,6 +183,9 @@ def create_work(
         data_json=json.dumps(req.data.model_dump(mode="json"), ensure_ascii=False),
     )
     db.add(work)
+    db.flush()  # 先拿到 id，供产品引用标记
+    # V3.0 B-5：同步产品引用标记（只标记，不读写内容）
+    _sync_product_ref(db, work)
     db.commit()
     db.refresh(work)
     return success(_work_out(work))
@@ -243,7 +275,11 @@ def get_work(
     work, _ms = access
     # 092：回收站作品对正常详情接口不可见
     work = _get_active_work(db, work.id)
-    return success(_work_out(work))
+    out = _work_out(work)
+    # V3.0 B-5：产品引用是否已过期（只做标记展示，不改写内容）
+    from ...repositories.product_repository import ProductRepository
+    out.product_ref_stale = ProductRepository(db).is_ref_stale("work", work.id)
+    return success(out)
 
 
 @router.patch("/{work_id}", response_model=ApiResponse[WorkOut])
@@ -308,6 +344,8 @@ def update_work(
         work.status = req.status
     if req.version is not None:
         work.version = work.version + 1
+    # V3.0 B-5：同步产品引用标记（只标记，不读写内容）
+    _sync_product_ref(db, work)
     db.commit()
     db.refresh(work)
     return success(_work_out(work))

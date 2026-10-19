@@ -55,6 +55,10 @@ class ProductInput(BaseModel):
 class IdeasRequest(BaseModel):
     product: ProductInput
     facts: List[dict] = Field(default_factory=list)
+    # V3.0 B-4：可选产品档案。传了 product_id 后端自动把该产品的
+    # 已确认事实并入 grounding；不传则行为与之前完全一致。
+    product_id: Optional[str] = None
+    org_id: Optional[str] = None  # 产品所属组织（不传则用默认组织）
 
 
 class StoryboardRequest(BaseModel):
@@ -65,6 +69,9 @@ class StoryboardRequest(BaseModel):
     video_purpose: Optional[str] = None
     available_resources: List[str] = Field(default_factory=list)
     skill_level: Optional[str] = None
+    # V3.0 B-4：可选产品档案（同 IdeasRequest）
+    product_id: Optional[str] = None
+    org_id: Optional[str] = None
 
 
 VIDEO_PURPOSES = {"brand", "sales", "intro", "record"}
@@ -75,6 +82,31 @@ class RegenShotRequest(BaseModel):
     shot_number: int = Field(..., ge=1)
     instruction: str = Field(..., min_length=1)
     locked: List[int] = Field(default_factory=list)
+
+
+# ---------- V3.0 B-4：产品档案 grounding ----------
+
+def _resolve_product_facts(req) -> tuple:
+    """解析请求中的产品档案，返回 (product 摘要或 None, 合并后的 facts)。
+
+    - 无 product_id：直接返回 (None, req.facts)，行为与之前完全一致。
+    - 有 product_id：组织内查产品（跨组织 → 404），取其已确认事实
+      （只看 confirmed+allow_use+未过期，未确认的一律不带入），
+      与客户端 facts 按 id 去重合并。
+    """
+    if not req.product_id:
+        return None, list(req.facts or [])
+    from ...auth.database import get_session_factory
+    from .ai_tasks import _resolve_org_id
+    from .products import get_product_grounding, merge_grounding_facts
+    db = get_session_factory()()
+    try:
+        org_id = _resolve_org_id(db, req.org_id)
+        prod, product_facts = get_product_grounding(db, org_id, req.product_id)
+        merged = merge_grounding_facts(req.facts, product_facts)
+        return prod, merged
+    finally:
+        db.close()
 
 
 # ---------- 校验函数 ----------
@@ -187,6 +219,9 @@ def create_ideas(
         return _enqueue_ai_task("ideas", {
             "product": req.product.model_dump(),
             "facts": req.facts,
+            # V3.0 B-4：异步 runner 在执行时解析产品事实
+            "product_id": req.product_id,
+            "org_id": req.org_id,
         }, request)
     _model = get_request_model(request)
     # V2.1 #3：Idempotency-Key 去重——同 key 同体直接回放，不重复调模型扣费
@@ -196,9 +231,11 @@ def create_ideas(
         return idem.replay
     try:
         product = req.product.model_dump()
+        # V3.0 B-4：产品档案的已确认事实自动并入 grounding
+        prod_ref, facts = _resolve_product_facts(req)
 
         def make_messages(feedback: Optional[str]):
-            msgs = build_idea_messages(product, req.facts)
+            msgs = build_idea_messages(product, facts)
             if feedback:
                 msgs.append({"role": "user", "content": feedback})
             return msgs
@@ -219,6 +256,10 @@ def create_ideas(
             "attempts": meta["attempts"],
             "usage": meta["usage"],
         }
+        if prod_ref is not None:
+            resp["product_ref"] = prod_ref
+            resp["product_facts_used"] = [
+                f.get("id") for f in facts if f.get("id")]
     except Exception:
         idem.abort()
         raise
@@ -241,6 +282,9 @@ def create_storyboard(
             "video_purpose": req.video_purpose,
             "available_resources": req.available_resources,
             "skill_level": req.skill_level,
+            # V3.0 B-4：异步 runner 在执行时解析产品事实
+            "product_id": req.product_id,
+            "org_id": req.org_id,
         }, request)
     _model = get_request_model(request)
     product = req.product.model_dump()
@@ -251,6 +295,9 @@ def create_storyboard(
     if idem.replay is not None:
         return idem.replay
 
+    # V3.0 B-4：产品档案的已确认事实自动并入 grounding
+    prod_ref, facts = _resolve_product_facts(req)
+
     # v2 分流：前端传了合法 video_purpose 即用 storyboard_v2（含验收标准/时长拆分等）
     use_v2 = (req.video_purpose or "").strip() in VIDEO_PURPOSES
     v2_purpose = req.video_purpose.strip() if use_v2 else "intro"
@@ -259,8 +306,8 @@ def create_storyboard(
         if use_v2:
             return build_storyboard_v2_messages(
                 product, req.direction, v2_purpose, req.available_resources,
-                req.facts, feedback)
-        return build_storyboard_messages(product, req.direction, req.facts, feedback)
+                facts, feedback)
+        return build_storyboard_messages(product, req.direction, facts, feedback)
 
     try:
         try:
@@ -279,6 +326,10 @@ def create_storyboard(
             "attempts": meta["attempts"],
             "usage": meta["usage"],
         }
+        if prod_ref is not None:
+            resp["product_ref"] = prod_ref
+            resp["product_facts_used"] = [
+                f.get("id") for f in facts if f.get("id")]
     except Exception:
         idem.abort()
         raise

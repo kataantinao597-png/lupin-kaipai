@@ -304,6 +304,38 @@ class Product(Base):
                         onupdate=_now)
 
 
+class ProductRef(Base):
+    """V3.0 B-5：产品档案引用标记（轻量引用表）。
+
+    - 记录哪些作品内容在生成时引用了哪个产品档案的哪个版本。
+    - 产品资料变更后，只把引用旧版本的标记为 stale=True，
+      绝不静默改写历史文案或已确认分镜（任务书 §4.3 铁律）。
+    - 产品删除时级联删除标记（内容本身不受影响）。
+    """
+    __tablename__ = "product_refs"
+    __table_args__ = (
+        Index("ix_productref_org", "org_id"),
+        Index("ix_productref_product", "product_id"),
+        Index("ix_productref_ref", "ref_type", "ref_id"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="CASCADE"),
+                    nullable=False)
+    product_id = Column(String(32), ForeignKey("products.id", ondelete="CASCADE"),
+                        nullable=False)
+    ref_type = Column(String(16), nullable=False, default="work")  # 目前只有 work
+    ref_id = Column(String(32), nullable=False)  # work.id
+    # 引用时记录的产品版本号 + 快照信息（展示用，不回写）
+    product_version = Column(Integer, nullable=False)
+    product_code = Column(String(64), nullable=False, default="")
+    product_name = Column(String(128), nullable=False, default="")
+    stale = Column(Boolean, nullable=False, default=False, server_default="0")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)
+
+
 class WorkVersion(Base):
     """091：作品历史快照（兄弟组 API 已引用，此处补模型定义）。
 

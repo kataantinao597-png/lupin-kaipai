@@ -63,6 +63,8 @@ const S = {
   facts: [],
   products: [],           // V3.0 B-3：产品档案列表（组织级）
   selectedProductId: "",  // V3.0 B-3：当前选中的产品档案 id（空=不筛选）
+  genProductId: "",       // V3.0 B-4：v3 生成时关联的产品档案 id（空=不关联）
+  productGenRef: null,    // V3.0 B-4/B-5：生成时记录的产品引用 {product_id,product_version,product_code,product_name}
   workFilter: "all",
   authMode: "login",
   ideaSel: -1,
@@ -95,7 +97,7 @@ window.go = go;
 function onEnter(v) {
   if (v === "v1") renderWorkbench();
   else if (v === "v2") { fillProductForm(); loadProducts(); } // V3.0 B-3：先加载产品档案，加载完再按筛选加载事实
-  else if (v === "v3") { renderStepper(); renderIdeas(); renderShots(); updateRiskDirtyBadge(); } // V2.1：进入分镜视图刷新标脏徽章
+  else if (v === "v3") { renderStepper(); renderIdeas(); renderShots(); updateRiskDirtyBadge(); ensureGenProductSelect(); } // V2.1：进入分镜视图刷新标脏徽章；V3.0 B-4：v3 产品选择器
   else if (v === "v4") { renderPoster(); }
   else if (v === "v5") { renderShoot(); loadAssets(); fillNote(); }
   else if (v === "v6") { renderDeliveryTitles(); loadTimeline(); renderFinalArchive(); }
@@ -177,6 +179,8 @@ async function loadWorks() {
   }
   S.data = blankData();
   if (S.activeWork && S.activeWork.data) Object.assign(S.data, JSON.parse(JSON.stringify(S.activeWork.data)));
+  // V3.0 B-4/B-5：恢复生成时的产品引用记录
+  S.productGenRef = (S.data && S.data.product_ref) || null;
 }
 
 async function createWork(name) {
@@ -187,6 +191,7 @@ async function createWork(name) {
   await loadWorks();
   S.activeWork = S.works.find((x) => x.id === w.id) || w;
   S.data = blankData();
+  S.productGenRef = null; // V3.0 B-4/B-5：新作品无产品引用
   Object.assign(S.data, JSON.parse(JSON.stringify(S.activeWork.data || {})));
   return S.activeWork;
 }
@@ -194,6 +199,8 @@ async function createWork(name) {
 async function saveWork() {
   if (!S.activeWork) return;
   try {
+    // V3.0 B-4/B-5：把生成时记录的产品引用版本随作品保存（后端只做标记）
+    if (S.productGenRef !== undefined) S.data.product_ref = S.productGenRef;
     const w = V1(await ApiClient.patch("/api/v1/works/" + S.activeWork.id,
       { data: S.data, version: S.activeWork.version }));
     S.activeWork = w;
@@ -587,6 +594,59 @@ function renderProductInfo() {
   info.innerHTML = `品类：${esc(p.category || "—")}　产地：${esc(p.origin || "—")}${p.brand_tone ? `<br>品牌语气：${esc(p.brand_tone)}` : ""}${pts ? `<br>核心卖点：${esc(pts)}${(p.selling_points || []).length > 3 ? "…" : ""}` : ""}`;
 }
 
+/* ---------- V3.0 B-4：v3 生成页产品档案选择器 ---------- */
+// 复用 B-3 的 S.products；独立状态 S.genProductId（空=不关联，不选也能用）。
+// 关联后 genIdeas/genStoryboard 会把 product_id 传给后端，自动带入已确认事实。
+async function ensureGenProductSelect() {
+  const host = $("gen_product_host");
+  if (!host) return;
+  if (!S.org) { host.innerHTML = ""; return; }
+  // 每次进入 v3 都刷新（B-5 过期判断依赖最新版本号；失败则保留旧列表降级）
+  try {
+    S.products = V1(await ApiClient.get("/api/v1/products?org_id=" + encodeURIComponent(S.org.id))) || [];
+  } catch (e) { /* 保留旧列表 */ }
+  const keep = (S.genProductId && S.products.some((p) => p.id === S.genProductId)) ? S.genProductId : "";
+  S.genProductId = keep;
+  if (!S.products.length) {
+    host.innerHTML = `<span style="font-size:12px;color:var(--muted)">暂无产品档案（可在「产品资料」页新建），不影响生成。</span>`;
+    return;
+  }
+  host.innerHTML = `<label style="font-size:13px;color:var(--muted)">关联产品档案（可选）
+      <select id="gen_product_select" class="input sm" style="min-width:210px;margin-left:6px">
+        <option value="">不关联（只用表单产品信息）</option>` +
+    S.products.map((p) =>
+      `<option value="${esc(p.id)}"${p.id === keep ? " selected" : ""}>${esc(p.name)}（${esc(p.code)}）·v${p.version || 1}</option>`).join("") +
+    `</select></label>
+    <span style="font-size:12px;color:var(--muted)">关联后自动带入该产品的已确认事实；未确认事实不会被当真</span>`;
+  $("gen_product_select").addEventListener("change", (e) => { S.genProductId = e.target.value; });
+}
+
+/** 生成成功后记录产品引用（B-5 标记用）；resp 来自后端，含 product_ref。 */
+function trackProductGenRef(resp) {
+  if (resp && resp.product_ref && resp.product_ref.id) {
+    const r = resp.product_ref;
+    S.productGenRef = {
+      product_id: r.id, product_version: r.version || 1,
+      product_code: r.code || "", product_name: r.name || "",
+    };
+    const n = (resp.product_facts_used || []).length;
+    if (n) toast(`已带入 ${n} 条已确认产品事实`);
+  } else {
+    // 本次生成未关联产品：清除旧引用（新内容不再基于产品档案）
+    S.productGenRef = null;
+  }
+}
+
+/** V3.0 B-5：产品引用是否已过期（版本对比，只做提示不改写内容）。 */
+function productRefStaleInfo() {
+  const ref = S.data && S.data.product_ref;
+  if (!ref || !ref.product_id || !S.products || !S.products.length) return null;
+  const p = S.products.find((x) => x.id === ref.product_id);
+  if (!p) return null; // 产品已删或不可见：不打扰
+  if ((p.version || 1) > (ref.product_version || 1)) return { ref, cur: p };
+  return null;
+}
+
 function ensureProductModal() {
   if ($("product_modal")) return;
   const m = document.createElement("div");
@@ -659,9 +719,14 @@ function checkFactsStale() {
     warn.innerHTML = `<div class="notice" style="margin:0 0 14px">产品事实已更新，之前生成的${[staleIdeas ? "创意方案" : "", staleSb ? "分镜" : ""].filter(Boolean).join("、")}可能基于旧资料，建议重新生成。旧成果已保留，不会被覆盖。</div>`;
   } else warn.innerHTML = "";
   const w3 = $("ideas_stale_warn");
-  if (w3) w3.innerHTML = staleIdeas ? `<div class="notice" style="margin:0 0 14px">产品事实已更新，这些创意可能基于旧资料，建议重新生成。</div>` : "";
+  // V3.0 B-5：产品资料已更新、内容引用旧版本 → 只提示，不改写旧成果
+  const pStale = productRefStaleInfo();
+  const pMsg = pStale
+    ? `<div class="notice" style="margin:0 0 14px">产品资料「${esc(pStale.ref.product_name || "产品档案")}」已更新（当前 v${pStale.cur.version || 1}），当前内容引用的是旧版本（v${pStale.ref.product_version || 1}）。建议核对后重新生成；旧成果已保留，不会被覆盖。</div>`
+    : "";
+  if (w3) w3.innerHTML = (staleIdeas ? `<div class="notice" style="margin:0 0 14px">产品事实已更新，这些创意可能基于旧资料，建议重新生成。</div>` : "") + pMsg;
   const wsb = $("sb_stale_warn");
-  if (wsb) wsb.innerHTML = staleSb ? `<div class="notice" style="margin:0 0 14px">产品事实已更新，此分镜可能基于旧资料，建议重新生成。</div>` : "";
+  if (wsb) wsb.innerHTML = (staleSb ? `<div class="notice" style="margin:0 0 14px">产品事实已更新，此分镜可能基于旧资料，建议重新生成。</div>` : "") + pMsg;
 }
 
 /* ================= v3 创意策划与分镜 ================= */
@@ -697,10 +762,15 @@ async function genIdeas() {
   setBtnsDisabled(ideasBtnIds, true);
   aiLoading("正在生成 3 个创意方向…");
   try {
-    const d = RAW(await ApiClient.post("/api/ideas", { product: p, facts: usableFacts() },
+    // V3.0 B-4：可选关联产品档案；关联后后端自动带入已确认事实
+    const genPid = S.genProductId || "";
+    const ideasBody = { product: p, facts: usableFacts() };
+    if (genPid) { ideasBody.product_id = genPid; ideasBody.org_id = S.org.id; }
+    const d = RAW(await ApiClient.post("/api/ideas", ideasBody,
       { idempotencyKey: newIdempotencyKey() }));
     S.data.ideas = d.ideas || [];
     S.data.ideasFactsHash = factsHash();
+    trackProductGenRef(d); // V3.0 B-4/B-5：记录生成时的产品引用版本
     S.ideaSel = -1;
     await saveWork();
     renderIdeas();
@@ -901,11 +971,15 @@ async function genStoryboard() {
   aiLoading("正在生成结构化分镜…（约半分钟）");
   try {
     const cond = getShootCond();
-    const d = RAW(await ApiClient.post("/api/storyboard", {
+    // V3.0 B-4：可选关联产品档案；关联后后端自动带入已确认事实
+    const genPid = S.genProductId || "";
+    const sbBody = {
       product: p, direction, facts: usableFacts(),
       video_purpose: cond.video_purpose,
       available_resources: cond.available_resources,
-    }, { idempotencyKey: newIdempotencyKey() }));
+    };
+    if (genPid) { sbBody.product_id = genPid; sbBody.org_id = S.org.id; }
+    const d = RAW(await ApiClient.post("/api/storyboard", sbBody, { idempotencyKey: newIdempotencyKey() }));
     let shots = d.storyboard.shots || [];
     // V2.0：恢复锁定镜头（按 shot_number 对位）
     if (locked.length) {
@@ -917,6 +991,7 @@ async function genStoryboard() {
     S.data.storyboard = d.storyboard;
     S.data.direction = direction;
     S.data.sbFactsHash = factsHash();
+    trackProductGenRef(d); // V3.0 B-4/B-5：记录生成时的产品引用版本
     await saveWork();
     renderShots();
     checkFactsStale();
