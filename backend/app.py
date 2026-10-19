@@ -383,6 +383,19 @@ def health():
     except Exception:
         pass
 
+    # ai_key_fp：API Key 指纹（sha256 前 8 位），部署后核对配置的 Key 是否正确，不暴露 Key 本身
+    key_fp = None
+    try:
+        from .core.config import settings as _settings
+
+        _k = (_settings.LUPIN_API_KEY or "").strip()
+        if _k:
+            import hashlib
+
+            key_fp = hashlib.sha256(_k.encode()).hexdigest()[:8]
+    except Exception:
+        pass
+
     return {
         "status": "ok" if db_status == "ok" else "degraded",
         "version": version,
@@ -391,6 +404,7 @@ def health():
         "uptime_seconds": round(_time.time() - _START_TIME, 1),
         "model": getattr(ai, "model", DEFAULT_MODEL),
         "ai_ready": ai is not None,
+        "ai_key_fp": key_fp,
         "calls": ai.call_count if ai else 0,
         "total_tokens": ai.total_tokens if ai else 0,
     }

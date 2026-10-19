@@ -10,6 +10,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制代码
 COPY backend/ ./backend/
 COPY frontend/ ./frontend/
+# 迁移脚本与配置：health 接口展示 migrations 版本，生产可用 alembic upgrade head
+COPY alembic.ini ./
+COPY migrations/ ./migrations/
 
 # CloudBase 通过 PORT 环境变量指定端口，默认为 8080
 ENV PORT=8080

@@ -110,14 +110,15 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
         max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
         httponly=True,
         samesite="lax",
-        path="/api/v1/auth",
+        # path="/"：API 在 /api/v1/* 下，path 必须覆盖全站 Cookie 才会被浏览器带上；
         # 生产 HTTPS 环境应为 True；本地开发保持 False 以免 Cookie 被浏览器拒绝
+        path="/",
         secure=os.environ.get("LUPIN_COOKIE_SECURE") == "1",
     )
 
 
 def _clear_refresh_cookie(response: Response) -> None:
-    response.delete_cookie(REFRESH_COOKIE, path="/api/v1/auth")
+    response.delete_cookie(REFRESH_COOKIE, path="/")
 
 
 def _issue_session(db: Session, response: Response, user: User) -> TokenOut:
