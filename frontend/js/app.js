@@ -3548,7 +3548,181 @@ function renderPublishDetail() {
   const authBtn = $("pub_auth_btn");
   if (authBtn) authBtn.addEventListener("click", () => setPublishAuth(r.id));
   box.querySelectorAll("[data-to]").forEach((b) => b.addEventListener("click", () => transitionPublish(r.id, b.dataset.to)));
+  if (r.status === "published" || r.status === "reviewed") renderReviewPanel(r.id);
 }
+
+// ============ V3.0 H：效果复盘（注入 v8 发布中心） ============
+
+const REV = { review: null, busy: false };
+const METRIC_FIELD_LABELS = [
+  ["plays", "播放量"], ["likes", "点赞"], ["comments", "评论"],
+  ["shares", "转发"], ["favorites", "收藏"], ["followers_gain", "粉丝增长"],
+];
+
+function reviewApi(path, opts) {
+  const q = "?org_id=" + encodeURIComponent(S.org.id);
+  const url = "/api/v1/review" + path + q;
+  const method = (opts && opts.method) || "GET";
+  const body = (opts && opts.body) || {};
+  if (method === "POST") return ApiClient.post(url, body);
+  if (method === "PATCH") return ApiClient.patch(url, body);
+  if (method === "DELETE") return ApiClient.del(url);
+  return ApiClient.get(url);
+}
+
+function revSourceLabel(s) { return s === "screenshot" ? "平台截图导入" : "人工录入"; }
+
+async function renderReviewPanel(recId) {
+  let box = $("rev_panel");
+  if (!box) {
+    const card = document.querySelector(".pub-detail");
+    if (!card) return;
+    box = document.createElement("div");
+    box.id = "rev_panel";
+    box.className = "rev-panel";
+    card.appendChild(box);
+  }
+  box.innerHTML = '<p class="muted">加载复盘数据…</p>';
+  try {
+    const r = V1(await reviewApi(`/records/${recId}/review`));
+    REV.review = r;
+  } catch (e) { REV.review = null; }
+  const r = REV.review;
+  if (!r) { box.innerHTML = '<p class="warn">复盘数据加载失败</p>'; return; }
+  const metricFields = METRIC_FIELD_LABELS.map(([k, l]) =>
+    `<label class="rev-field">${l}<input id="rev_m_${k}" class="input" type="number" min="0" placeholder="0"></label>`).join("");
+  const hist = (r.metrics || []).map((m) => {
+    const pairs = Object.entries(m.metrics || {}).map(([k, v]) => `${esc(k)}=${esc(String(v))}`).join("、");
+    const rng = (m.date_start || m.date_end) ? `${esc(m.date_start || "?")} ~ ${esc(m.date_end || "?")}` : "未标注时间范围";
+    return `<div class="rev-hist-item"><strong>${esc(revSourceLabel(m.source))}</strong>
+      <span class="muted small">${rng} · 录入于 ${esc((m.recorded_at || "").slice(0, 16).replace("T", " "))}</span>
+      <div>${pairs || "（无指标值）"}</div>${m.note ? `<div class="muted small">备注：${esc(m.note)}</div>` : ""}</div>`;
+  }).join("");
+  const sugs = (r.suggestions || []).map((s) => {
+    const st = { pending: "待处理", adopted: "已采纳", dismissed: "已忽略" }[s.status] || s.status;
+    return `<div class="rev-sug"><div class="row"><span class="pill">${st}</span>
+      <span class="muted small">${esc((s.created_at || "").slice(0, 16).replace("T", " "))}</span></div>
+      <div class="rev-sug-text">${esc(s.suggestion_text).replace(/\n/g, "<br>")}</div>
+      ${s.status === "pending" ? `<div class="row"><button class="btn sm" data-sug="${esc(s.id)}" data-dec="adopted">采纳</button>
+        <button class="btn sm" data-sug="${esc(s.id)}" data-dec="dismissed">忽略</button></div>` : ""}</div>`;
+  }).join("");
+  box.innerHTML = `
+    <hr><h4>效果复盘</h4>
+    <p class="muted small">所有数据均为人工录入，系统不编造任何指标；无数据时此处保持空白。</p>
+    <div class="rev-form">
+      <div class="row rev-grid">${metricFields}</div>
+      <div class="row">
+        <select id="rev_m_source" class="input"><option value="manual">人工录入</option><option value="screenshot">平台截图导入</option></select>
+        <input id="rev_m_ds" class="input" type="date" title="数据开始日期">
+        <input id="rev_m_de" class="input" type="date" title="数据结束日期">
+      </div>
+      <div class="row"><input id="rev_m_note" class="input" placeholder="备注（可选）" style="flex:1">
+        <button class="btn primary sm" id="rev_m_add">录入指标</button></div>
+    </div>
+    <h5>指标历史 ${r.has_data ? "" : '<span class="muted">（暂无数据）</span>'}</h5>
+    <div id="rev_hist">${hist || '<p class="muted">暂无数据：还没有录入任何效果指标。</p>'}</div>
+    <h5>复盘结论（人工）</h5>
+    <textarea id="rev_note" class="input" rows="3" placeholder="写下这次发布的复盘结论…">${esc(r.review_note || "")}</textarea>
+    <div class="row"><button class="btn sm" id="rev_note_btn">保存复盘结论</button>
+      <button class="btn sm" id="rev_suggest_btn">AI 给改进建议</button></div>
+    <div id="rev_sugs" style="margin-top:8px">${sugs || '<p class="muted small">暂无 AI 建议。建议仅供参考，采纳前请人工确认，不会自动修改任何已确认内容。</p>'}</div>`;
+  $("rev_m_add").addEventListener("click", () => addEffectMetric(recId));
+  $("rev_note_btn").addEventListener("click", () => saveReviewNote(recId));
+  $("rev_suggest_btn").addEventListener("click", () => requestReviewSuggest(recId));
+  box.querySelectorAll("[data-sug]").forEach((b) => b.addEventListener("click", () => decideSuggestion(recId, b.dataset.sug, b.dataset.dec)));
+}
+
+async function addEffectMetric(recId) {
+  const metrics = {};
+  METRIC_FIELD_LABELS.forEach(([k]) => {
+    const v = $("rev_m_" + k)?.value;
+    if (v !== "" && v !== undefined && v !== null) metrics[k] = Number(v);
+  });
+  if (!Object.keys(metrics).length) { toast("请至少填写一项指标"); return; }
+  try {
+    await reviewApi(`/records/${recId}/metrics`, { method: "POST", body: {
+      source: $("rev_m_source").value,
+      date_start: $("rev_m_ds").value || null,
+      date_end: $("rev_m_de").value || null,
+      metrics, note: $("rev_m_note").value || "",
+    } });
+    toast("指标已录入");
+    renderReviewPanel(recId);
+  } catch (e) { toast("录入失败：" + (e.message || e)); }
+}
+
+async function saveReviewNote(recId) {
+  try {
+    await reviewApi(`/records/${recId}/review-note`, { method: "PATCH", body: { review_note: $("rev_note").value } });
+    toast("复盘结论已保存");
+  } catch (e) { toast("保存失败：" + (e.message || e)); }
+}
+
+async function requestReviewSuggest(recId) {
+  const btn = $("rev_suggest_btn");
+  if (btn) { btn.disabled = true; btn.textContent = "生成中…"; }
+  try {
+    const r = V1(await reviewApi(`/records/${recId}/suggest`, { method: "POST" }));
+    toast("已生成改进建议（仅供参考，不会自动修改任何内容）");
+    renderReviewPanel(recId);
+  } catch (e) { toast("AI 建议暂不可用：" + (e.message || e)); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = "AI 给改进建议"; } }
+}
+
+async function decideSuggestion(recId, sugId, dec) {
+  try {
+    await reviewApi(`/suggestions/${sugId}/decision`, { method: "POST", body: { decision: dec } });
+    toast(dec === "adopted" ? "已标记采纳" : "已忽略");
+    renderReviewPanel(recId);
+  } catch (e) { toast("操作失败：" + (e.message || e)); }
+}
+
+// 效果看板（发布中心列表顶部入口）
+async function renderReviewDashboard() {
+  const sec = $("v8");
+  if (!sec) return;
+  let box = $("rev_dash");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "rev_dash";
+    box.className = "card";
+    const head = sec.querySelector(".page-head");
+    if (head) head.after(box); else sec.prepend(box);
+  }
+  box.innerHTML = '<p class="muted">加载效果看板…</p>';
+  try {
+    const d = V1(await reviewApi("/dashboard"));
+    const items = (d.records || []).map((it) => {
+      const latest = it.latest;
+      const pairs = latest ? Object.entries(latest.metrics || {}).map(([k, v]) => `${esc(k)}=${esc(String(v))}`).join("、") : "";
+      return `<div class="rev-dash-item"><strong>${esc(it.title)}</strong>
+        <span class="pill">${esc(it.platform || "")}</span>
+        <span class="pill">${esc(it.status === "reviewed" ? "已复盘" : "已发布")}</span>
+        <div class="muted small">共录入 ${it.batches} 批${it.review_note ? " · 有复盘结论" : ""}</div>
+        ${pairs ? `<div>最新：${pairs}</div>` : '<div class="muted">暂无数据</div>'}</div>`;
+    }).join("");
+    box.innerHTML = `<h4>效果看板</h4>
+      ${d.has_data ? `<div class="rev-dash-list">${items}</div>`
+        : '<p class="muted">暂无数据：还没有录入任何效果指标，打开一条已发布记录即可人工录入。</p>'}
+      <div class="row"><button class="btn sm" id="rev_dash_hide">收起</button></div>`;
+    $("rev_dash_hide").addEventListener("click", () => { box.remove(); });
+  } catch (e) { box.innerHTML = '<p class="warn">看板加载失败</p>'; }
+}
+
+function initReviewDashboardBtn() {
+  if (document.querySelector("#rev_dash_btn")) return;
+  const sec = $("v8");
+  if (!sec) return;
+  const row = sec.querySelector(".page-head + .row") || sec.querySelector(".row");
+  if (!row) return;
+  const b = document.createElement("button");
+  b.className = "btn"; b.id = "rev_dash_btn"; b.textContent = "效果看板";
+  b.addEventListener("click", renderReviewDashboard);
+  row.appendChild(b);
+}
+
+const _origRenderPublishList = renderPublishList;
+renderPublishList = function () { _origRenderPublishList(); initReviewDashboardBtn(); };
 
 async function runPublishCheck(id) {
   try {
