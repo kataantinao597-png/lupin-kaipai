@@ -61,6 +61,8 @@ const S = {
   activeWork: null,   // {id,title,version,status,...}
   data: null,         // activeWork.data：{product,storyboard,shoot_state,feasibility,risk,ideas,direction,poster,ideasFactsHash,sbFactsHash,shoot_note}
   facts: [],
+  products: [],           // V3.0 B-3：产品档案列表（组织级）
+  selectedProductId: "",  // V3.0 B-3：当前选中的产品档案 id（空=不筛选）
   workFilter: "all",
   authMode: "login",
   ideaSel: -1,
@@ -92,7 +94,7 @@ window.go = go;
 
 function onEnter(v) {
   if (v === "v1") renderWorkbench();
-  else if (v === "v2") { fillProductForm(); loadFacts(); }
+  else if (v === "v2") { fillProductForm(); loadProducts(); } // V3.0 B-3：先加载产品档案，加载完再按筛选加载事实
   else if (v === "v3") { renderStepper(); renderIdeas(); renderShots(); updateRiskDirtyBadge(); } // V2.1：进入分镜视图刷新标脏徽章
   else if (v === "v4") { renderPoster(); }
   else if (v === "v5") { renderShoot(); loadAssets(); fillNote(); }
@@ -420,8 +422,11 @@ function factsHash() {
 
 async function loadFacts() {
   if (!S.org) return;
+  let url = "/api/v1/facts?org_id=" + encodeURIComponent(S.org.id);
+  // V3.0 B-3：选中产品档案时按产品筛选；未选中则与之前一致（不传参）
+  if (S.selectedProductId) url += "&product_id=" + encodeURIComponent(S.selectedProductId);
   try {
-    S.facts = V1(await ApiClient.get("/api/v1/facts?org_id=" + encodeURIComponent(S.org.id))) || [];
+    S.facts = V1(await ApiClient.get(url)) || [];
   } catch (e) {
     $("fact_list").innerHTML = `<p style="font-size:12.5px;color:var(--red)">加载失败：${esc(e.message || "网络错误")}</p>`;
     return;
@@ -504,10 +509,13 @@ async function saveFact() {
   const content = $("f_content").value.trim();
   if (!content) { errText("fact_err", "请填写事实内容"); return; }
   try {
-    await ApiClient.post("/api/v1/facts", {
+    const body = {
       org_id: S.org.id, content, category: $("f_category").value,
       source_type: "human_statement", source_ref: $("f_source").value.trim(),
-    });
+    };
+    // V3.0 B-3：选中产品档案时新建事实默认带入 product_id；未选中则与之前一致
+    if (S.selectedProductId) body.product_id = S.selectedProductId;
+    await ApiClient.post("/api/v1/facts", body);
     // 新建默认为草稿；若勾选允许用于生成，提交审核时再确认
     $("fact_editor").style.display = "none";
     $("f_content").value = ""; $("f_source").value = "";
@@ -515,6 +523,128 @@ async function saveFact() {
     toast("已添加（草稿），提交审核并确认后可用于 AI 生成");
   } catch (e) {
     errText("fact_err", e.message || "保存失败");
+  }
+}
+
+/* ---------- 产品档案（V3.0 B-3：产品知识中心前端选择器） ---------- */
+// 增量改造：只在 v2 视图加选择器，不改 facts 逻辑。未选中产品时行为与之前一致。
+
+function ensureProductCard() {
+  if ($("product_card")) return;
+  const factsCard = $("fact_summary") && $("fact_summary").closest(".card");
+  const card = document.createElement("div");
+  card.className = "card panel"; card.id = "product_card";
+  card.innerHTML = `<h3>产品档案 <span style="font-size:11.5px;color:var(--muted);font-weight:400" id="product_count"></span></h3>
+    <div class="form-stack">
+      <label class="f">选择产品档案
+        <select id="product_select"><option value="">全部事实（不筛选）</option></select>
+      </label>
+      <div id="product_info" style="font-size:12.5px;color:var(--muted);line-height:1.7"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:12px">
+      <button class="btn ghost sm" id="btn_new_product" style="flex:1;justify-content:center">＋ 新建产品档案</button>
+    </div>`;
+  if (factsCard && factsCard.parentNode) factsCard.parentNode.insertBefore(card, factsCard);
+  $("product_select").addEventListener("change", () => {
+    S.selectedProductId = $("product_select").value;
+    renderProductInfo();
+    loadFacts(); // 选中后 facts 自动按 ?product_id= 筛选
+  });
+  $("btn_new_product").addEventListener("click", openProductModal);
+}
+
+async function loadProducts() {
+  ensureProductCard();
+  if (!S.org) { loadFacts(); return; }
+  try {
+    S.products = V1(await ApiClient.get("/api/v1/products?org_id=" + encodeURIComponent(S.org.id))) || [];
+  } catch (e) {
+    S.products = [];
+    const sel = $("product_select");
+    if (sel) { sel.disabled = true; }
+    const info = $("product_info");
+    if (info) info.innerHTML = `<span style="color:var(--red)">产品档案加载失败：${esc(e.message || "网络错误")}（可能缺少 product:read 权限）</span>`;
+    loadFacts(); // 降级：不筛选，继续加载全部事实
+    return;
+  }
+  const sel = $("product_select");
+  sel.disabled = false;
+  const keep = S.selectedProductId && S.products.some((p) => p.id === S.selectedProductId) ? S.selectedProductId : "";
+  S.selectedProductId = keep;
+  sel.innerHTML = `<option value="">全部事实（不筛选）</option>` + S.products.map((p) =>
+    `<option value="${esc(p.id)}"${p.id === keep ? " selected" : ""}>${esc(p.name)}（${esc(p.code)}）</option>`).join("");
+  $("product_count").textContent = S.products.length ? `共 ${S.products.length} 个` : "";
+  renderProductInfo();
+  loadFacts();
+}
+
+function renderProductInfo() {
+  const info = $("product_info");
+  if (!info) return;
+  const p = S.products.find((x) => x.id === S.selectedProductId);
+  if (!p) { info.textContent = S.selectedProductId ? "" : "不选则显示该组织全部事实；选中后事实列表只显示该产品，新建事实自动归属该产品。"; return; }
+  const pts = (p.selling_points || []).slice(0, 3).join("、");
+  info.innerHTML = `品类：${esc(p.category || "—")}　产地：${esc(p.origin || "—")}${p.brand_tone ? `<br>品牌语气：${esc(p.brand_tone)}` : ""}${pts ? `<br>核心卖点：${esc(pts)}${(p.selling_points || []).length > 3 ? "…" : ""}` : ""}`;
+}
+
+function ensureProductModal() {
+  if ($("product_modal")) return;
+  const m = document.createElement("div");
+  m.className = "modal-mask"; m.id = "product_modal";
+  m.innerHTML = `<div class="modal" style="max-width:560px;max-height:88vh;overflow:auto"><h3>新建产品档案</h3>
+    <div class="form-stack">
+      <label class="f">产品编号 <span class="req">*</span><input id="np_code" placeholder="如：cherry-2026（组织内唯一，创建后不可改）"></label>
+      <label class="f">产品名称 <span class="req">*</span><input id="np_name" placeholder="如：烟台大樱桃"></label>
+      <label class="f">品类<input id="np_category" placeholder="如：水果"></label>
+      <label class="f">产地<input id="np_origin" placeholder="如：山东烟台"></label>
+      <label class="f">品牌资料<textarea id="np_brand_profile" rows="2" placeholder="品牌介绍、产地故事等"></textarea></label>
+      <label class="f">品牌语气<input id="np_brand_tone" placeholder="如：实在、唠嗑、不端着"></label>
+      <label class="f">产品卖点（每行一条）<textarea id="np_selling_points" rows="3" placeholder="果大汁多&#10;当季现摘"></textarea></label>
+      <label class="f">宣传限制<textarea id="np_ad_restrictions" rows="2" placeholder="如：不得宣称有机认证"></textarea></label>
+      <label class="f">禁止擅自扩展的信息<textarea id="np_no_expand" rows="2" placeholder="如：销量、排名、功效"></textarea></label>
+    </div>
+    <div class="err-text" id="product_archive_err"></div>
+    <div style="display:flex;gap:10px;margin-top:16px">
+      <button class="btn primary sm" id="btn_save_product_archive">保存</button>
+      <button class="btn ghost sm" id="btn_cancel_product" style="margin-left:auto">取消</button>
+    </div></div>`;
+  document.body.appendChild(m);
+  m.addEventListener("click", (e) => { if (e.target === m || e.target.id === "btn_cancel_product") m.classList.remove("show"); });
+  $("btn_save_product_archive").addEventListener("click", saveProductArchive);
+}
+
+function openProductModal() {
+  if (!S.org) { toast("请先选择组织"); return; }
+  ensureProductModal();
+  ["np_code", "np_name", "np_category", "np_origin", "np_brand_profile", "np_brand_tone", "np_selling_points", "np_ad_restrictions", "np_no_expand"].forEach((id) => { $(id).value = ""; });
+  errText("product_archive_err", "");
+  $("product_modal").classList.add("show");
+}
+
+async function saveProductArchive() {
+  const code = $("np_code").value.trim();
+  const name = $("np_name").value.trim();
+  if (!code || !name) { errText("product_archive_err", "产品编号和产品名称必填"); return; }
+  const selling_points = $("np_selling_points").value.split("\n").map((s) => s.trim()).filter(Boolean);
+  try {
+    const created = V1(await ApiClient.post("/api/v1/products", {
+      org_id: S.org.id, code, name,
+      category: $("np_category").value.trim(), origin: $("np_origin").value.trim(),
+      brand_profile: $("np_brand_profile").value.trim(), brand_tone: $("np_brand_tone").value.trim(),
+      selling_points,
+      ad_restrictions: $("np_ad_restrictions").value.trim(), no_expand_claims: $("np_no_expand").value.trim(),
+    }));
+    $("product_modal").classList.remove("show");
+    await loadProducts();
+    if (created && created.id) { // 新建成功后自动选中
+      S.selectedProductId = created.id;
+      $("product_select").value = created.id;
+      renderProductInfo();
+      loadFacts();
+    }
+    toast("产品档案已创建");
+  } catch (e) {
+    errText("product_archive_err", e.message || "保存失败");
   }
 }
 
