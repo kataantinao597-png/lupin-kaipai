@@ -76,7 +76,7 @@ function blankData() {
 }
 
 /* ---------- 路由（含登录守卫） ---------- */
-const NEED_AUTH = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"];
+const NEED_AUTH = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9"];
 function loggedIn() { return !!(AuthClient && AuthClient.isLoggedIn()); }
 
 function go(v) {
@@ -103,6 +103,7 @@ function onEnter(v) {
   else if (v === "v6") { renderDeliveryTitles(); loadTimeline(); renderFinalArchive(); }
   else if (v === "v7") { renderCopyOpt(); }
   else if (v === "v8") { renderPublishCenter(); }
+  else if (v === "v9") { renderAssetLibrary(); }
 }
 
 /* ---------- 认证 ---------- */
@@ -2337,6 +2338,7 @@ function bindAll() {
 initCopyOptView(); // V3.0 D：注入文案优化器导航与视图（零 HTML 改动）
 initPlanSection(); // V3.0 C：注入内容策划面板（零 HTML 改动）
 initPublishView(); // V3.0 F：注入发布中心导航与视图（零 HTML 改动）
+initLibView(); // V3.0 G：注入素材库导航与视图（零 HTML 改动）
 document.querySelectorAll(".nav-item[data-v]").forEach((b) => b.addEventListener("click", () => go(b.dataset.v)));
 document.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => go(b.dataset.goto)));
 document.querySelectorAll("[data-todo]").forEach((b) => b.addEventListener("click", () => todo(b.dataset.todo)));
@@ -3619,4 +3621,187 @@ async function downloadPublishPackage(id) {
 }
 
 document.addEventListener("DOMContentLoaded", init);
+/* ================= V3.0 G：跨项目素材库（独立 v9 视图，零 HTML 改动） ================= */
+const LIB = { items: [], works: [], destWorkId: "", q: "", mime: "", workFilter: "", busy: false };
+
+function initLibView() {
+  if (!document.querySelector('.nav-item[data-v="v9"]')) {
+    const navV8 = document.querySelector('.nav-item[data-v="v8"]');
+    const b = document.createElement("button");
+    b.className = "nav-item"; b.dataset.v = "v9";
+    b.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 7h3l2-2h6l2 2h3a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V8a1 1 0 011-1z"/></svg>素材库';
+    b.addEventListener("click", () => go("v9"));
+    if (navV8) navV8.after(b); else document.querySelector(".nav")?.appendChild(b);
+  }
+  if (!$("v9")) {
+    const anchor = $("v8") || $("v7");
+    if (anchor) {
+      const s = document.createElement("section");
+      s.className = "view"; s.id = "v9";
+      anchor.after(s);
+    }
+  }
+}
+
+function libApi(path, opts) {
+  const sep = path.includes("?") ? "&" : "?";
+  const url = "/api/v1/asset-library" + path + sep + "org_id=" + encodeURIComponent(S.org.id);
+  const method = (opts && opts.method) || "GET";
+  const body = (opts && opts.body) || {};
+  if (method === "POST") return ApiClient.post(url, body);
+  if (method === "DELETE") return ApiClient.del(url);
+  return ApiClient.get(url);
+}
+
+function libFmtSize(n) {
+  n = n || 0;
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1048576).toFixed(1) + " MB";
+}
+
+function libMimeLabel(m) {
+  if ((m || "").startsWith("image/")) return "图片";
+  if ((m || "").startsWith("video/")) return "视频";
+  if ((m || "").startsWith("audio/")) return "音频";
+  return "其他";
+}
+
+async function renderAssetLibrary() {
+  const sec = $("v9");
+  if (!sec) return;
+  if (!S.org) { sec.innerHTML = '<div class="page-head"><h2>素材库</h2><p class="muted">请先登录并选择组织</p></div>'; return; }
+  initLibView();
+  try { LIB.works = V1(await ApiClient.get("/api/v1/works?org_id=" + encodeURIComponent(S.org.id))) || []; }
+  catch (e) { LIB.works = []; }
+  if (!LIB.destWorkId && S.activeWork && S.activeWork.id) LIB.destWorkId = S.activeWork.id;
+  await doLibSearch(true);
+  renderLibView();
+}
+
+async function doLibSearch(silent) {
+  if (!S.org) return;
+  LIB.busy = true; if (!silent) renderLibView();
+  try {
+    let url = "/search?";
+    const parts = [];
+    if (LIB.q) parts.push("q=" + encodeURIComponent(LIB.q));
+    if (LIB.mime) parts.push("mime_type=" + encodeURIComponent(LIB.mime));
+    if (LIB.workFilter) parts.push("work_id=" + encodeURIComponent(LIB.workFilter));
+    url += parts.join("&");
+    const r = await libApi(url);
+    LIB.items = (V1(r) && V1(r).items) || [];
+  } catch (e) { LIB.items = []; }
+  LIB.busy = false;
+  renderLibView();
+  // 图片卡片懒加载缩略图（签名下载 URL）
+  document.querySelectorAll("#v9 .lib-thumb[data-aid]").forEach(async (el) => {
+    try {
+      const d = V1(await ApiClient.get("/api/v1/assets/" + el.dataset.aid + "/download?org_id=" + encodeURIComponent(S.org.id)));
+      if (d && d.url) { const img = document.createElement("img"); img.src = d.url; img.alt = ""; el.replaceChildren(img); }
+    } catch (e) { /* 无权/无文件时保留类型图标 */ }
+  });
+}
+
+function renderLibView() {
+  const sec = $("v9");
+  if (!sec) return;
+  const workOpts = ['<option value="">全部项目</option>'].concat(
+    LIB.works.map((w) => `<option value="${esc(w.id)}"${LIB.workFilter === w.id ? " selected" : ""}>${esc(w.title || "未命名")}</option>`)).join("");
+  const destOpts = ['<option value="">— 请选择目标项目 —</option>'].concat(
+    LIB.works.map((w) => `<option value="${esc(w.id)}"${LIB.destWorkId === w.id ? " selected" : ""}>${esc(w.title || "未命名")}</option>`)).join("");
+  const mimeOpts = ["", "image", "video", "audio", "other"].map((m) =>
+    `<option value="${m}"${LIB.mime === m ? " selected" : ""}>${m === "" ? "全部类型" : libMimeLabel(m)}</option>`).join("");
+  const cards = LIB.items.map((a) => `
+    <div class="card lib-card" data-id="${esc(a.id)}">
+      ${a.mime && a.mime.startsWith("image/") ? `<div class="lib-thumb" data-aid="${esc(a.id)}"><span class="lib-ic">🖼</span></div>`
+        : `<div class="lib-thumb lib-ic">${a.mime && a.mime.startsWith("video/") ? "🎬" : a.mime && a.mime.startsWith("audio/") ? "🎵" : "📄"}</div>`}
+      <div class="lib-body">
+        <strong class="lib-name" title="${esc(a.filename)}">${esc(a.filename)}</strong>
+        <div class="muted small">${libMimeLabel(a.mime)} · ${libFmtSize(a.size)} · ${esc((a.created_at || "").slice(0, 16).replace("T", " "))}</div>
+        <div class="muted small">所属：${esc(a.work_title || "未知项目")}</div>
+        <div class="small">${a.ref_count > 0 ? `<span class="pill blue">被 ${a.ref_count} 个项目引用</span>` : `<span class="pill">未被引用</span>`}</div>
+        <div class="lib-actions">
+          <button class="btn sm" data-act="detail">详情</button>
+          <button class="btn sm primary" data-act="quote">引用到当前项目</button>
+        </div>
+      </div>
+    </div>`).join("");
+  sec.innerHTML = `
+    <div class="page-head"><h2>素材库</h2>
+      <p class="muted">跨项目检索与复用。引用只记关系、不复制文件；删引用 ≠ 删实体——仍被引用的文件不许删除。</p></div>
+    <div class="toolbar">
+      <input id="lib-q" class="input" placeholder="按素材名称搜索…" value="${esc(LIB.q)}" />
+      <select id="lib-mime" class="input">${mimeOpts}</select>
+      <select id="lib-work" class="input">${workOpts}</select>
+      <button class="btn" id="lib-search">搜索</button>
+    </div>
+    <div class="toolbar">
+      <span class="muted small">引用到：</span>
+      <select id="lib-dest" class="input">${destOpts}</select>
+      <span class="muted small">（默认为当前打开的项目）</span>
+    </div>
+    <div class="lib-grid">${LIB.busy ? '<p class="muted">检索中…</p>' : (cards || '<p class="muted">暂无素材。可在「拍摄执行」视图上传。</p>')}</div>`;
+  $("lib-q").addEventListener("input", (e) => { LIB.q = e.target.value; });
+  $("lib-q").addEventListener("keydown", (e) => { if (e.key === "Enter") doLibSearch(); });
+  $("lib-mime").addEventListener("change", (e) => { LIB.mime = e.target.value; doLibSearch(); });
+  $("lib-work").addEventListener("change", (e) => { LIB.workFilter = e.target.value; doLibSearch(); });
+  $("lib-search").addEventListener("click", () => doLibSearch());
+  $("lib-dest").addEventListener("change", (e) => { LIB.destWorkId = e.target.value; });
+  sec.querySelectorAll(".lib-card").forEach((el) => {
+    el.querySelector('[data-act="detail"]').addEventListener("click", () => showLibDetail(el.dataset.id));
+    el.querySelector('[data-act="quote"]').addEventListener("click", () => libQuote(el.dataset.id));
+  });
+}
+
+async function libQuote(assetId) {
+  if (!LIB.destWorkId) { toast("请先选择要引用到的目标项目"); return; }
+  try {
+    await libApi("/refs", { method: "POST", body: { org_id: S.org.id, asset_id: assetId, dest_work_id: LIB.destWorkId } });
+    toast("已引用到目标项目");
+    await doLibSearch();
+  } catch (e) { toast("引用失败：" + (e.message || e)); }
+}
+
+async function showLibDetail(assetId) {
+  let d;
+  try { d = V1(await libApi("/assets/" + encodeURIComponent(assetId))); }
+  catch (e) { toast("加载失败：" + (e.message || e)); return; }
+  const rows = (d.refs || []).map((r) => `
+    <div class="lib-ref-row">
+      <span>引用到「${esc(r.dest_work_title || r.dest_work_id)}」</span>
+      <span class="muted small">${esc((r.created_at || "").slice(0, 16).replace("T", " "))}</span>
+      <button class="btn sm danger" data-ref="${esc(r.id)}">解除引用</button>
+    </div>`).join("");
+  let m = $("lib_detail_modal");
+  if (!m) {
+    m = document.createElement("div");
+    m.className = "modal-mask"; m.id = "lib_detail_modal";
+    m.innerHTML = `<div class="modal" style="max-width:640px"><h3>素材详情</h3>
+      <div id="lib_detail_body" style="max-height:60vh;overflow:auto"></div>
+      <div style="display:flex;margin-top:16px"><button class="btn ghost sm" id="lib_detail_close" style="margin-left:auto">关闭</button></div></div>`;
+    document.body.appendChild(m);
+    m.addEventListener("click", (e) => { if (e.target === m || e.target.id === "lib_detail_close") m.classList.remove("show"); });
+  }
+  $("lib_detail_body").innerHTML = `
+    <p><strong>${esc(d.filename)}</strong></p>
+    <p class="muted small">${libMimeLabel(d.mime)} · ${libFmtSize(d.size)} · 上传 ${esc((d.created_at || "").slice(0, 16).replace("T", " "))}</p>
+    <p>来源项目：<strong>${esc(d.source_work_title || d.source_work_id)}</strong></p>
+    <h4>引用关系（${d.ref_count} 个项目在用）</h4>
+    <div class="lib-refs">${rows || '<p class="muted">暂无其他项目引用</p>'}</div>
+    <p class="muted small">提示：仍被引用的文件不能直接删除；解除全部引用后才能删除实体。</p>`;
+  m.classList.add("show");
+  m.querySelectorAll(".lib-ref-row [data-ref]").forEach((b) => {
+    b.addEventListener("click", async () => {
+      if (!confirm("解除该引用？只删引用关系，不删文件实体。")) return;
+      try {
+        await libApi("/refs/" + encodeURIComponent(b.dataset.ref), { method: "DELETE" });
+        toast("引用已解除");
+        m.classList.remove("show");
+        showLibDetail(assetId); doLibSearch();
+      } catch (e) { toast("解除失败：" + (e.message || e)); }
+    });
+  });
+}
+
 })();

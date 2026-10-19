@@ -314,9 +314,22 @@ def delete_asset(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """删除资产：清存储文件 + 状态置 deleted（需 asset:delete）。"""
+    """删除资产：清存储文件 + 状态置 deleted（需 asset:delete）。
+
+    V3.0 G：仍被任何引用关系指向的资产实体不许删（删引用 ≠ 删实体），
+    先查 asset_refs 引用计数：有引用 → 409/ASSET_HAS_REFS 并提示引用数；
+    解除全部引用后才能删除实体。现有删除链路其余部分不改。
+    """
     _require_asset_perm(db, user, org_id, "asset:delete", "删除媒体资产")
     asset = _get_asset(db, asset_id, org_id)
+    # V3.0 G：引用安全拦截（加法检查，不重写既有删除链路）
+    from ...api.v1.asset_library import ref_count_of  # noqa: E402
+    n_refs = ref_count_of(db, org_id, asset_id)
+    if n_refs:
+        raise BusinessError(
+            f"该文件还被 {n_refs} 个项目引用，解除全部引用后才能删除实体",
+            code=error_codes.ASSET_HAS_REFS, http_status=409,
+            details={"ref_count": n_refs})
     try:
         get_storage().delete(asset.key)
     except Exception:  # noqa: BLE001 — 文件删失败不阻断状态标记

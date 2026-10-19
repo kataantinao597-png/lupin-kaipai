@@ -1003,6 +1003,39 @@ class Asset(Base):
                         onupdate=_now)
 
 
+class AssetRef(Base):
+    """V3.0 G：跨项目素材引用关系（只记引用，不复制文件）。
+
+    项目 B 引用项目 A 的素材：记一条 (asset_id, dest_work_id)，
+    文件实体仍属于项目 A。删引用 ≠ 删实体；仍被引用的资产实体
+    DELETE 由 API 层拦截（409/ASSET_HAS_REFS），此处只定义关系。
+    """
+    __tablename__ = "asset_refs"
+    __table_args__ = (
+        Index("ix_ref_org", "org_id"),
+        Index("ix_ref_asset", "asset_id"),
+        Index("ix_ref_dest", "dest_work_id"),
+        Index("ix_ref_org_asset", "org_id", "asset_id"),
+        UniqueConstraint("org_id", "asset_id", "dest_work_id",
+                         name="uq_ref_org_asset_dest"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    # 086 同理：组织删除先显式处理资产，RESTRICT 防误删连带
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="RESTRICT"),
+                    nullable=False)
+    asset_id = Column(String(32), ForeignKey("assets.id", ondelete="CASCADE"),
+                      nullable=False)
+    # 来源项目（引用创建时的快照）：来源项目被删时置空，引用关系保留
+    source_work_id = Column(String(32), ForeignKey("works.id", ondelete="SET NULL"),
+                            nullable=True)
+    # 目标项目（被引用的项目）：目标项目被删时引用自动清
+    dest_work_id = Column(String(32), ForeignKey("works.id", ondelete="CASCADE"),
+                          nullable=False)
+    created_by = Column(String(64), nullable=False, default="")  # 逻辑关联 users.id
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
 class UploadIntent(Base):
     """S8.1：一次性上传授权。后端签发 token，前端凭 token 上传文件。
 

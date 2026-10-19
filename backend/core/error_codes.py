@@ -57,6 +57,9 @@ PLATFORM_NOT_SUPPORTED = 3013  # 不支持的目标平台（V3.0 E）
 PUBLISH_RECORD_NOT_FOUND = 3014  # 发布记录不存在（V3.0 F）
 PUBLISH_INVALID_TRANSITION = 3015  # 非法发布状态转换（V3.0 F）
 PUBLISH_CHECK_BLOCKED = 3016  # 发布前检查未通过，阻止流转（V3.0 F）
+ASSET_REF_NOT_FOUND = 3017  # 素材引用不存在（V3.0 G）
+ASSET_REF_CONFLICT = 3018  # 同一项目已引用过该素材（V3.0 G）
+ASSET_HAS_REFS = 3019  # 仍有项目引用该素材，禁止删除实体（V3.0 G）
 
 # ---- 4xxx 组织与权限 ----
 PERMISSION_DENIED = 4001
