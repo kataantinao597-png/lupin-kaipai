@@ -202,3 +202,17 @@ class TestColloquialAPIFacts:
             headers={"X-Org-Id": "not-exist-org",
                      "Idempotency-Key": "cq-k3"})
         assert r.status_code == 404
+
+
+def test_v2_prompt_keeps_confirmed_selling_points():
+    """V3.1 修订（2026-10-19 真实走查）：有事实支撑的原文卖点必须保留，一个不能少；
+    程序化写法：先盘点、再自检，缺一条视为改写失败。"""
+    from backend.ai.prompts.colloquial_v2 import build_colloquial_messages
+    msgs = build_colloquial_messages(
+        "咱这樱桃果大核小，吃起来特别甜。",
+        "烟台大樱桃",
+        [{"id": "f1", "text": "特点：果大核小"}])
+    prompt = msgs[0]["content"]
+    assert "一个不能少——这是硬要求" in prompt
+    assert "输出前自检" in prompt
+    assert "视为改写失败" in prompt
