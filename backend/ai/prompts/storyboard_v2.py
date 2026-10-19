@@ -87,7 +87,7 @@ def build_storyboard_v2_messages(
   - usable_duration_seconds: 预计可用素材时长（秒，数字）
   - final_duration_seconds: 成片使用时长（秒，数字；各镜头之和必须等于目标总时长，误差≤2秒）
   - shot_purpose: 镜头目的/叙事作用（一句话：这镜要完成什么表达任务）
-  - prerequisites: 前置条件及所需素材（拍这镜之前必须备好的；涉及未确认资源要明确标注）
+  - prerequisites: 前置条件数组（拍这镜之前必须备好的；涉及未确认资源要明确标注）
   - shoot_steps: 按顺序的具体拍摄步骤（字符串数组，每一步都是可执行的动作，
     如"1. 把手机架在支架上，镜头与果盘平齐"；至少3步）
   - phone_setup: 手机摆放方式、主体在画面中的位置、建议拍摄距离、光线方向

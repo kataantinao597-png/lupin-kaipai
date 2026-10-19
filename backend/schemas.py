@@ -43,7 +43,7 @@ class Shot(BaseModel):
 
     # ---------- v2 新增：可执行指导 ----------
     shot_purpose: str = Field(default="", description="镜头目的/叙事作用（这镜要完成什么表达任务）")
-    prerequisites: str = Field(default="", description="前置条件及所需素材（拍这镜之前必须备好的）")
+    prerequisites: List[str] = Field(default_factory=list, description="前置条件及所需素材（拍这镜之前必须备好的）")
     shoot_steps: List[str] = Field(default_factory=list,
         description="按顺序的具体拍摄步骤（每一步都是可执行的动作）")
     phone_setup: str = Field(default="",

@@ -185,7 +185,7 @@ def build_doc(data: dict) -> Document:
         _label_para(doc, "景别/运镜",
                     ("%s / %s" % (_g(s, "shot_type"), _g(s, "camera_movement"))).strip(" /"))
         _label_para(doc, "手机摆放与光线", _g(s, "phone_setup"))
-        _label_para(doc, "前置条件", _g(s, "prerequisites"))
+        _label_para(doc, "前置条件", "；".join(_g(s, "prerequisites") or []) if isinstance(_g(s, "prerequisites"), list) else _g(s, "prerequisites"))
         _label_para(doc, "画面", _g(s, "scene_description"))
         _label_para(doc, "拍摄动作", _g(s, "shooting_action"))
 
