@@ -97,7 +97,7 @@ window.go = go;
 function onEnter(v) {
   if (v === "v1") renderWorkbench();
   else if (v === "v2") { fillProductForm(); loadProducts(); } // V3.0 B-3：先加载产品档案，加载完再按筛选加载事实
-  else if (v === "v3") { renderStepper(); renderIdeas(); renderShots(); updateRiskDirtyBadge(); ensureGenProductSelect(); } // V2.1：进入分镜视图刷新标脏徽章；V3.0 B-4：v3 产品选择器
+  else if (v === "v3") { renderStepper(); renderIdeas(); renderShots(); updateRiskDirtyBadge(); ensureGenProductSelect(); renderPlanSection(); } // V2.1：进入分镜视图刷新标脏徽章；V3.0 B-4：v3 产品选择器；V3.0 C：内容策划面板
   else if (v === "v4") { renderPoster(); }
   else if (v === "v5") { renderShoot(); loadAssets(); fillNote(); }
   else if (v === "v6") { renderDeliveryTitles(); loadTimeline(); renderFinalArchive(); }
@@ -2334,6 +2334,7 @@ function bindTodo5() {
 /* ================= 事件绑定 ================= */
 function bindAll() {
 initCopyOptView(); // V3.0 D：注入文案优化器导航与视图（零 HTML 改动）
+initPlanSection(); // V3.0 C：注入内容策划面板（零 HTML 改动）
 document.querySelectorAll(".nav-item[data-v]").forEach((b) => b.addEventListener("click", () => go(b.dataset.v)));
 document.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => go(b.dataset.goto)));
 document.querySelectorAll("[data-todo]").forEach((b) => b.addEventListener("click", () => todo(b.dataset.todo)));
@@ -2886,6 +2887,257 @@ function renderCopyCompare() {
   if (ok) ok.addEventListener("click", () => confirmCopyVersion(v.id));
 }
 
+
+
+/* ================= V3.0 C：内容策划工作台（v3 创意页扩展，零 HTML 改动） ================= */
+const PLAN_GOALS = [["brand", "品牌宣传"], ["sales", "商品销售"], ["intro", "产品介绍"], ["record", "产地记录"]];
+const PLAN = { taskId: null, task: null, candidates: [], selectedIndex: null, busy: false, feas: null };
+
+function planGoalLabel(g) { const f = PLAN_GOALS.find((x) => x[0] === g); return f ? f[1] : g; }
+
+/** 注入内容策划面板到 v3 视图顶部（在创意方案卡片之前）。 */
+function initPlanSection() {
+  if ($("plan_panel") || !$("v3")) return;
+  const v3 = $("v3");
+  const anchor = v3.querySelector(".card.panel");
+  const panel = document.createElement("div");
+  panel.className = "card panel";
+  panel.id = "plan_panel";
+  panel.style.marginBottom = "18px";
+  if (anchor) v3.insertBefore(panel, anchor);
+  else v3.prepend(panel);
+}
+
+function renderPlanSection() {
+  const host = $("plan_panel");
+  if (!host) return;
+  if (!S.org) { host.innerHTML = "<h3>内容策划</h3><p style='font-size:13px;color:var(--muted)'>请先登录并选择组织</p>"; return; }
+  const t = PLAN.task || {};
+  const goal = t.content_goal || PLAN._goal || "brand";
+  const prods = S.products || [];
+  const pid = t.product_id || "";
+  host.innerHTML = `
+    <h3>内容策划 <span class="pill gray">${PLAN.taskId ? "任务：" + esc(t.title || "") : "从营销目标到创意方向"}</span></h3>
+    <p style="font-size:12px;color:var(--muted);margin:6px 0 12px">先定目标、受众和实拍条件 → 生成 3-5 个候选创意 → 选中后关联拍摄项目，继续走分镜/实拍流程（不重复生成执行单）</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      ${PLAN_GOALS.map((g) => `<button class="pill ${g[0] === goal ? "blue" : ""}" data-plan-goal="${g[0]}" style="cursor:pointer">${g[1]}</button>`).join("")}
+    </div>
+    <div class="form-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <label class="f">目标受众<input id="plan_audience" class="input sm" value="${esc(t.audience || "")}" placeholder="如：25-40 岁城市女性"></label>
+      <label class="f">内容目的<input id="plan_purpose" class="input sm" value="${esc(t.content_purpose || "")}" placeholder="如：提升品牌认知"></label>
+      <label class="f" style="grid-column:1/-1">核心信息<input id="plan_core" class="input sm" value="${esc(t.core_message || "")}" placeholder="一句话说清这条内容要传达什么"></label>
+      <label class="f">已确认卖点（逗号分隔）<input id="plan_selling" class="input sm" value="${esc((t.selling_points || []).join("，"))}" placeholder="如：果大，汁多，当季鲜"></label>
+      <label class="f">创作风格<input id="plan_style" class="input sm" value="${esc(t.style || "")}" placeholder="如：实在不端着（不填按目标自然选择）"></label>
+      <label class="f">期望时长（秒）<input id="plan_duration" class="input sm" type="number" min="5" value="${t.target_duration_seconds || 30}"></label>
+      <label class="f">目标平台（逗号分隔）<input id="plan_platforms" class="input sm" value="${esc((t.target_platforms || []).join("，"))}" placeholder="如：抖音，快手"></label>
+      <label class="f">关联产品档案（可选）
+        <select id="plan_product" class="input sm">
+          <option value="">不关联</option>
+          ${prods.map((p) => `<option value="${esc(p.id)}"${p.id === pid ? " selected" : ""}>${esc(p.name)}（${esc(p.code)}）</option>`).join("")}
+        </select></label>
+      <label class="f" style="grid-column:1/-1">实拍条件<input id="plan_shoot" class="input sm" value="${esc(planShootText(t))}" placeholder="如：手机拍摄/1人/自然光/果园"></label>
+      <label class="f" style="grid-column:1/-1">宣传限制<input id="plan_restrict" class="input sm" value="${esc(t.ad_restrictions || "")}" placeholder="如：不宣称医疗功效"></label>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <button class="btn primary sm" id="plan_gen_btn" ${PLAN.busy ? "disabled" : ""}>${PLAN.taskId ? "重新生成候选" : "✦ 生成候选创意"}</button>
+      ${PLAN.taskId ? `<button class="btn ghost sm" id="plan_new_btn">新建策划任务</button>` : ""}
+      <span class="err-text" id="plan_err"></span>
+    </div>
+    <div id="plan_candidates" style="margin-top:6px"></div>
+    ${PLAN._err ? `<div class="err-text" style="display:block;margin-top:8px">⚠ ${esc(PLAN._err)}</div>` : ""}
+    <div id="plan_after" style="margin-top:10px"></div>`;
+  host.querySelectorAll("[data-plan-goal]").forEach((b) => b.addEventListener("click", () => {
+    if (!PLAN.task) { PLAN._goal = b.dataset.planGoal; renderPlanSection(); return; }
+    planUpdate({ content_goal: b.dataset.planGoal });
+  }));
+  $("plan_gen_btn").addEventListener("click", planGenerate);
+  const nb = $("plan_new_btn");
+  if (nb) nb.addEventListener("click", () => { PLAN.taskId = null; PLAN.task = null; PLAN.candidates = []; PLAN.selectedIndex = null; PLAN.feas = null; renderPlanSection(); });
+  renderPlanCandidates();
+}
+
+/** 实拍条件对象转展示文本。 */
+function planShootText(t) {
+  const s = (t && t.shoot_conditions) || {};
+  const parts = [s.device, s.people ? s.people + "人" : "", s.lighting, s.location].filter(Boolean);
+  return parts.join("/") || "";
+}
+
+/** 从表单收集策划输入。 */
+function collectPlanInput() {
+  const v = (id) => { const el = $(id); return el ? el.value.trim() : ""; };
+  const shootTxt = v("plan_shoot");
+  const shoot = {};
+  if (shootTxt) {
+    const parts = shootTxt.split("/");
+    shoot.device = (parts[0] || "").trim();
+    shoot.people = (parts[1] || "").trim();
+    shoot.lighting = (parts[2] || "").trim();
+    shoot.location = (parts[3] || "").trim();
+  }
+  return {
+    title: "策划-" + planGoalLabel(PLAN.task ? PLAN.task.content_goal : (PLAN._goal || "brand")) + "-" + new Date().toLocaleDateString(),
+    content_goal: PLAN.task ? PLAN.task.content_goal : (PLAN._goal || "brand"),
+    product_id: v("plan_product") || null,
+    audience: v("plan_audience"),
+    content_purpose: v("plan_purpose"),
+    core_message: v("plan_core"),
+    selling_points: v("plan_selling").split(/[，,]/).map((x) => x.trim()).filter(Boolean),
+    style: v("plan_style"),
+    target_duration_seconds: parseInt(v("plan_duration"), 10) || 30,
+    target_platforms: v("plan_platforms").split(/[，,]/).map((x) => x.trim()).filter(Boolean),
+    shoot_conditions: shoot,
+    ad_restrictions: v("plan_restrict"),
+  };
+}
+
+async function planGenerate() {
+  if (PLAN.busy || !S.org) return;
+  PLAN.busy = true; renderPlanSection();
+  errText("plan_err", "");
+  aiLoading("正在生成候选创意…");
+  try {
+    const input = collectPlanInput();
+    let taskId = PLAN.taskId;
+    if (!taskId) {
+      const created = V1(await ApiClient.post("/api/v1/plan/tasks?org_id=" + encodeURIComponent(S.org.id), input));
+      taskId = created.id;
+    } else {
+      await ApiClient.patch("/api/v1/plan/tasks/" + taskId + "?org_id=" + encodeURIComponent(S.org.id), input);
+    }
+    const d = V1(await ApiClient.post(
+      "/api/v1/plan/tasks/" + taskId + "/generate?org_id=" + encodeURIComponent(S.org.id),
+      {}, { idempotencyKey: newIdempotencyKey() }));
+    PLAN.taskId = taskId; PLAN.task = d; PLAN.candidates = d.candidates || [];
+    PLAN.selectedIndex = d.selected_index; PLAN.feas = null; PLAN._err = null;
+    if (d.product_facts_used) toast("已带入 " + d.product_facts_used.length + " 条已确认产品事实");
+    toast("已生成 " + PLAN.candidates.length + " 个候选创意");
+  } catch (e) {
+    PLAN._err = e.message || "生成失败";
+  } finally {
+    PLAN.busy = false; aiLoadingDone(); renderPlanSection();
+  }
+}
+
+async function planUpdate(fields) {
+  if (!PLAN.taskId || !S.org) return;
+  try {
+    const d = V1(await ApiClient.patch(
+      "/api/v1/plan/tasks/" + PLAN.taskId + "?org_id=" + encodeURIComponent(S.org.id), fields));
+    PLAN.task = d; renderPlanSection();
+  } catch (e) { toast(e.message || "更新失败"); }
+}
+
+function renderPlanCandidates() {
+  const host = $("plan_candidates");
+  if (!host) return;
+  const cands = PLAN.candidates || [];
+  if (!cands.length) { host.innerHTML = ""; renderPlanAfter(); return; }
+  host.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">` +
+    cands.map((c, i) => `
+      <div class="idea-card ${i === PLAN.selectedIndex ? "sel" : ""}" data-i="${i}" style="cursor:pointer">
+        <b>方向 ${i + 1} · ${esc(c.name || "")}</b>
+        <p>${esc(c.core_expression || "")}</p>
+        <div style="margin:8px 0;display:flex;gap:6px;flex-wrap:wrap">
+          <span class="pill blue">${esc(planGoalLabel(c.goal || ""))}</span>
+          <span class="pill ${c.difficulty === "高" ? "amber" : "gray"}">难度${esc(c.difficulty || "未知")}</span>
+          ${(c.fact_refs || []).length ? `<span class="pill gray">事实引用 ${c.fact_refs.length}</span>` : ""}
+        </div>
+        <div class="kv"><b>开头切入</b><span>${esc(c.hook_opening || "—")}</span></div>
+        <div class="kv"><b>内容结构</b><span>${esc(c.structure || "—")}</span></div>
+        <div class="kv"><b>建议画面</b><span>${esc(c.suggested_shots || "—")}</span></div>
+        ${c.shoot_notes ? `<div class="kv"><b>执行注意</b><span>${esc(c.shoot_notes)}</span></div>` : ""}
+      </div>`).join("") + `</div>`;
+  host.querySelectorAll(".idea-card").forEach((el) => el.addEventListener("click", () => planSelect(+el.dataset.i)));
+  renderPlanAfter();
+}
+
+async function planSelect(i) {
+  if (!PLAN.taskId || !S.org) return;
+  try {
+    const d = V1(await ApiClient.post(
+      "/api/v1/plan/tasks/" + PLAN.taskId + "/select?org_id=" + encodeURIComponent(S.org.id),
+      { index: i }));
+    PLAN.task = d; PLAN.selectedIndex = d.selected_index; PLAN.feas = null;
+    toast("已选择方向 " + (i + 1));
+    renderPlanCandidates();
+    planFeasibility(); // 选中后自动跑纯规则可行性检查
+  } catch (e) { toast(e.message || "选择失败"); }
+}
+
+async function planFeasibility() {
+  if (!PLAN.taskId || PLAN.selectedIndex == null || !S.org) return;
+  try {
+    const d = V1(await ApiClient.post(
+      "/api/v1/plan/tasks/" + PLAN.taskId + "/feasibility?org_id=" + encodeURIComponent(S.org.id), {}));
+    PLAN.feas = d;
+  } catch (e) { PLAN.feas = { status: "error", message: e.message }; }
+  renderPlanAfter();
+}
+
+function renderPlanAfter() {
+  const host = $("plan_after");
+  if (!host) return;
+  if (PLAN.selectedIndex == null) { host.innerHTML = ""; return; }
+  const f = PLAN.feas;
+  let feasHtml = "<p style='font-size:12px;color:var(--muted)'>正在检查实拍可行性…</p>";
+  if (f) {
+    if (f.status === "error") {
+      feasHtml = `<p style="font-size:12px;color:var(--danger)">可行性检查失败：${esc(f.message || "")}</p>`;
+    } else {
+      const pill = f.status === "ready" ? "green" : "amber";
+      const label = f.status === "ready" ? "可执行" : (f.status === "need_confirm" ? "需确认" : "建议调整");
+      feasHtml = `<div style="margin:8px 0"><span class="pill ${pill}">可行性：${label}</span>
+        <span style="font-size:12px;color:var(--muted)">（纯规则检查，不消耗 AI 配额）</span></div>` +
+        (f.checks || []).map((c) => `<div style="font-size:12px;margin:4px 0">· ${esc(c.item || "")}：${esc(c.message || "")}${c.alternative ? `<br><span style="color:var(--muted)">替代方案：${esc(c.alternative)}</span>` : ""}</div>`).join("");
+    }
+  }
+  const works = (S.works || []).filter((w) => w.status !== "archived");
+  host.innerHTML = `
+    <div class="card" style="padding:12px;background:var(--bg-soft)">
+      <b style="font-size:13px">已选方向 ${PLAN.selectedIndex + 1} · 下一步</b>
+      ${feasHtml}
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+        <select id="plan_work_select" class="input sm" style="min-width:200px">
+          <option value="">选择已有拍摄项目…</option>
+          ${works.map((w) => `<option value="${esc(w.id)}">${esc(w.title || "未命名项目")}</option>`).join("")}
+        </select>
+        <button class="btn primary sm" id="plan_link_btn">关联拍摄项目</button>
+        <button class="btn ghost sm" id="plan_new_work_btn">新建拍摄项目</button>
+        <span style="font-size:12px;color:var(--muted)">关联后继续走分镜/实拍流程，不重复生成执行单</span>
+      </div>
+      <div class="err-text" id="plan_link_err"></div>
+    </div>`;
+  $("plan_link_btn").addEventListener("click", () => planLinkWork(false));
+  $("plan_new_work_btn").addEventListener("click", () => planLinkWork(true));
+}
+
+async function planLinkWork(createNew) {
+  if (!PLAN.taskId || !S.org) return;
+  errText("plan_link_err", "");
+  const body = { create_new: !!createNew };
+  if (!createNew) {
+    const wid = $("plan_work_select").value;
+    if (!wid) { errText("plan_link_err", "请先选择一个拍摄项目"); return; }
+    body.work_id = wid;
+  } else {
+    body.title = (PLAN.task && PLAN.task.title ? PLAN.task.title : "策划项目") + "-拍摄";
+  }
+  try {
+    const d = V1(await ApiClient.post(
+      "/api/v1/plan/tasks/" + PLAN.taskId + "/link-work?org_id=" + encodeURIComponent(S.org.id), body));
+    PLAN.task = d;
+    await loadWorks();
+    const w = (S.works || []).find((x) => x.id === d.linked_work_id);
+    if (w) {
+      S.activeWork = w;
+      S.data = blankData();
+      Object.assign(S.data, JSON.parse(JSON.stringify(w.data || {})));
+    }
+    toast(createNew ? "已新建拍摄项目，创意方向已带入" : "已关联拍摄项目，创意方向已带入");
+    go("v3");
+  } catch (e) { errText("plan_link_err", e.message || "关联失败"); }
+}
 
 document.addEventListener("DOMContentLoaded", init);
 })();

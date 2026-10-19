@@ -1166,3 +1166,70 @@ class CopyVersion(Base):
     restored_from = Column(String(32), nullable=True)  # 恢复来源版本 id
     created_by = Column(String(64), nullable=False, default="")
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+# ---------------------------------------------------------------------------
+# V3.0 C：内容策划任务（内容策划工作台）。
+#
+# 铁律：
+# - 只记录"营销目标→候选创意→选中→关联拍摄项目"的策划流程，
+#   不重复生成完整的拍摄执行单；分镜/实拍继续走 V2.1 既有流程。
+# - 创意确认后关联 work_id；关联只是记录关系，不改写 work 的已有内容
+#   （direction 写入走 works 既有更新接口）。
+# - status：draft（刚建）/ planned（已生成候选）/ linked（已关联拍摄项目）
+#   / archived（归档）。
+# ---------------------------------------------------------------------------
+
+PLAN_GOALS = (
+    "brand",    # 品牌宣传：品牌识别+产品故事+视觉一致性
+    "sales",    # 商品销售：真实购买理由+明确产品信息+行动引导
+    "intro",    # 产品介绍：已确认产品特征
+    "record",   # 产地记录：真实场景+可核实过程
+)
+
+PLAN_STATUS_DRAFT = "draft"
+PLAN_STATUS_PLANNED = "planned"
+PLAN_STATUS_LINKED = "linked"
+PLAN_STATUS_ARCHIVED = "archived"
+
+
+class ContentTask(Base):
+    """V3.0 C：内容策划任务（一次从营销目标到创意方向的策划）。"""
+    __tablename__ = "content_tasks"
+    __table_args__ = (
+        Index("ix_contenttask_org", "org_id"),
+        Index("ix_contenttask_goal", "org_id", "content_goal"),
+        Index("ix_contenttask_work", "work_id"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="CASCADE"),
+                    nullable=False)
+    title = Column(String(256), nullable=False, default="")
+    content_goal = Column(String(16), nullable=False, default="brand")
+    # 可选关联产品档案（复用 B-4 grounding 机制）
+    product_id = Column(String(32), ForeignKey("products.id", ondelete="SET NULL"),
+                        nullable=True)
+    # 策划输入
+    audience = Column(String(256), nullable=False, default="")
+    content_purpose = Column(String(256), nullable=False, default="")
+    core_message = Column(Text, nullable=False, default="")
+    selling_points = Column(JSON, nullable=False, default=list)
+    style = Column(String(128), nullable=False, default="")
+    target_duration_seconds = Column(Integer, nullable=False, default=30)
+    target_platforms = Column(JSON, nullable=False, default=list)
+    shoot_conditions = Column(JSON, nullable=False, default=dict)
+    ad_restrictions = Column(Text, nullable=False, default="")
+    # 生成结果
+    candidates = Column(JSON, nullable=False, default=list)
+    selected_index = Column(Integer, nullable=True)
+    selected_idea = Column(JSON, nullable=True)
+    # 关联的 V2.1 拍摄项目（只记录关系）
+    work_id = Column(String(32), ForeignKey("works.id", ondelete="SET NULL"),
+                     nullable=True)
+    status = Column(String(16), nullable=False, default=PLAN_STATUS_DRAFT)
+    ai_meta = Column(JSON, nullable=False, default=dict)
+    created_by = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)
