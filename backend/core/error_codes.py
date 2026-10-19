@@ -48,6 +48,8 @@ FACT_CONFLICT = 3004        # 同一属性存在冲突事实
 PRODUCT_NOT_FOUND = 3005    # 产品档案不存在（V3.0 B-1）
 PRODUCT_CODE_CONFLICT = 3006  # 同一组织内产品编号重复（V3.0 B-1）
 PRODUCT_HAS_FACTS = 3007    # 仍有事实引用该产品，禁止删除（V3.0 B-1）
+COPY_DOC_NOT_FOUND = 3008   # 文案文档不存在（V3.0 D）
+COPY_VERSION_NOT_FOUND = 3009  # 文案版本不存在（V3.0 D）
 
 # ---- 4xxx 组织与权限 ----
 PERMISSION_DENIED = 4001
@@ -92,6 +94,8 @@ ERROR_MESSAGES: dict[int, str] = {
     PRODUCT_NOT_FOUND: "产品档案不存在",
     PRODUCT_CODE_CONFLICT: "同一组织内产品编号已存在",
     PRODUCT_HAS_FACTS: "该产品仍有事实引用，无法删除",
+    COPY_DOC_NOT_FOUND: "文案文档不存在",
+    COPY_VERSION_NOT_FOUND: "文案版本不存在",
     PERMISSION_DENIED: "权限不足",
     ORG_NOT_FOUND: "组织不存在",
     MEMBER_NOT_FOUND: "成员不存在",

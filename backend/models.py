@@ -1050,3 +1050,119 @@ class MediaTask(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
                         onupdate=_now)
+
+
+# ---------------------------------------------------------------------------
+# V3.0 D：独立文案优化器 —— 文案文档 + 轻量版本表
+#
+# 审计结论 C：只有 WorkVersion 整包版本，colloquial 单次改写不存历史。
+# CopyDoc 是一次文案任务（5 种 kind 之一）；CopyVersion 是该文档的版本链。
+#
+# 铁律（任务书 §6.2/§6.5）：
+# - 用户未确认绝不覆盖原文或已确认版本 → 所有"修改"都是新增版本行，
+#   旧行只读；恢复 = 新建版本行（注明来源），不改旧行。
+# - 当前有效版本 = 该 doc 下 status="confirmed" 且 version_no 最大的行。
+# - AI 生成的版本初始 status="draft"；只有用户显式 confirm 才能转正。
+# ---------------------------------------------------------------------------
+
+COPY_KINDS = (
+    "optimize",   # 优化用户已有文案
+    "generate",   # 从零生成新文案
+    "script",     # 生成完整视频脚本
+    "platform",   # 生成平台发布文案
+    "adapt",      # 按平台调整同一份文案
+)
+
+COPY_MODES = (
+    "natural",        # 自然口语化
+    "premium",        # 品牌高级感
+    "shandong",       # 山东本土表达
+    "ecommerce",      # 电商转化表达
+    "hook",           # 开头吸引力优化
+    "concise",        # 结构精简
+    "voiceover",      # 旁白口播优化
+    "platform_post",  # 发布标题/正文/话题/行动引导优化
+    "custom",         # 用户自定义优化要求
+)
+
+COPY_STATUS_DRAFT = "draft"          # AI 生成待确认
+COPY_STATUS_CONFIRMED = "confirmed"  # 用户已确认（v1 原文建档即确认）
+
+COPY_RISK_UNCHECKED = "unchecked"  # 尚未跑风险检查
+COPY_RISK_CHECKED = "checked"      # 规则层（rule_scan + fact grounding）已跑
+COPY_RISK_FAILED = "failed"        # 风险检查执行失败
+
+
+class CopyDoc(Base):
+    """V3.0 D：文案文档（一次独立文案任务）。
+
+    kind 区分 5 种工作，输入输出契约不同（见 copyopt.py），
+    但共用同一套版本/风险/权限机制。
+    """
+    __tablename__ = "copy_docs"
+    __table_args__ = (
+        Index("ix_copydoc_org", "org_id"),
+        Index("ix_copydoc_kind", "org_id", "kind"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="CASCADE"),
+                    nullable=False)
+    title = Column(String(256), nullable=False, default="")
+    kind = Column(String(16), nullable=False, default="optimize")
+    product_id = Column(String(32), ForeignKey("products.id", ondelete="SET NULL"),
+                        nullable=True)  # 可选关联产品档案
+    created_by = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)
+
+
+class CopyVersion(Base):
+    """V3.0 D：文案版本（轻量版本表，只读追加）。
+
+    - version_no 在 doc 内单调递增；(doc_id, version_no) 唯一。
+    - source_text：产出本版本的输入文本（优化/改写类）；generate 类为空。
+    - text：本版本正文（用户确认后生效的内容）。
+    - structured：平台发布类文案的结构化字段（标题/正文/话题/行动引导），JSON。
+    - status：draft（AI 生成待确认）/ confirmed（用户已确认）。
+    - 恢复某版本 = 新建 confirmed 行（text 复制目标版本，restored_from 标注），
+      绝不修改已有行。
+    """
+    __tablename__ = "copy_versions"
+    __table_args__ = (
+        Index("ix_copyver_org", "org_id"),
+        Index("ix_copyver_doc", "doc_id"),
+        UniqueConstraint("doc_id", "version_no", name="uq_copyver_no"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="CASCADE"),
+                    nullable=False)
+    doc_id = Column(String(32), ForeignKey("copy_docs.id", ondelete="CASCADE"),
+                    nullable=False)
+    version_no = Column(Integer, nullable=False)
+    mode = Column(String(16), nullable=False, default="natural")
+    status = Column(String(16), nullable=False, default=COPY_STATUS_DRAFT)
+    # 输入输出
+    source_text = Column(Text, nullable=False, default="")
+    text = Column(Text, nullable=False, default="")
+    structured = Column(JSON, nullable=False, default=dict)  # 平台文案结构化字段
+    # 优化目标与约束
+    goal = Column(String(256), nullable=False, default="")
+    style = Column(String(128), nullable=False, default="")
+    audience = Column(String(128), nullable=False, default="")
+    length_limit = Column(String(64), nullable=False, default="")
+    extra_requirements = Column(Text, nullable=False, default="")
+    custom_instruction = Column(Text, nullable=False, default="")
+    changes_summary = Column(Text, nullable=False, default="")  # AI 给的修改说明
+    # 事实与风险
+    fact_ids = Column(JSON, nullable=False, default=list)  # 涉及的产品事实 ID
+    risk_status = Column(String(16), nullable=False, default=COPY_RISK_UNCHECKED)
+    risk_flags = Column(JSON, nullable=False, default=list)
+    risk_checked_at = Column(DateTime(timezone=True), nullable=True)
+    # AI 元信息（可追溯，不含密钥）
+    ai_meta = Column(JSON, nullable=False, default=dict)
+    restored_from = Column(String(32), nullable=True)  # 恢复来源版本 id
+    created_by = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)

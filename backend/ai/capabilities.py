@@ -22,6 +22,7 @@ TASK_REQUIREMENTS: dict[str, dict] = {
     "fact_extract": {"needs_json": True,  "needs_vision": False},
     "livestream_script": {"needs_json": True,  "needs_vision": False},
     "colloquial_rewrite": {"needs_json": True,  "needs_vision": False},
+    "copy_optimize": {"needs_json": True,  "needs_vision": False},
 }
 
 

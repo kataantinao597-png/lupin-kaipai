@@ -99,10 +99,11 @@ def test_082_migration_tables(db: Session):
     names = set(sa.inspect(db.bind).get_table_names())
     assert {"users", "organizations", "memberships", "invitations", "works",
             "storyboards", "shots", "facts", "work_versions",
-            "refresh_tokens", "password_resets", "products"} <= names
+            "refresh_tokens", "password_resets", "products",
+            "copy_docs", "copy_versions"} <= names
     row = db.execute(__import__("sqlalchemy").text(
         "select version_num from alembic_version")).fetchone()
-    assert row[0] == "0012_product_refs"  # V3.0 B-4/B-5：product_refs 表，head 前移
+    assert row[0] == "0013_copyopt"  # V3.0 D：文案优化器表，head 前移
 
 
 # ---------- 083/084/085 CRUD ----------
