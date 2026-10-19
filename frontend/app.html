@@ -558,7 +558,26 @@ input[type=file]{display:none}
               <option value="240">4 小时</option>
             </select>
           </label>
-          <span style="display:flex;gap:10px">
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end">
+          <span style="font-size:12.5px;color:var(--muted);width:100%">以下为可选项，填了 AI 会按你的直播安排调整节奏与话术</span>
+          <label class="f" style="min-width:130px">直播平台
+            <select id="live_platform">
+              <option value="">不限</option><option>抖音</option><option>快手</option>
+              <option>视频号</option><option>小红书</option><option>淘宝直播</option>
+            </select>
+          </label>
+          <label class="f" style="min-width:150px">直播目标
+            <input id="live_goal" placeholder="如：清库存 / 上新 / 涨粉" maxlength="60">
+          </label>
+          <label class="f" style="min-width:150px">主播风格
+            <input id="live_style" placeholder="如：实在唠嗑 / 热情吆喝" maxlength="60">
+          </label>
+          <label class="f" style="min-width:180px">促销安排
+            <input id="live_promo" placeholder="如：整点福袋 / 满减（别写未定价格）" maxlength="120">
+          </label>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:12px">
             <button class="btn primary sm" id="btn_gen_live">✦ 生成场控脚本</button>
             <button class="btn ghost sm" id="btn_export_live" style="display:none">导出 TXT</button>
           </span>
@@ -626,7 +645,15 @@ input[type=file]{display:none}
     <div><h4>改写</h4><div class="cmp-box" id="colloq_new"></div><ul id="colloq_changes"></ul></div>
   </div>
   <div class="err-text" id="colloq_err"></div>
-  <div style="display:flex;margin-top:16px;gap:10px"><button class="btn primary sm" id="btn_use_colloquial">一键采用</button><button class="btn ghost sm" id="btn_close_colloquial" style="margin-left:auto">关闭</button></div>
+  <div id="colloq_conflict" style="display:none;background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:12px;margin-top:12px">
+    <p style="font-size:13px;font-weight:700;margin:0 0 8px">⚠ 该镜头在改写期间被修改过</p>
+    <p style="font-size:12.5px;color:var(--muted);margin:0 0 8px">当前镜头口播与改写时的原文不一致，直接采用会覆盖别人的修改。请比较后再决定。</p>
+    <div class="cmp"><div><h4>当前镜头口播</h4><div class="cmp-box" id="colloq_cur"></div></div>
+    <div><h4>改写结果</h4><div class="cmp-box" id="colloq_new2"></div></div></div>
+    <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary sm" id="btn_force_colloquial">仍要覆盖采用</button><button class="btn ghost sm" id="btn_cancel_colloquial">放弃采用</button></div>
+  </div>
+  <p id="colloq_meta" style="font-size:12px;color:var(--muted);margin:10px 0 0"></p>
+  <div style="display:flex;margin-top:16px;gap:10px;align-items:center"><button class="btn primary sm" id="btn_use_colloquial">一键采用</button><button class="btn ghost sm" id="btn_undo_colloquial" style="display:none">撤销上次采用</button><button class="btn ghost sm" id="btn_close_colloquial" style="margin-left:auto">关闭</button></div>
 </div></div>
 <div class="modal-mask" id="import_modal"><div class="modal" style="max-width:600px">
   <h3>文档导入 <span class="pill gray" id="import_ai_badge">解析中</span></h3>

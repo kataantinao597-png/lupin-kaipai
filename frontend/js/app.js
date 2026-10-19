@@ -72,7 +72,8 @@ const S = {
 
 function blankData() {
   return { product: null, storyboard: null, shoot_state: {}, feasibility: null, risk: null,
-           ideas: [], direction: "", poster: null, ideasFactsHash: "", sbFactsHash: "", shoot_note: "" };
+           ideas: [], direction: "", poster: null, ideasFactsHash: "", sbFactsHash: "", shoot_note: "",
+           colloq_undo: [] }; // V3.1 §4.2：拉呱版采用撤销栈（原文快照）
 }
 
 /* ---------- 路由（含登录守卫） ---------- */
@@ -424,7 +425,9 @@ const FACT_STATUS = {
 };
 function factUsable(f) { return f.status === "confirmed" && f.allow_use !== false; }
 function usableFacts() {
-  return S.facts.filter(factUsable).map((f) => ({ content: f.content, category: f.category, source_ref: f.source_ref }));
+  // V3.1 §3.1：带上 id，服务端 _check_fact_refs 才能按库核验
+  // （confirmed+allow_use+未过期），无 id 的条目服务端会跳过
+  return S.facts.filter(factUsable).map((f) => ({ id: f.id, content: f.content, category: f.category, source_ref: f.source_ref }));
 }
 function factsHash() {
   return usableFacts().map((f) => f.content).join("|");
@@ -1185,13 +1188,20 @@ function renderRisks() {
   const risks = S.data.risk || [];
   if (!risks.length) return;
   const lv = { "高": "red", "中": "amber", "低": "green" };
-  $("risk_results").innerHTML = risks.map((f, i) => `
+  const items = risks.map((f, i) => `
     <div class="risk-item">
       <input type="checkbox" data-ri="${i}" ${f.confirmed ? "checked" : ""} title="人工确认">
       <div><div><span class="pill ${lv[f.level] || "gray"}">${esc(f.level || "")}风险</span>
       <span class="pill gray">${esc(f.source || "")}</span> ${esc(f.text || "")}</div>
       <div style="font-size:12.5px;color:var(--muted);margin-top:4px">${esc(f.reason || "")}</div></div>
     </div>`).join("");
+  // V3.1 P1-8：标脏后旧结论不得再显示为"当前有效"——折叠为"过期结论（仅供参考）"，
+  // 历史保留可查；重新运行风险检查后恢复正常展示
+  const body = S.data.risk_dirty
+    ? `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:12.5px">⚠ 文案已修改，以下为<strong>过期结论</strong>，不代表当前文案的风险状况，请重新运行风险检查。</div>
+       <details><summary style="font-size:12.5px;color:var(--muted);cursor:pointer">查看过期结论（${risks.length} 条，仅供参考）</summary><div style="opacity:.65;margin-top:8px">${items}</div></details>`
+    : items;
+  $("risk_results").innerHTML = body;
   $("risk_results").querySelectorAll("[data-ri]").forEach((c) => c.addEventListener("change", async () => {
     S.data.risk[+c.dataset.ri].confirmed = c.checked;
     await saveWork();
@@ -1468,6 +1478,7 @@ $("shoot_progress").textContent = `拍摄 ${shotCount}/${shots.length} · 验收
 $("shoot_bar").style.width = pctPass + "%";
 $("shoot_pct").textContent = `验收 ${pctPass}%`;
 renderLivestream();
+resumeLivestreamTask(); // V3.1 P1-4：刷新页面后恢复未完成的生成任务
 }
 
 /* ================= v5 拍摄验收 + 素材关联（V2.0 P1） ================= */
@@ -1661,8 +1672,26 @@ async function pollAiTask(taskId, label, timeoutMs) {
     }
     await new Promise((r) => setTimeout(r, 2500));
   }
-  throw new Error((label || "AI 任务") + "超时，请稍后在任务列表查看");
+  // V3.1 P1-4：超时文案修正——后端已在 10 分钟时自动标 failed，
+  // 不存在"任务列表"，指引用户直接重试
+  throw new Error((label || "AI 任务") + "超时（超过3分钟未返回），任务已自动标记为失败，请重试");
 }
+
+/* V3.1 §3.3：单段重生成的纯合并逻辑（无 DOM 依赖，可被 node 测试）。
+   返回新数组：仅替换 idx 处的段；newSeg 时间轴必须与原段一致，
+   否则抛错（隔离性：其他段落绝不被触碰）。 */
+function mergeRegenSegment(segments, idx, newSeg) {
+  if (!Array.isArray(segments) || idx < 0 || idx >= segments.length) {
+    throw new Error("段索引越界");
+  }
+  const orig = segments[idx] || {};
+  if (newSeg.start_minute !== orig.start_minute ||
+      newSeg.end_minute !== orig.end_minute) {
+    throw new Error("重生成结果时间轴与原段不一致，已拒绝写入");
+  }
+  return segments.map((s, i) => (i === idx ? { ...s, ...newSeg } : s));
+}
+/* V3.1-TEST-MARKER: mergeRegenSegment end */
 
 function renderLivestream() {
   const box = $("live_result");
@@ -1676,12 +1705,20 @@ function renderLivestream() {
   $("live_status").textContent = "已生成";
   $("live_status").className = "pill green";
   $("btn_export_live").style.display = "";
-  const segs = (sc.segments || []).map((s) => `
-    <div class="live-seg">
+  const segs = (sc.segments || []).map((s, i) => `
+    <div class="live-seg" data-seg="${i}">
       <span class="live-phase">${esc(s.phase || "")}</span><span class="live-time">${esc(String(s.start_minute ?? ""))}–${esc(String(s.end_minute ?? ""))} 分钟</span>
+      ${s.locked ? `<span class="pill amber" style="font-size:11px">已锁定</span>` : ""}
+      <span class="live-seg-ops" style="margin-left:auto;display:flex;gap:6px">
+        <button class="btn ghost sm" data-op="edit" ${s.locked ? "disabled" : ""}>编辑</button>
+        <button class="btn ghost sm" data-op="regen" ${s.locked ? "disabled" : ""}>重生成</button>
+        <button class="btn ghost sm" data-op="lock">${s.locked ? "解锁" : "锁定"}</button>
+        <button class="btn ghost sm" data-op="copy">复制</button>
+      </span>
       ${s.goal ? `<div class="live-goal">目标：${esc(s.goal)}</div>` : ""}
       <ul class="live-script">${(s.script || []).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
       ${(s.tips || []).map((t) => `<div class="live-tip">场控提示：${esc(t)}</div>`).join("")}
+      <div class="live-seg-edit" style="display:none"></div>
     </div>`).join("");
   const bags = (sc.lucky_bag_points || []).map((b) =>
     `<li>${esc(String(b.at_minute ?? ""))} 分钟 · ${esc(b.name || "福袋")}：${esc(b.script || "")}</li>`).join("");
@@ -1689,13 +1726,153 @@ function renderLivestream() {
   const rescue = (sc.rescue_scripts || []).map((x) =>
     `<li><b>${esc(x.scene || "")}</b>：${esc(x.script || "")}</li>`).join("");
   const prep = (sc.prep_checklist || []).map((x) => `<li>${esc(x)}</li>`).join("");
+  // V3.1 §3.3：待确认清单——占位符信息逐项列出
+  const pc = (sc.pending_confirms || []).map((x) => `<li>${esc(x)}</li>`).join("");
+  const meta = (sc.prompt_version || sc.generated_at)
+    ? `<p style="font-size:11.5px;color:var(--muted);margin-top:8px">脚本版本 ${esc(sc.schema_version || "livestream_script_v1")} · 提示词 ${esc(sc.prompt_version || "—")}${sc.generated_at ? " · 生成于 " + esc(sc.generated_at.slice(0, 16).replace("T", " ")) : ""}</p>`
+    : "";
   box.innerHTML = `
     <h4 style="font-size:14px;margin-bottom:4px">${esc(sc.title || "店播场控脚本")}</h4>
     <div class="live-tl">${segs}</div>
     ${bags ? `<div class="live-block"><h4>福袋互动点</h4><ul class="live-script">${bags}</ul></div>` : ""}
     ${closing ? `<div class="live-block"><h4>转款逼单话术</h4><ul class="live-script">${closing}</ul></div>` : ""}
     ${rescue ? `<div class="live-block"><h4>冷场救场话术</h4><ul class="live-script">${rescue}</ul></div>` : ""}
-    ${prep ? `<div class="live-block"><h4>开播前准备</h4><ul class="live-script">${prep}</ul></div>` : ""}`;
+    ${prep ? `<div class="live-block"><h4>开播前准备</h4><ul class="live-script">${prep}</ul></div>` : ""}
+    ${pc ? `<div class="live-block"><h4>⚠ 待确认清单</h4><ul class="live-script">${pc}</ul><p style="font-size:12px;color:var(--muted)">以上信息脚本中为占位符，开播前请与商家确认后替换</p></div>` : ""}${meta}`;
+  box.querySelectorAll(".live-seg").forEach((el) => {
+    const i = +el.dataset.seg;
+    el.querySelectorAll("[data-op]").forEach((b) => b.addEventListener("click", () => liveSegOp(i, b.dataset.op)));
+  });
+}
+
+/* V3.1 §3.3：分段操作分发 */
+async function liveSegOp(i, op) {
+  const sc = S.data.livestream_script;
+  const s = sc && (sc.segments || [])[i];
+  if (!s) return;
+  if (op === "lock") {
+    s.locked = !s.locked;
+    await saveWork(); renderLivestream();
+    toast(s.locked ? "该段已锁定（不再参与重生成）" : "该段已解锁");
+    return;
+  }
+  if (op === "copy") {
+    const txt = `【${s.phase || ""}】${s.start_minute ?? ""}–${s.end_minute ?? ""} 分钟\n` +
+      (s.script || []).join("\n") + "\n" + (s.tips || []).map((t) => "※ " + t).join("\n");
+    try { await navigator.clipboard.writeText(txt); toast("已复制该段"); }
+    catch (e) { toast("复制失败：" + (e.message || "")); }
+    return;
+  }
+  if (op === "edit") { liveSegEdit(i); return; }
+  if (op === "regen") { regenLivestreamSegment(i); return; }
+}
+
+/* V3.1 §3.3：单段编辑（行内改话术/提示，保存才写回） */
+function liveSegEdit(i) {
+  const sc = S.data.livestream_script;
+  const s = sc.segments[i];
+  const box = document.querySelector(`.live-seg[data-seg="${i}"] .live-seg-edit`);
+  if (!box || box.style.display !== "none") return;
+  box.style.display = "";
+  box.innerHTML = `
+    <div style="margin-top:8px"><div style="font-size:12px;color:var(--muted);margin-bottom:4px">主播话术（每行一句）</div>
+    <textarea rows="5" style="width:100%" id="live_edit_script_${i}">${esc((s.script || []).join("\n"))}</textarea></div>
+    <div style="margin-top:8px"><div style="font-size:12px;color:var(--muted);margin-bottom:4px">场控提示（每行一条）</div>
+    <textarea rows="3" style="width:100%" id="live_edit_tips_${i}">${esc((s.tips || []).join("\n"))}</textarea></div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn primary sm" id="live_edit_save_${i}">保存本段</button>
+      <button class="btn ghost sm" id="live_edit_cancel_${i}">取消</button>
+    </div>`;
+  $(`live_edit_save_${i}`).addEventListener("click", async () => {
+    s.script = $(`live_edit_script_${i}`).value.split("\n").map((x) => x.trim()).filter(Boolean);
+    s.tips = $(`live_edit_tips_${i}`).value.split("\n").map((x) => x.trim()).filter(Boolean);
+    if (!s.script.length) { toast("话术不能为空"); return; }
+    sc.updated_at = new Date().toISOString();
+    await saveWork(); renderLivestream(); toast("该段已保存");
+  });
+  $(`live_edit_cancel_${i}`).addEventListener("click", () => renderLivestream());
+}
+
+/* V3.1 §3.3：单段重生成——只替换该段，其他段落不受影响 */
+async function regenLivestreamSegment(i) {
+  const sc = S.data.livestream_script;
+  const s = sc && (sc.segments || [])[i];
+  if (!s || s.locked) return;
+  errText("live_err", "");
+  aiLoading("正在重生成该段话术…");
+  setBtnsDisabled(["btn_gen_live"], true);
+  try {
+    const t = RAW(await ApiClient.post("/api/v1/ai-tasks", {
+      task_type: "livestream_regen_segment",
+      org_id: S.org.id,
+      payload: {
+        product: S.data.product || {},
+        facts: usableFacts(),
+        category: $("live_category").value,
+        duration_minutes: parseInt($("live_duration").value, 10) || 120,
+        extra: liveExtra(),
+        segment_index: i,
+        segment: { phase: s.phase, start_minute: s.start_minute,
+                   end_minute: s.end_minute, goal: s.goal || "" },
+      },
+    }, { idempotencyKey: newIdempotencyKey() }));
+    const result = await pollAiTask(t.id, "该段话术");
+    const newSeg = result.segment;
+    if (!newSeg) throw new Error("AI 返回的段结构异常，请重试");
+    // V3.1 §3.3 隔离性：纯函数合并，时间轴不一致直接拒绝
+    sc.segments = mergeRegenSegment(sc.segments, i, newSeg);
+    sc.updated_at = new Date().toISOString();
+    await saveWork();
+    renderLivestream();
+    toast("该段已重生成，其他段落未动");
+  } catch (e) {
+    errText("live_err", e.message || "重生成失败");
+  } finally {
+    setBtnsDisabled(["btn_gen_live"], false);
+    aiLoadingDone();
+  }
+}
+
+/* V3.1：读取直播可选输入 */
+function liveExtra() {
+  const v = (id) => { const el = $(id); return el ? el.value.trim() : ""; };
+  return { platform: v("live_platform"), goal: v("live_goal"),
+           style: v("live_style"), promo: v("live_promo") };
+}
+
+/* V3.1 P1-4：task_id 持久化（sessionStorage，刷新页面可恢复轮询） */
+function liveTaskKey() {
+  return `lupin_live_task_${S.org ? S.org.id : "-"}_${S.activeWork ? S.activeWork.id : "-"}`;
+}
+function saveLiveTaskId(taskId) {
+  try { sessionStorage.setItem(liveTaskKey(), taskId); } catch (e) { /* 忽略 */ }
+}
+function clearLiveTaskId() {
+  try { sessionStorage.removeItem(liveTaskKey()); } catch (e) { /* 忽略 */ }
+}
+async function resumeLivestreamTask() {
+  let taskId = null;
+  try { taskId = sessionStorage.getItem(liveTaskKey()); } catch (e) { /* 忽略 */ }
+  if (!taskId || !S.org || !S.activeWork) return;
+  // 已有生成结果则无需恢复
+  if ((S.data.livestream_script || {}).segments) { clearLiveTaskId(); return; }
+  errText("live_err", "");
+  aiLoading("正在恢复未完成的场控脚本任务…");
+  try {
+    const result = await pollAiTask(taskId, "场控脚本");
+    if (result.livestream_script && (result.livestream_script.segments || []).length) {
+      S.data.livestream_script = result.livestream_script;
+      await saveWork();
+      toast("已恢复之前生成的场控脚本");
+    }
+  } catch (e) {
+    // 任务失败/超时/不存在：清掉记录，不打扰用户
+    errText("live_err", e.message || "");
+  } finally {
+    clearLiveTaskId();
+    renderLivestream();
+    aiLoadingDone();
+  }
 }
 
 async function genLivestreamScript() {
@@ -1713,17 +1890,23 @@ async function genLivestreamScript() {
         facts: usableFacts(),
         category: category,
         duration_minutes: duration,
+        extra: liveExtra(), // V3.1：直播平台/目标/风格/促销（可选）
       },
     }, { idempotencyKey: newIdempotencyKey() })); // V3.1 P0：同 key 只建一个任务
+    saveLiveTaskId(t.id); // V3.1 P1-4：刷新页面可恢复轮询
     const result = await pollAiTask(t.id, "场控脚本");
     if (!result.livestream_script || !(result.livestream_script.segments || []).length) {
       throw new Error("AI 返回的脚本结构异常，请重试");
     }
     S.data.livestream_script = result.livestream_script;
     await saveWork();
+    clearLiveTaskId(); // 成功：任务已终态，无需恢复
     renderLivestream();
     toast("场控脚本已生成");
   } catch (e) {
+    // V3.1 P1-4：前端超时 ≠ 后端失败——超时时保留 task_id，
+    // 用户刷新页面仍可恢复轮询；明确失败/取消才清除
+    if (!/超时/.test(e.message || "")) clearLiveTaskId();
     errText("live_err", e.message || "生成失败");
   } finally {
     setBtnsDisabled(["btn_gen_live"], false);
@@ -1753,6 +1936,12 @@ function exportLivestreamTxt() {
     txt += "\n【冷场救场话术】\n";
     sc.rescue_scripts.forEach((x) => { txt += `  ${x.scene}：${x.script}\n`; });
   }
+  // V3.1 §3.3：待确认清单
+  if ((sc.pending_confirms || []).length) {
+    txt += "\n【待确认清单】\n";
+    sc.pending_confirms.forEach((x) => { txt += `  ⚠ ${x}\n`; });
+    txt += "（以上信息脚本中为占位符，开播前请与商家确认后替换）\n";
+  }
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([txt], { type: "text/plain;charset=utf-8" }));
   a.download = "店播场控脚本.txt";
@@ -1763,6 +1952,14 @@ function exportLivestreamTxt() {
 /* ================= #9 拉呱版改写器 ================= */
 
 let colloqShotIdx = -1;
+let colloqOrigHash = ""; // V3.1 §4.2：打开 modal 时的原文哈希，用于并发编辑检测
+
+function colloqHash(t) {
+  let h = 0;
+  const s = String(t || "");
+  for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; }
+  return String(h);
+}
 
 async function openColloquialModal(i) {
   // V2.1 #3：改写请求进行中不再重复触发（防双击重复扣费）
@@ -1774,20 +1971,31 @@ async function openColloquialModal(i) {
   if (!orig) { toast("该镜头暂无口播文案"); return; }
   openColloquialModal._busy = true;
   colloqShotIdx = i;
+  colloqOrigHash = colloqHash(orig); // V3.1 §4.2：记录原文快照哈希
   $("colloq_orig").textContent = orig;
   $("colloq_new").textContent = "改写中…";
   $("colloq_changes").innerHTML = "";
+  $("colloq_meta").textContent = "";
+  $("colloq_conflict").style.display = "none";
   errText("colloq_err", "");
+  updateColloqUndoBtn();
   $("colloquial_modal").classList.add("show");
   try {
     const d = RAW(await ApiClient.post("/api/colloquial-rewrite", {
       text: orig,
       product_name: (S.data.product || {}).product_name || "",
+      work_id: (S.activeWork || {}).id || null, // V3.1 §4.1：服务端取已确认事实
+      product_id: S.selectedProductId || null,
     }, { idempotencyKey: newIdempotencyKey() }));
     $("colloq_new").textContent = d.rewritten || "—";
     $("colloq_changes").innerHTML =
       (d.changes || []).map((c) => `<li>${esc(c)}</li>`).join("");
+    // V3.1 §4.1：展示事实 grounding 情况（可信度可见）
+    const fv = d.prompt_version ? `提示词 ${esc(d.prompt_version)}` : "";
+    const fc = (d.facts_used != null) ? ` · 已注入 ${d.facts_used} 条已确认事实` : "";
+    $("colloq_meta").textContent = (fv + fc).replace(/^ · /, "");
   } catch (e) {
+    // V3.1 §4 P1-5：改写失败 → 原文不受影响（只清空改写区，不碰镜头数据）
     $("colloq_new").textContent = "—";
     errText("colloq_err", e.message || "改写失败");
   } finally {
@@ -1800,13 +2008,60 @@ async function useColloquial() {
   const s = shots[colloqShotIdx];
   const nw = $("colloq_new").textContent.trim();
   if (!s || !nw || nw === "改写中…" || nw === "—") return;
+  // V3.1 §4.2：并发编辑检测——改写期间目标镜头被改过则弹冲突面板，不直接覆盖
+  const cur = String(s.voiceover || s.subtitle || "").trim();
+  if (colloqHash(cur) !== colloqOrigHash) {
+    $("colloq_cur").textContent = cur;
+    $("colloq_new2").textContent = nw;
+    $("colloq_conflict").style.display = "";
+    return;
+  }
+  await doUseColloquial(false);
+}
+
+async function doUseColloquial(force) {
+  const shots = (S.data.storyboard || {}).shots || [];
+  const s = shots[colloqShotIdx];
+  const nw = (force ? $("colloq_new2") : $("colloq_new")).textContent.trim();
+  if (!s || !nw || nw === "改写中…" || nw === "—") return;
+  // V3.1 §4.2：原文快照入撤销栈（持久化到作品，可恢复）
+  if (!Array.isArray(S.data.colloq_undo)) S.data.colloq_undo = [];
+  S.data.colloq_undo.push({
+    shot_idx: colloqShotIdx,
+    prev: s.voiceover || "",
+    next: nw,
+    at: new Date().toISOString(),
+  });
+  if (S.data.colloq_undo.length > 20) S.data.colloq_undo.shift(); // 只保留最近 20 条
   if (nw !== (s.voiceover || "")) { markRiskDirty(); } // V2.1：口播文案变更 → 风险检查标脏
   s.voiceover = nw;
   await saveWork();
   renderShots();
   updateRiskDirtyBadge();
+  $("colloq_conflict").style.display = "none";
   $("colloquial_modal").classList.remove("show");
-  toast("已采用口语版");
+  toast(force ? "已覆盖采用（原修改被替换）" : "已采用口语版，可撤销");
+}
+
+/* V3.1 §4.2：撤销上次拉呱版采用，恢复原文快照 */
+async function undoColloquial() {
+  const stack = S.data.colloq_undo || [];
+  const last = stack.pop();
+  if (!last) { toast("没有可撤销的改写"); return; }
+  const shots = (S.data.storyboard || {}).shots || [];
+  const s = shots[last.shot_idx];
+  if (s) s.voiceover = last.prev;
+  markRiskDirty(); // 恢复原文同样使旧风险结论过期
+  await saveWork();
+  renderShots();
+  updateRiskDirtyBadge();
+  updateColloqUndoBtn();
+  toast("已恢复原文");
+}
+
+function updateColloqUndoBtn() {
+  const el = $("btn_undo_colloquial");
+  if (el) el.style.display = ((S.data.colloq_undo || []).length ? "" : "none");
 }
 function fillNote() { $("shoot_note").value = (S.data && S.data.shoot_note) || "";}
 
@@ -2429,6 +2684,9 @@ $("btn_export_live").addEventListener("click", exportLivestreamTxt);
 $("btn_close_colloquial").addEventListener("click", () => $("colloquial_modal").classList.remove("show"));
 $("colloquial_modal").addEventListener("click", (e) => { if (e.target === $("colloquial_modal")) $("colloquial_modal").classList.remove("show"); });
 $("btn_use_colloquial").addEventListener("click", useColloquial);
+$("btn_undo_colloquial").addEventListener("click", undoColloquial);
+$("btn_force_colloquial").addEventListener("click", () => doUseColloquial(true));
+$("btn_cancel_colloquial").addEventListener("click", () => { $("colloq_conflict").style.display = "none"; });
 
 $("btn_delivery_check").addEventListener("click", runDeliveryCheck);
 $("exp_docx").addEventListener("click", exportDocx);

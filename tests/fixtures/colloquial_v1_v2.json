@@ -1,0 +1,28 @@
+{
+  "description": "拉呱版改写 v1/v2 可重复执行测试样本（V3.1 §4.1）。同输入分别走 colloquial_v1 / colloquial_v2 的 build 函数，断言约束齐备；不调用模型。",
+  "samples": [
+    {
+      "id": "s1-苹果口播",
+      "text": "这款烟台红富士苹果口感脆甜，果园现摘现发，欢迎大家下单购买。",
+      "product_name": "烟台红富士苹果",
+      "facts": [
+        {"id": "f1", "content": "产地：山东烟台", "category": "产地", "source": "用户提供", "status": "confirmed", "allow_use": true},
+        {"id": "f2", "content": "特点：果大核小，脆甜多汁", "category": "特点", "source": "用户提供", "status": "confirmed", "allow_use": true}
+      ]
+    },
+    {
+      "id": "s2-无事实",
+      "text": "咱家这小米是新下来的，熬粥可香了。",
+      "product_name": "沂蒙小米",
+      "facts": []
+    },
+    {
+      "id": "s3-未确认事实不注入",
+      "text": "这款绿茶清香耐泡。",
+      "product_name": "日照绿茶",
+      "facts": [
+        {"id": "f9", "content": "销量全国第一", "category": "销量", "source": "未知", "status": "draft", "allow_use": true}
+      ]
+    }
+  ]
+}

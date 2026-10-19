@@ -48,8 +48,11 @@ class TestPrompt:
 
     def test_version_registry(self):
         from backend.ai.prompts import get_prompt_version, get_prompt_module
-        assert get_prompt_version("livestream_script") == "livestream_v1"
+        # V3.1：registry 切到 v2；v1 文件保留（版本规则）
+        assert get_prompt_version("livestream_script") == "livestream_v2"
         assert get_prompt_module("livestream_script") is not None
+        from backend.ai.prompts import livestream_v1
+        assert livestream_v1.VERSION == "livestream_v1"
 
 
 class TestRegistration:

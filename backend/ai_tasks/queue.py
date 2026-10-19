@@ -24,6 +24,62 @@ logger = logging.getLogger(__name__)
 # 035：工作线程数；AI 调用是 IO 密集型，4 线程够 MVP 用
 MAX_WORKERS = 4
 
+# V3.1 P1-4：任务超时（秒）。pending/running 超过此时限仍未终态，
+# 视为超时，由 sweep_timed_out() 标记为 failed（前端轮询到 failed 即停止，
+# 不再无限等待；后端也不再无声烧钱）。
+TASK_TIMEOUT_SECONDS = 600
+
+
+def sweep_timed_out(session_factory: Callable[[], Any]) -> int:
+    """V3.1 P1-4：超时扫描——把超时未终态的任务标记为终态。
+
+    - pending 超时（排队超过时限未开始）：→ cancelled（状态机只允许
+      pending→cancelled），error 注明排队超时。
+    - running 超时（执行超过时限）：→ failed。
+    返回本次处理的任务数。幂等，可被多次调用。
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select
+
+    from ..models import (AITask, TASK_STATUS_CANCELLED, TASK_STATUS_FAILED,
+                          TASK_STATUS_PENDING, TASK_STATUS_RUNNING)
+    from .repository import AITaskRepository
+    from .state_machine import TERMINAL_STATUSES
+
+    db = session_factory()
+    try:
+        cutoff = (datetime.now(timezone.utc)
+                  - timedelta(seconds=TASK_TIMEOUT_SECONDS))
+        stmt = select(AITask).where(
+            AITask.status.notin_(TERMINAL_STATUSES),
+            AITask.created_at < cutoff,
+        )
+        tasks = list(db.scalars(stmt))
+        repo = AITaskRepository(db)
+        n = 0
+        for t in tasks:
+            try:
+                if t.status == TASK_STATUS_PENDING:
+                    repo.set_status(
+                        t.id, TASK_STATUS_CANCELLED,
+                        error=f"任务超时（排队超过 {TASK_TIMEOUT_SECONDS // 60}"
+                              " 分钟未开始执行），请重试")
+                elif t.status == TASK_STATUS_RUNNING:
+                    repo.set_status(
+                        t.id, TASK_STATUS_FAILED,
+                        error=f"任务超时（执行超过 {TASK_TIMEOUT_SECONDS // 60}"
+                              " 分钟未完成），请重试")
+                else:
+                    continue
+                n += 1
+            except Exception:  # noqa: BLE001
+                # 终态竞态（任务恰好完成）→ 跳过，不影响其他任务
+                logger.warning("超时标记失败 task=%s", t.id, exc_info=True)
+        return n
+    finally:
+        db.close()
+
 # 137：优先级权重（越大越先执行）
 _PRIORITY_WEIGHT = {"high": 1, "low": 0}
 DEFAULT_PRIORITY = "high"
@@ -119,6 +175,14 @@ class _PriorityDispatcher:
                 result = runner(task_id, is_cancelled)
             except _TaskCancelled:
                 repo.set_status(task_id, "cancelled", error="任务被取消")
+                return
+            # V3.1 P1-4：写结果前复查——任务可能已被超时扫描/取消标记为终态，
+            # 此时不再覆盖为 succeeded（防"超时后又报成功"的误报）
+            from .state_machine import TERMINAL_STATUSES
+            cur = repo.get(task_id)
+            if cur is not None and cur.status in TERMINAL_STATUSES:
+                logger.info("任务 %s 已是终态 %s，跳过结果写入",
+                            task_id, cur.status)
                 return
             # 完成后复查：跑的过程中被取消 → 按取消落库
             if is_cancelled():

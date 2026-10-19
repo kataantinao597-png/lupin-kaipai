@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ...ai_tasks.queue import TaskQueue
+from ...ai_tasks.queue import TaskQueue, sweep_timed_out
 from ...ai_tasks.repository import AITaskRepository
 from ...ai_tasks.runners import RUNNERS
 from ...ai_tasks.state_machine import is_terminal
@@ -159,7 +159,15 @@ def get_task(task_id: str,
     """037：查询任务状态 + 结果（完成）/ 进度（进行中）。
 
     V3.1 P1-6：租户隔离——任务必须属于调用者所在组织，否则 404。
+
+    V3.1 P1-4：查询前做一次惰性超时扫描——前端每 2.5s 轮询一次，
+    超时任务会在下次轮询时被标记为 failed，前端即停止等待。
     """
+    import logging
+    try:
+        sweep_timed_out(get_session_factory())
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning("超时扫描失败", exc_info=True)
     repo = AITaskRepository(db)
     task = repo.get(task_id)
     if task is None:

@@ -126,6 +126,21 @@ class FakeGateway:
         raise AssertionError("测试不应走到模型调用")
 
 
+
+
+def _drain_task(client, task_id, timeout=30):
+    """等任务落终态再结束测试（防 dispatcher 工作线程跨 fixture 污染全局工厂）。"""
+    import time
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        r = client.get("/api/v1/ai-tasks/%s" % task_id)
+        if r.status_code != 200:
+            return
+        if r.json().get("status") in ("succeeded", "failed", "cancelled"):
+            return
+        time.sleep(0.5)
+    raise AssertionError("任务 %s 未在 %ss 内落终态" % (task_id, timeout))
+
 class TestCreateTaskAuth:
     def test_requires_login(self, api_env):
         r = api_env.anon().post("/api/v1/ai-tasks",
@@ -153,6 +168,7 @@ class TestCreateTaskAuth:
         assert r1.json()["id"] == r2.json()["id"]  # 双击只建一个任务
         assert r2.json().get("idempotent_replay") is True
         assert _count_tasks(api_env.org1) == 1
+        _drain_task(c, r1.json()["id"])
 
     def test_created_by_is_server_user(self, api_env):
         c = api_env.as_user("u1")
@@ -169,6 +185,7 @@ class TestCreateTaskAuth:
             assert t.created_by == "u1"  # 不信任客户端传入
         finally:
             s.close()
+        _drain_task(c, r.json()["id"])
 
 
 class TestGetTaskIsolation:

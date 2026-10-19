@@ -535,9 +535,11 @@ TASK_TYPE_REGEN_SHOT = "regen_shot"
 TASK_TYPE_RISK = "risk_check"
 TASK_TYPE_FEASIBILITY = "feasibility"
 TASK_TYPE_LIVESTREAM = "livestream_script"
+TASK_TYPE_LIVESTREAM_REGEN = "livestream_regen_segment"
 TASK_TYPES = (
     TASK_TYPE_IDEAS, TASK_TYPE_STORYBOARD, TASK_TYPE_REGEN_SHOT,
     TASK_TYPE_RISK, TASK_TYPE_FEASIBILITY, TASK_TYPE_LIVESTREAM,
+    TASK_TYPE_LIVESTREAM_REGEN,
 )
 
 TASK_STATUS_PENDING = "pending"
@@ -688,7 +690,8 @@ class ModelPrice(Base):
 
 # 已知任务类型（与 RUNNERS / gateway task_type 对齐）
 AI_TASK_TYPES = ("ideas", "storyboard", "regen_shot", "feasibility", "risk_check",
-                 "livestream_script", "colloquial_rewrite")
+                 "livestream_script", "livestream_regen_segment",
+                 "colloquial_rewrite")
 
 
 class TaskModelPolicy(Base):

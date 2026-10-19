@@ -10,7 +10,7 @@
 
 task_type → prompt 版本映射：
 """
-from . import feasibility_v1, ideas_v1, regen_shot_v1, risk_review_v1, storyboard_v1, storyboard_v2, livestream_v1, colloquial_v1, copyopt_v1, plan_v1, platform_v1, review_v1
+from . import feasibility_v1, ideas_v1, regen_shot_v1, risk_review_v1, storyboard_v1, storyboard_v2, livestream_v1, livestream_v2, colloquial_v1, colloquial_v2, copyopt_v1, plan_v1, platform_v1, review_v1
 from .common import FACT_GROUNDING_RULES, SHOT_FIELDS_DESC, facts_block, product_block
 
 PROMPT_MODULES = {
@@ -20,8 +20,9 @@ PROMPT_MODULES = {
     "regen_shot": regen_shot_v1,
     "feasibility": feasibility_v1,
     "risk_check": risk_review_v1,
-    "livestream_script": livestream_v1,
-    "colloquial_rewrite": colloquial_v1,
+    "livestream_script": livestream_v2,  # V3.1：v2（可选输入+待确认清单）
+    "livestream_regen_segment": livestream_v2,  # V3.1：单段重生成复用 v2
+    "colloquial_rewrite": colloquial_v2,  # V3.1：v2（事实 grounding）
     "copy_optimize": copyopt_v1,
     "content_plan": plan_v1,
     "platform_adapt": platform_v1,
@@ -35,8 +36,8 @@ from .regen_shot_v1 import build_regen_shot_messages
 from .risk_review_v1 import REVIEW_PROMPT_TMPL, build_risk_review_messages
 from .storyboard_v1 import build_storyboard_messages
 from .storyboard_v2 import build_storyboard_v2_messages
-from .livestream_v1 import build_livestream_messages
-from .colloquial_v1 import build_colloquial_messages
+from .livestream_v2 import build_livestream_messages  # V3.1：v2 向后兼容 v1 签名
+from .colloquial_v2 import build_colloquial_messages  # V3.1：v2 向后兼容 v1 签名
 from .copyopt_v1 import build_copyopt_messages, build_rewrite_paragraph_messages
 from .plan_v1 import build_plan_messages
 from .platform_v1 import build_platform_messages, validate_platform_result

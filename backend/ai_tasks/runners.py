@@ -7,7 +7,10 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any, Callable
+
+from ..ai_service import AIFatalError
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +226,40 @@ def _validate_livestream(data: dict, duration=None):
             errors.append(
                 f"[时间轴] 未完整覆盖：最后一段结束于 {prev_end}，"
                 f"总时长为 {total}")
+    # V3.1：待确认清单——可选字段，出现时必须是字符串数组
+    pc = data.get("pending_confirms")
+    if pc is not None and not (
+            isinstance(pc, list)
+            and all(isinstance(x, str) for x in pc)):
+        errors.append("[结构] pending_confirms 不是字符串数组")
+    if errors:
+        return errors, None
+    return [], data
+
+
+def _validate_regen_segment(data: dict, orig_start, orig_end):
+    """V3.1：单段重生成校验——只允许重写话术，时间轴必须与原段一致。
+
+    返回 (errors, validated)。orig_start/orig_end 为原段起止时间。
+    """
+    errors = []
+    if not isinstance(data, dict):
+        return ["返回不是 JSON 对象"], None
+    ph = data.get("phase")
+    if ph not in LIVESTREAM_PHASES:
+        errors.append(f"phase 非法: {ph!r}")
+    st, en = data.get("start_minute"), data.get("end_minute")
+    if st != orig_start or en != orig_end:
+        errors.append(
+            f"时间轴被改动：原段 {orig_start}-{orig_end}，"
+            f"返回 {st}-{en}（单段重生成不许动时间）")
+    sc = data.get("script")
+    if (not isinstance(sc, list)
+            or not any(isinstance(x, str) and x.strip() for x in sc)):
+        errors.append("script 为空")
+    tips = data.get("tips", [])
+    if not isinstance(tips, list):
+        errors.append("tips 不是数组")
     if errors:
         return errors, None
     return [], data
@@ -230,9 +267,14 @@ def _validate_livestream(data: dict, duration=None):
 
 def run_livestream_script(task_id: str, is_cancelled: Callable[[], bool],
                           payload: dict[str, Any]) -> dict[str, Any]:
-    """店播场控脚本异步 runner。payload: {product, facts, category, duration_minutes}。"""
+    """店播场控脚本异步 runner。payload: {product, facts, category, duration_minutes, extra?}。
+
+    V3.1：prompt 升级到 livestream_v2（可选输入 + 待确认清单）；
+    生成结果注入 schema_version/prompt_version/时间戳元信息（旧数据无这些字段
+    仍可读，见前端 renderLivestream 的兼容处理）。
+    """
     from ..ai.prompts import get_prompt_version
-    from ..ai.prompts.livestream_v1 import build_livestream_messages
+    from ..ai.prompts.livestream_v2 import build_livestream_messages
 
     if is_cancelled():
         _cancelled()
@@ -246,10 +288,13 @@ def run_livestream_script(task_id: str, is_cancelled: Callable[[], bool],
         except (TypeError, ValueError):
             duration = 120
         duration = max(30, min(duration, 480))
+        extra = payload.get("extra") or {}
         _check_fact_refs(payload, facts)  # S6.1：gateway 调用前检查引用事实
+        prompt_version = get_prompt_version("livestream_script")
 
         def make_messages(feedback):
-            msgs = build_livestream_messages(product, facts, category, duration)
+            msgs = build_livestream_messages(product, facts, category,
+                                             duration, extra)
             if feedback:
                 msgs.append({"role": "user", "content": feedback})
             return msgs
@@ -261,11 +306,76 @@ def run_livestream_script(task_id: str, is_cancelled: Callable[[], bool],
             "livestream_script", make_messages,
             lambda data: _validate_livestream(data, duration),
             model=payload.get("model") or None, temperature=0.7,
-            prompt_version=get_prompt_version("livestream_script"))
+            prompt_version=prompt_version)
         if is_cancelled():
             _cancelled()
+        # V3.1 §3.2：注入元信息（幂等：已存在则不覆盖，便于追溯与兼容）
+        script.setdefault("schema_version", "livestream_script_v1")
+        script.setdefault("prompt_version", prompt_version)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        script.setdefault("generated_at", now_iso)
+        script["updated_at"] = now_iso
         return {
             "livestream_script": script,
+            "attempts": meta["attempts"],
+            "usage": meta["usage"],
+        }
+    finally:
+        _gw_db.close()
+
+
+def run_livestream_regen_segment(task_id: str,
+                                is_cancelled: Callable[[], bool],
+                                payload: dict[str, Any]) -> dict[str, Any]:
+    """V3.1 §3.3：单段重生成 runner。
+
+    payload: {product, facts, category, duration_minutes, extra?,
+              segment: {phase, start_minute, end_minute, goal}}。
+    只返回重写后的单个段（时间轴与原段一致），由前端按索引替换——
+    其他段落不受影响（隔离性由 _validate_regen_segment + 前端
+    mergeRegenSegment 共同保证）。
+    """
+    from ..ai.prompts import get_prompt_version
+    from ..ai.prompts.livestream_v2 import build_regen_segment_messages
+
+    if is_cancelled():
+        _cancelled()
+    gw, _gw_db = _gateway_for_runner(task_id, payload)
+    try:
+        product = payload.get("product") or {}
+        facts = payload.get("facts") or []
+        category = payload.get("category") or "水果"
+        try:
+            duration = int(payload.get("duration_minutes") or 120)
+        except (TypeError, ValueError):
+            duration = 120
+        segment = payload.get("segment") or {}
+        orig_start, orig_end = (segment.get("start_minute"),
+                                segment.get("end_minute"))
+        if orig_start is None or orig_end is None:
+            raise AIFatalError("缺少原段时间轴（start_minute/end_minute）")
+        extra = payload.get("extra") or {}
+        _check_fact_refs(payload, facts)
+        prompt_version = get_prompt_version("livestream_regen_segment")
+
+        def make_messages(feedback):
+            msgs = build_regen_segment_messages(
+                product, facts, category, duration, segment, extra)
+            if feedback:
+                msgs.append({"role": "user", "content": feedback})
+            return msgs
+
+        seg, meta = gw.generate_with_retry(
+            "livestream_regen_segment", make_messages,
+            lambda data: _validate_regen_segment(data, orig_start, orig_end),
+            model=payload.get("model") or None, temperature=0.7,
+            prompt_version=prompt_version)
+        if is_cancelled():
+            _cancelled()
+        seg["prompt_version"] = prompt_version
+        return {
+            "segment": seg,
+            "segment_index": payload.get("segment_index"),
             "attempts": meta["attempts"],
             "usage": meta["usage"],
         }
@@ -278,4 +388,5 @@ RUNNERS: dict[str, Callable] = {
     "ideas": run_ideas,
     "storyboard": run_storyboard,
     "livestream_script": run_livestream_script,
+    "livestream_regen_segment": run_livestream_regen_segment,  # V3.1 §3.3
 }
