@@ -386,9 +386,9 @@ def health():
     # ai_key_fp：API Key 指纹（sha256 前 8 位），部署后核对配置的 Key 是否正确，不暴露 Key 本身
     key_fp = None
     try:
-        from .core.config import settings as _settings
+        from .core.config import get_settings as _get_settings
 
-        _k = (_settings.LUPIN_API_KEY or "").strip()
+        _k = (_get_settings().LUPIN_API_KEY or "").strip()
         if _k:
             import hashlib
 
