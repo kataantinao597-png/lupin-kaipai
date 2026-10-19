@@ -22,6 +22,7 @@ from ...prompts import (
     build_idea_messages,
     build_regen_shot_messages,
     build_storyboard_messages,
+    build_storyboard_v2_messages,
 )
 from ...schemas import Idea, Shot
 from ...validator import validate_dict
@@ -59,6 +60,13 @@ class StoryboardRequest(BaseModel):
     product: ProductInput
     direction: str = Field(..., min_length=1)
     facts: List[dict] = Field(default_factory=list)
+    # v2 新增：视频用途/可用资源/熟练度（均可选；传了 video_purpose 即走 v2 prompt）
+    video_purpose: Optional[str] = None
+    available_resources: List[str] = Field(default_factory=list)
+    skill_level: Optional[str] = None
+
+
+VIDEO_PURPOSES = {"brand", "sales", "intro", "record"}
 
 
 class RegenShotRequest(BaseModel):
@@ -200,18 +208,29 @@ def create_storyboard(
             "product": req.product.model_dump(),
             "direction": req.direction,
             "facts": req.facts,
+            "video_purpose": req.video_purpose,
+            "available_resources": req.available_resources,
+            "skill_level": req.skill_level,
         }, request)
     _model = get_request_model(request)
     product = req.product.model_dump()
 
+    # v2 分流：前端传了合法 video_purpose 即用 storyboard_v2（含验收标准/时长拆分等）
+    use_v2 = (req.video_purpose or "").strip() in VIDEO_PURPOSES
+    v2_purpose = req.video_purpose.strip() if use_v2 else "intro"
+
     def make_messages(feedback: Optional[str]):
+        if use_v2:
+            return build_storyboard_v2_messages(
+                product, req.direction, v2_purpose, req.available_resources,
+                req.facts, feedback)
         return build_storyboard_messages(product, req.direction, req.facts, feedback)
 
     try:
         sb, meta = gw.generate_with_retry(
             "storyboard", make_messages, validate_dict,
             model=_model or None, temperature=0.3,
-            prompt_version=get_prompt_version("storyboard"))
+            prompt_version=get_prompt_version("storyboard_v2" if use_v2 else "storyboard"))
     except BudgetExceededError as e:
         raise HTTPException(status_code=402, detail=str(e))
     except TaskLimitExceededError as e:

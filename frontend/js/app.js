@@ -85,7 +85,7 @@ function onEnter(v) {
   else if (v === "v3") { renderStepper(); renderIdeas(); renderShots(); }
   else if (v === "v4") { renderPoster(); }
   else if (v === "v5") { renderShoot(); loadAssets(); fillNote(); }
-  else if (v === "v6") { renderDeliveryTitles(); loadTimeline(); }
+  else if (v === "v6") { renderDeliveryTitles(); loadTimeline(); renderFinalArchive(); }
 }
 
 /* ---------- 认证 ---------- */
@@ -137,7 +137,8 @@ async function doLogout() {
   await AuthClient.logout();
   S.user = null; S.org = null; S.works = []; S.activeWork = null; S.data = blankData(); S.facts = [];
   renderUser();
-  go("v-login");
+  // 登出后回到公开展示页（三层架构）
+  location.href = "/";
 }
 
 function renderUser() {
@@ -238,8 +239,8 @@ function nextViewFor(d) {
 
 /* ---------- v1 工作台 ---------- */
 const COVERS = [
-  "linear-gradient(135deg,#C0392B,#E67E22)", "linear-gradient(135deg,#1FA97A,#A3D65C)",
-  "linear-gradient(135deg,#2E6BF0,#7C5CFC)", "linear-gradient(135deg,#7C4A1E,#D9A441)",
+  "linear-gradient(135deg,#C62828,#D4A05A)", "linear-gradient(135deg,#0F5132,#2E7D6B)",
+  "linear-gradient(135deg,#2E7D6B,#8FC3B0)", "linear-gradient(135deg,#8A5A2B,#D4A05A)",
 ];
 async function renderWorkbench() {
   if (!S.org) return;
@@ -574,6 +575,132 @@ function renderIdeas() {
   }));
 }
 
+/* ================= V2.0 P0：拍摄条件表单 + 可行性预检 ================= */
+const VIDEO_PURPOSES = [["brand", "品牌宣传"], ["sales", "商品销售"], ["intro", "产品介绍"], ["record", "产地记录"]];
+const SKILL_LEVELS = [["beginner", "新手"], ["skilled", "熟练"], ["pro", "专业"]];
+const RESOURCES = ["手机支架", "补光灯", "背景布", "三脚架"];
+
+function getShootCond() {
+  const d = S.data.shoot_cond || {};
+  return {
+    video_purpose: d.video_purpose || "intro",
+    skill_level: d.skill_level || "beginner",
+    available_resources: d.available_resources || [],
+    unavailable_scenes: d.unavailable_scenes || "",
+  };
+}
+
+function initShootCondForm() {
+  const btn = $("btn_gen_storyboard");
+  if (!btn || $("shoot_cond_form")) return;
+  const panel = btn.closest(".card.panel");
+  const wrap = document.createElement("div");
+  wrap.className = "card panel";
+  wrap.style.marginBottom = "18px";
+  wrap.id = "shoot_cond_form";
+  const c = getShootCond();
+  wrap.innerHTML = `
+    <details ${c.video_purpose ? "" : "open"}>
+      <summary style="cursor:pointer;font-weight:600;font-size:15px">📋 拍摄条件 <span style="font-size:12px;color:var(--muted);font-weight:400">（生成分镜前确认，决定方案是否可行）</span></summary>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+        <label style="font-size:13px">视频用途<br>
+          <select id="sc_purpose" style="width:100%;margin-top:4px;padding:8px;border-radius:8px;border:1px solid var(--line)">
+            ${VIDEO_PURPOSES.map(([v, t]) => `<option value="${v}" ${c.video_purpose === v ? "selected" : ""}>${t}</option>`).join("")}
+          </select></label>
+        <label style="font-size:13px">拍摄熟练度<br>
+          <select id="sc_skill" style="width:100%;margin-top:4px;padding:8px;border-radius:8px;border:1px solid var(--line)">
+            ${SKILL_LEVELS.map(([v, t]) => `<option value="${v}" ${c.skill_level === v ? "selected" : ""}>${t}</option>`).join("")}
+          </select></label>
+      </div>
+      <div style="margin-top:12px;font-size:13px">可用道具（多选）
+        <div id="sc_res" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+          ${RESOURCES.map((r) => `<button type="button" data-res="${r}" class="pill ${c.available_resources.includes(r) ? "blue" : "gray"}" style="cursor:pointer;border:1px solid var(--line)">${r}</button>`).join("")}
+        </div></div>
+      <label style="display:block;margin-top:12px;font-size:13px">没有的场景（逗号分隔，如：没有果园，没有支架）
+        <input id="sc_unavail" style="width:100%;margin-top:4px;padding:8px;border-radius:8px;border:1px solid var(--line)" placeholder="例如：没有果园" value="${esc(c.unavailable_scenes)}"></label>
+      <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn ghost sm" id="btn_check_feas2">检查可行性</button>
+        <span id="sc_feas_result" style="font-size:13px"></span>
+      </div>
+      <div class="err-text" id="sc_err"></div>
+    </details>`;
+  panel.parentNode.insertBefore(wrap, panel);
+  wrap.querySelectorAll("#sc_res button").forEach((b) => b.addEventListener("click", () => {
+    b.classList.toggle("blue"); b.classList.toggle("gray"); saveShootCond(true);
+  }));
+  ["sc_purpose", "sc_skill", "sc_unavail"].forEach((id) => $(id).addEventListener("change", () => saveShootCond(true)));
+  $("btn_check_feas2").addEventListener("click", checkFeasibilityV2);
+}
+
+async function saveShootCond(silent) {
+  const res = [...document.querySelectorAll("#sc_res button.blue")].map((b) => b.dataset.res);
+  S.data.shoot_cond = {
+    video_purpose: $("sc_purpose").value,
+    skill_level: $("sc_skill").value,
+    available_resources: res,
+    unavailable_scenes: $("sc_unavail").value.trim(),
+  };
+  if (!silent) await saveWork(); else saveWork();
+}
+
+async function checkFeasibilityV2() {
+  await saveShootCond(false);
+  const p = S.data.product || collectProduct();
+  if (!p || !p.product_name) { errText("sc_err", "请先填写产品资料"); return; }
+  errText("sc_err", "");
+  const box = $("sc_feas_result");
+  box.innerHTML = '<span style="color:var(--muted)">检查中…</span>';
+  try {
+    const c = getShootCond();
+    const d = RAW(await ApiClient.post("/api/v2/feasibility-check", {
+      product: p,
+      shoot: {
+        device: "手机", people: 1, lighting: "自然光",
+        available_resources: c.available_resources,
+        unavailable_scenes: c.unavailable_scenes.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
+        skill_level: c.skill_level,
+      },
+      video_purpose: c.video_purpose,
+    }));
+    const color = d.status === "ready" ? "green" : d.status === "need_confirm" ? "amber" : "red";
+    const label = d.status === "ready" ? "条件已满足" : d.status === "need_confirm" ? "需要确认" : "需要替代方案";
+    let html = `<span class="pill ${color}">${label}</span><div style="margin-top:8px">`;
+    (d.checks || []).forEach((ch) => {
+      html += `<div style="margin:6px 0;padding:8px;border:1px solid var(--line);border-radius:8px">
+        <b>${esc(ch.item || "")}</b> — ${esc(ch.message || "")}
+        ${ch.alternative ? `<br><span style="color:var(--accent)">替代：${esc(ch.alternative)}</span>` : ""}</div>`;
+    });
+    box.innerHTML = html + "</div>";
+  } catch (e) {
+    errText("sc_err", e.message || "检查失败");
+    box.innerHTML = "";
+  }
+}
+
+function pushSbVersion() {
+  try {
+    const key = "lupin_sb_versions";
+    const arr = JSON.parse(localStorage.getItem(key) || "[]");
+    if (S.data.storyboard) {
+      arr.unshift({ ts: Date.now(), sb: JSON.parse(JSON.stringify(S.data.storyboard)) });
+      localStorage.setItem(key, JSON.stringify(arr.slice(0, 3)));
+    }
+  } catch (e) { /* 忽略 */ }
+}
+
+function restoreSbVersion() {
+  try {
+    const arr = JSON.parse(localStorage.getItem("lupin_sb_versions") || "[]");
+    if (arr.length < 1) { toast("没有可恢复的版本"); return; }
+    // arr[0] 是当前版，arr[1] 是上一版
+    const prev = arr[1] || arr[0];
+    if (!confirm("恢复到上一版分镜？当前修改将被覆盖。")) return;
+    S.data.storyboard = prev.sb;
+    saveWork(); renderShots();
+    toast("已恢复上一版");
+  } catch (e) { toast("恢复失败"); }
+}
+
 async function genStoryboard() {
   if (!S.activeWork) { toast("请先创建作品"); return; }
   const ideas = S.data.ideas || [];
@@ -583,17 +710,35 @@ async function genStoryboard() {
   const direction = (it.name || "") + "：" + (it.tagline || "");
   const p = S.data.product || collectProduct();
   if (!p || !p.product_name) { toast("请先填写产品资料"); go("v2"); return; }
+  // V2.0：锁定保护 — 收集已锁定镜头
+  const oldShots = (S.data.storyboard && S.data.storyboard.shots) || [];
+  const locked = oldShots.filter((s) => s.locked);
+  if (oldShots.length && locked.length && !confirm(`有 ${locked.length} 个锁定镜头将保留，其余重新生成。继续？`)) return;
+  pushSbVersion();
   errText("sb_err", "");
   aiLoading("正在生成结构化分镜…（约半分钟）");
   try {
-    const d = RAW(await ApiClient.post("/api/storyboard", { product: p, direction, facts: usableFacts() }));
+    const cond = getShootCond();
+    const d = RAW(await ApiClient.post("/api/storyboard", {
+      product: p, direction, facts: usableFacts(),
+      video_purpose: cond.video_purpose,
+      available_resources: cond.available_resources,
+    }));
+    let shots = d.storyboard.shots || [];
+    // V2.0：恢复锁定镜头（按 shot_number 对位）
+    if (locked.length) {
+      const lockMap = {};
+      locked.forEach((s) => { lockMap[s.shot_number] = s; });
+      shots = shots.map((s) => lockMap[s.shot_number] || s);
+    }
+    d.storyboard.shots = shots;
     S.data.storyboard = d.storyboard;
     S.data.direction = direction;
     S.data.sbFactsHash = factsHash();
     await saveWork();
     renderShots();
     checkFactsStale();
-    toast(`已生成 ${(d.storyboard.shots || []).length} 个镜头`);
+    toast(`已生成 ${shots.length} 个镜头${locked.length ? `（${locked.length} 个锁定已保留）` : ""}`);
   } catch (e) {
     errText("sb_err", e.message || "生成失败");
   } finally {
@@ -601,39 +746,81 @@ async function genStoryboard() {
   }
 }
 
+function shotDur(s) {
+  // V2.0：优先用新版时长字段，老数据回退到 duration_seconds
+  const rec = s.record_duration_seconds ?? s.duration_seconds ?? "—";
+  const fin = s.final_duration_seconds ?? s.duration_seconds ?? "—";
+  return `录制${rec}s / 成片${fin}s`;
+}
+
 function renderShots() {
   const sb = S.data.storyboard;
   const tb = $("sb_tbody");
+  // V2.0：卡片式渲染（保留 tbody 容器，改放卡片）
+  const wrap = $("sb_cards") || (() => {
+    const d = document.createElement("div");
+    d.id = "sb_cards";
+    tb.closest("table").replaceWith(d);
+    return d;
+  })();
   if (!sb || !(sb.shots || []).length) {
-    tb.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">暂无分镜，请先选择创意方向并生成。</td></tr>';
+    wrap.innerHTML = '<p style="color:var(--muted)">暂无分镜，请先选择创意方向并生成。</p>';
     $("sb_meta").textContent = "";
     return;
   }
   const shots = sb.shots;
-  const total = shots.reduce((a, s) => a + (parseFloat(s.duration_seconds) || 0), 0);
-  $("sb_meta").textContent = `共 ${shots.length} 个镜头 · 总时长 ${Math.round(total)} 秒`;
-  tb.innerHTML = shots.map((s, i) => `
-    <tr>
-      <td>${s.shot_number || i + 1}</td>
-      <td>${esc(s.shot_type || "—")}</td>
-      <td>${esc(s.scene_description || "—")}</td>
-      <td>${esc(s.shooting_action || "—")}</td>
-      <td>${esc(String(s.duration_seconds ?? "—"))}s</td>
-      <td>${esc(s.voiceover || s.subtitle || "—")}</td>
-      <td><div class="op">
-        <button data-shot="edit" data-i="${i}">编辑</button>
-        <button data-shot="regen" data-i="${i}">重拍</button>
-        <button data-shot="del" data-i="${i}">删除</button>
-      </div></td>
-    </tr>`).join("");
-  tb.querySelectorAll("[data-shot]").forEach((b) => b.addEventListener("click", () => shotAction(b.dataset.shot, +b.dataset.i)));
+  const totalFin = shots.reduce((a, s) => a + (parseFloat(s.final_duration_seconds ?? s.duration_seconds) || 0), 0);
+  $("sb_meta").textContent = `共 ${shots.length} 个镜头 · 成片约 ${Math.round(totalFin)} 秒`;
+  wrap.innerHTML = shots.map((s, i) => {
+    const steps = (s.shoot_steps || []).map((t, j) => `<li>${esc(t)}</li>`).join("");
+    const acc = (s.acceptance_criteria || []).map((t) => `<li>✓ ${esc(t)}</li>`).join("");
+    const fails = (s.failure_modes || []).map((f) => `<li><b>${esc(f.symptom || "")}</b> → ${esc(f.fix || "")}</li>`).join("");
+    return `<div class="card" style="margin-bottom:12px;padding:14px;${s.locked ? "border:2px solid var(--accent);" : ""}">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <b>镜头 ${s.shot_number || i + 1}</b>
+        ${s.locked ? '<span class="pill blue">🔒 已锁定</span>' : ""}
+        <span style="font-size:12.5px;color:var(--muted)">${esc(s.shot_type || "")} · ${shotDur(s)}</span>
+        <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn ghost sm" data-shot="lock" data-i="${i}">${s.locked ? "解锁" : "锁定"}</button>
+          <button class="btn ghost sm" data-shot="edit" data-i="${i}">编辑</button>
+          <button class="btn ghost sm" data-shot="colloquial" data-i="${i}">拉呱版</button>
+          <button class="btn ghost sm" data-shot="regen" data-i="${i}">重拍</button>
+          <button class="btn ghost sm" data-shot="del" data-i="${i}">删除</button>
+        </span>
+      </div>
+      ${s.shot_purpose ? `<p style="margin:8px 0;font-size:13.5px"><b>目的：</b>${esc(s.shot_purpose)}</p>` : ""}
+      ${steps ? `<div style="font-size:13px"><b>拍摄步骤：</b><ol style="margin:4px 0;padding-left:20px">${steps}</ol></div>`
+              : (s.shooting_action ? `<p style="font-size:13px"><b>动作：</b>${esc(s.shooting_action)}</p>` : "")}
+      ${acc ? `<div style="font-size:13px"><b>验收标准：</b><ul style="margin:4px 0;padding-left:20px;color:var(--ok)">${acc}</ul></div>` : ""}
+      <details style="margin-top:8px;font-size:12.5px;color:var(--muted)">
+        <summary style="cursor:pointer">机位 / 运镜 / 失败处理 / 旁白字幕</summary>
+        <div style="margin-top:6px;display:grid;gap:6px">
+          ${s.phone_setup ? `<div><b>机位：</b>${esc(s.phone_setup)}</div>` : ""}
+          ${s.camera_movement ? `<div><b>运镜：</b>${esc(s.camera_movement)}</div>` : ""}
+          ${s.scene_description ? `<div><b>画面：</b>${esc(s.scene_description)}</div>` : ""}
+          ${fails ? `<div><b>失败处理：</b><ul style="margin:4px 0;padding-left:18px">${fails}</ul></div>` : ""}
+          ${s.alt_approach ? `<div><b>替代拍法：</b>${esc(s.alt_approach)}</div>` : ""}
+          ${s.reshoot_guide ? `<div><b>补拍指引：</b>${esc(s.reshoot_guide)}</div>` : ""}
+          ${(s.voiceover || s.subtitle) ? `<div><b>旁白：</b>${esc(s.voiceover || "—")}<br><b>字幕：</b>${esc(s.subtitle || "—")}</div>` : ""}
+        </div>
+      </details>
+    </div>`;
+  }).join("") + `<div style="margin-top:8px"><button class="btn ghost sm" id="btn_restore_sb">↩ 恢复上一版</button></div>`;
+  wrap.querySelectorAll("[data-shot]").forEach((b) => b.addEventListener("click", () => shotAction(b.dataset.shot, +b.dataset.i)));
+  const rb = $("btn_restore_sb");
+  if (rb) rb.addEventListener("click", restoreSbVersion);
 }
 
 async function shotAction(act, i) {
   const shots = S.data.storyboard.shots;
   const s = shots[i];
-  if (act === "del") {
-    if (!confirm(`删除镜头 ${s.shot_number}？`)) return;
+  if (act === "lock") {
+    s.locked = !s.locked;
+    await saveWork(); renderShots();
+    toast(s.locked ? `镜头 ${s.shot_number} 已锁定，重新生成时将保留` : `镜头 ${s.shot_number} 已解锁`);
+  } else if (act === "del") {
+    if (!confirm(`删除镜头 ${s.shot_number}？删除后可点「恢复上一版」找回。`)) return;
+    pushSbVersion();
     shots.splice(i, 1);
     shots.forEach((x, j) => { x.shot_number = j + 1; });
     await saveWork(); renderShots();
@@ -650,6 +837,8 @@ async function shotAction(act, i) {
     if (d > 0) s.duration_seconds = d;
     await saveWork(); renderShots();
     toast("已更新");
+  } else if (act === "colloquial") {
+    openColloquialModal(i);
   } else if (act === "regen") {
     const instruction = prompt(`对镜头 ${s.shot_number} 的修改要求（例如：改成俯视角度）：`);
     if (!instruction || !instruction.trim()) return;
@@ -696,7 +885,15 @@ async function runRisk() {
     S.data.risk = (d.flags || []).map((f) => ({ ...f, confirmed: false }));
     await saveWork();
     renderRisks();
-    if (!S.data.risk.length) $("risk_results").innerHTML = '<p style="font-size:13px;color:var(--muted)">未发现明显风险提示（仍建议人工通读旁白/字幕复核）。</p>';
+    if (!S.data.risk.length) {
+      // V2.0：文案从后端统一接口取，不再硬编码
+      try {
+        const t = RAW(await ApiClient.get("/api/v2/risk-text"));
+        $("risk_results").innerHTML = `<p style="font-size:13px;color:var(--muted)">${esc(t.no_risk_found_text || "")}</p>`;
+      } catch (e) {
+        $("risk_results").innerHTML = '<p style="font-size:13px;color:var(--muted)">本脚本未发现需要标注的风险断言，发布前请人工确认待确认事项。本工具不保证广告合规。</p>';
+      }
+    }
   } catch (e) {
     errText("risk_err", e.message || "检查失败");
   } finally {
@@ -776,6 +973,7 @@ sub: p.sub || "",
 promo: p.promo || "",
 btn: p.btn || "立即抢购",
 copy: p.copy || "",
+ai_image: p.ai_image || "",
 };
 }
 function renderPoster() {
@@ -785,14 +983,31 @@ $("pe_sub").value = st.sub;
 $("pe_promo").value = st.promo;
 $("pe_btn").value = st.btn;
 $("pe_copy").value = st.copy;
-document.querySelectorAll("#poster_tpls.t").forEach((t) => t.classList.toggle("active", t.dataset.tpl === st.tpl));
+checkImageStatus();
+document.querySelectorAll("#poster_tpls .t").forEach((t) => t.classList.toggle("active", t.dataset.tpl === st.tpl));
 updatePosterPreview();
 }
 function updatePosterPreview() {
-const tpl = document.querySelector("#poster_tpls.t.active");
+const tpl = document.querySelector("#poster_tpls .t.active");
 const key = tpl? tpl.dataset.tpl: "harvest";
-const bg = (POSTER_TPLS[key] || POSTER_TPLS.harvest).bg;
-$("poster_preview").style.background = bg;
+const T = POSTER_TPLS[key] || POSTER_TPLS.harvest;
+const pv = $("poster_preview");
+pv.style.background = T.bg;
+pv.classList.toggle("light", !!T.light);
+pv.style.aspectRatio = T.horizontal ? "16/10" : "";
+pv.style.minHeight = T.horizontal ? "0" : "";
+pv.style.borderWidth = T.light ? "3px" : "";
+pv.style.borderColor = T.light ? "#D4A05A" : "";
+let aiBg = pv.querySelector(".ai-bg"), scrim = pv.querySelector(".ai-scrim");
+const aiSrc = (posterState() || {}).ai_image;
+if (aiSrc) {
+if (!aiBg) { aiBg = document.createElement("img"); aiBg.className = "ai-bg"; aiBg.alt = ""; pv.prepend(aiBg); }
+aiBg.src = aiSrc;
+if (!scrim) { scrim = document.createElement("div"); scrim.className = "ai-scrim"; aiBg.after(scrim); }
+} else {
+if (aiBg) aiBg.remove();
+if (scrim) scrim.remove();
+}
 const title = $("pe_title").value.trim() || "产品名称";
 const sub = $("pe_sub").value.trim();
 $("pp_title").innerHTML = esc(title).replace(/\n/g, "<br>") + (sub? "<br>" + esc(sub): "");
@@ -800,10 +1015,12 @@ $("pp_promo").textContent = $("pe_promo").value.trim() || "促 销 信 息";
 $("pp_btn").textContent = ($("pe_btn").value.trim() || "行动按钮") + " →";
 }
 function collectPoster() {
-const tpl = document.querySelector("#poster_tpls.t.active");
+const tpl = document.querySelector("#poster_tpls .t.active");
+const prev = (S.data && S.data.poster) || {};
 return { tpl: tpl? tpl.dataset.tpl: "harvest", title: $("pe_title").value.trim(),
 sub: $("pe_sub").value.trim(), promo: $("pe_promo").value.trim(),
-btn: $("pe_btn").value.trim(), copy: $("pe_copy").value.trim()};
+btn: $("pe_btn").value.trim(), copy: $("pe_copy").value.trim(),
+ai_image: prev.ai_image || ""};
 }
 async function savePosterDraft() {
 if (!S.activeWork) { toast("请先创建作品"); return;}
@@ -812,34 +1029,49 @@ await saveWork();
 $("poster_msg").textContent = "✓ 草稿已保存到当前作品";
 setTimeout(() => { $("poster_msg").textContent = "";}, 2500);
 }
-function exportPosterPNG() {
+async function exportPosterPNG() {
 const st = collectPoster();
-const W = 1080, H = 1920;
+const T = POSTER_TPLS[st.tpl] || POSTER_TPLS.harvest;
+const horizontal = !!T.horizontal, light = !!T.light;
+const W = horizontal ? 1920 : 1080, H = horizontal ? 1080 : 1920;
 const cv = document.createElement("canvas");
 cv.width = W; cv.height = H;
 const ctx = cv.getContext("2d");
-// 背景：按模板取首尾色做竖向渐变
+// 背景：AI 图优先（cover），否则按模板取首尾色做竖向渐变
+let drewImg = false;
+if (st.ai_image) drewImg = await drawCoverImage(ctx, st.ai_image, W, H);
+if (!drewImg) {
 const colorStops = { harvest: ["#6E2A18", "#C07F33"], ocean: ["#12395E", "#2E7BB0"],
-orchard: ["#1E3A24", "#5E9E52"], grape: ["#3A1E5E", "#9E6BD8"]};
+orchard: ["#1E3A24", "#5E9E52"], grape: ["#3A1E5E", "#9E6BD8"],
+guochao: ["#0C4229", "#7A1F1A"], minimal_h: ["#F8F4EA", "#EFE7D2"]};
 const [c1, c2] = colorStops[st.tpl] || colorStops.harvest;
 const g = ctx.createLinearGradient(0, 0, 0, H);
 g.addColorStop(0, c1); g.addColorStop(1, c2);
 ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-// 年画红框（与页面预览一致）
-ctx.strokeStyle = "#B23727"; ctx.lineWidth = 28; ctx.strokeRect(14, 14, W - 28, H - 28);
-ctx.fillStyle = "#fff"; ctx.textAlign = "center";
+}
+// AI 图或深色模板：加底部暗角保证文字可读
+if (drewImg || !light) {
+const sg = ctx.createLinearGradient(0, H * 0.35, 0, H);
+sg.addColorStop(0, "rgba(8,25,18,0)"); sg.addColorStop(1, "rgba(8,25,18,.72)");
+ctx.fillStyle = sg; ctx.fillRect(0, 0, W, H);
+}
+// 边框（与页面预览一致）
+ctx.strokeStyle = light ? "#D4A05A" : "#B23727"; ctx.lineWidth = 28;
+ctx.strokeRect(14, 14, W - 28, H - 28);
+const ink = light && !drewImg, ty = H - (horizontal ? 330 : 620);
+ctx.fillStyle = ink ? "#252820" : "#fff"; ctx.textAlign = "center";
 const title = (st.title || "产品名称") + (st.sub? "\n" + st.sub: "");
-ctx.font = "900 110px 'Noto Sans SC', sans-serif";
+ctx.font = "900 " + (horizontal ? 96 : 110) + "px 'Noto Sans SC', sans-serif";
 const lines = title.split("\n");
-lines.forEach((ln, i) => ctx.fillText(ln, W / 2, H - 620 + i * 140));
+lines.forEach((ln, i) => ctx.fillText(ln, W / 2, ty + i * (horizontal ? 120 : 140)));
 ctx.font = "500 44px 'Noto Sans SC', sans-serif";
-ctx.fillStyle = "#FFF6E3";
-ctx.fillText((st.promo || "促销信息").split("").join(" "), W / 2, H - 380);
+ctx.fillStyle = ink ? "#5B5F52" : "#FFF6E3";
+ctx.fillText((st.promo || "促销信息").split("").join(" "), W / 2, ty + (horizontal ? 170 : 240));
 // 按钮
-ctx.fillStyle = "#fff";
-const bw = 420, bh = 110, bx = (W - bw) / 2, by = H - 300;
+const bw = 420, bh = 110, bx = (W - bw) / 2, by = ty + (horizontal ? 230 : 300);
+ctx.fillStyle = ink ? "#0F5132" : "#fff";
 ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 55); ctx.fill();
-ctx.fillStyle = "#B4502E"; ctx.font = "700 48px 'Noto Sans SC', sans-serif";
+ctx.fillStyle = ink ? "#fff" : "#B4502E"; ctx.font = "700 48px 'Noto Sans SC', sans-serif";
 ctx.fillText((st.btn || "立即抢购") + " →", W / 2, by + 74);
 const a = document.createElement("a");
 a.href = cv.toDataURL("image/png");
@@ -848,8 +1080,26 @@ document.body.appendChild(a); a.click(); a.remove();
 toast("海报 PNG 已导出");
 }
 
-/* ================= v5 拍摄执行 ================= */
-function shootKey(s, i) { return "s" + (s.shot_number || i + 1);}
+/* ================= v5 拍摄执行（V2.0 P0：五态） ================= */
+function shootKey(s, i) {
+  // V2.0：key 加入画面 hash，避免分镜重排后状态错位
+  const h = (s.scene_description || "").slice(0, 20);
+  let x = 0;
+  for (let j = 0; j < h.length; j++) x = ((x << 5) - x + h.charCodeAt(j)) | 0;
+  return "s" + (s.shot_number || i + 1) + "_" + Math.abs(x).toString(36);
+}
+// 五态顺序：待拍摄 → 已拍摄待验收 → 验收通过 → 需要补拍 → 用替代方案 → 待拍摄
+const SHOOT_STATES = [
+  ["todo", "待拍摄", "amber"],
+  ["shot", "已拍摄·待验收", "blue"],
+  ["passed", "验收通过", "green"],
+  ["reshoot", "需要补拍", "red"],
+  ["alt", "用替代方案", "gray"],
+];
+function nextShootState(cur) {
+  const idx = SHOOT_STATES.findIndex(([v]) => v === cur);
+  return SHOOT_STATES[(idx + 1) % SHOOT_STATES.length][0];
+}
 function renderShoot() {
 const sb = S.data.storyboard;
 const list = $("shoot_list");
@@ -861,29 +1111,395 @@ return;
 }
 const shots = sb.shots;
 const st = S.data.shoot_state || {};
-let done = 0;
+let shotCount = 0, passCount = 0;
 list.innerHTML = shots.map((s, i) => {
 const k = shootKey(s, i);
 const cur = (st[k] || {}).status || "todo";
-if (cur === "done") done++;
-const pill = cur === "done"? '<span class="note pill green">已完成</span>': '<span class="note pill amber">待拍摄</span>';
-return `<div class="check ${cur === "done"? "done": ""}" data-k="${k}">
-<span class="box"></span>
-<span class="t"><b>镜头 ${s.shot_number || i + 1} · ${esc(s.scene_description || "")}</b><br>
-<span style="color:var(--muted);font-size:12.5px">${esc(String(s.duration_seconds || ""))}s · ${esc(s.shooting_action || "")} · ${esc(s.camera_movement || "")}</span></span>
-${pill}</div>`;
+if (cur === "shot" || cur === "passed" || cur === "reshoot" || cur === "alt") shotCount++;
+if (cur === "passed") passCount++;
+const meta = SHOOT_STATES.find(([v]) => v === cur) || SHOOT_STATES[0];
+const acc = (s.acceptance_criteria || []).slice(0, 3).map((t) => `<li>${esc(t)}</li>`).join("");
+const accRec = getAcc(k);
+const accMeta = accRec ? ACC_LABELS[accRec.status] : null;
+const assetN = (accRec && accRec.asset_ids) ? accRec.asset_ids.length : 0;
+return `<div class="shot-card" data-k="${k}" data-i="${i}" style="border-bottom:1px solid #F0F3F7">
+<div class="check" style="cursor:pointer;border:0;padding-bottom:6px">
+<span class="box" style="${cur === "passed" ? "background:var(--ok);" : ""}"></span>
+<span class="t"><b>镜头 ${s.shot_number || i + 1} · ${esc(s.shot_purpose || s.scene_description || "")}</b><br>
+<span style="color:var(--muted);font-size:12.5px">${shotDur(s)} · ${esc((s.shoot_steps || [])[0] || s.shooting_action || "")}</span>
+${acc ? `<ul style="margin:4px 0;padding-left:18px;font-size:12px;color:var(--ok)">✓验收：${acc}</ul>` : ""}
+${accMeta ? `<span class="pill ${accMeta[1]}" style="font-size:11px;margin-top:4px;display:inline-block">验收：${accMeta[0]}</span>` : ""}</span>
+<span class="note pill ${meta[2]}">${meta[1]}</span></div>
+<div class="acc-bar" style="display:flex;gap:8px;align-items:center;padding:0 6px 12px 38px;flex-wrap:wrap">
+<button class="btn ghost sm" data-acc="accepted" style="font-size:12px;padding:5px 12px">验收通过</button>
+<button class="btn ghost sm" data-acc="needs_reshoot" style="font-size:12px;padding:5px 12px">需补拍</button>
+<button class="btn ghost sm" data-acc="pending" style="font-size:12px;padding:5px 12px">待定</button>
+<button class="btn ghost sm" data-asset="1" style="font-size:12px;padding:5px 12px">关联素材（${assetN}）</button>
+</div></div>`;
 }).join("");
-list.querySelectorAll(".check").forEach((c) => c.addEventListener("click", async () => {
-const k = c.dataset.k;
+list.querySelectorAll(".shot-card").forEach((c) => {
+const k = c.dataset.k, i = +c.dataset.i;
+const s = S.data.storyboard.shots[i];
+c.querySelector(".check").addEventListener("click", async () => {
 const cur = ((S.data.shoot_state || {})[k] || {}).status || "todo";
-S.data.shoot_state[k] = { status: cur === "done"? "todo": "done", note: ""};
+const nxt = nextShootState(cur);
+S.data.shoot_state[k] = { status: nxt, note: "" };
 await saveWork();
 renderShoot();
+if (nxt === "reshoot" && s.reshoot_guide) {
+  alert(`【镜头 ${s.shot_number} 补拍指引】\n${s.reshoot_guide}`);
+} else if (nxt === "alt" && s.alt_approach) {
+  toast("已切换为替代方案：" + s.alt_approach.slice(0, 40));
+}
+});
+/* V2.0 P1：验收按钮组（阻止冒泡，不触发状态切换） */
+c.querySelectorAll("[data-acc]").forEach((b) => b.addEventListener("click", (e) => {
+e.stopPropagation();
+submitAcceptance(k, s.shot_number || i + 1, b.dataset.acc, b);
 }));
-const pct = shots.length? Math.round((done / shots.length) * 100): 0;
-$("shoot_progress").textContent = `拍摄进度 ${done}/${shots.length}`;
-$("shoot_bar").style.width = pct + "%";
-$("shoot_pct").textContent = pct + "%";
+const ab = c.querySelector("[data-asset]");
+if (ab) ab.addEventListener("click", (e) => {
+e.stopPropagation();
+pickShotAsset(k, s.shot_number || i + 1);
+});
+});
+// V2.0：拍摄进度 vs 验收进度两个指标
+const pctShot = shots.length ? Math.round((shotCount / shots.length) * 100) : 0;
+const pctPass = shots.length ? Math.round((passCount / shots.length) * 100) : 0;
+$("shoot_progress").textContent = `拍摄 ${shotCount}/${shots.length} · 验收 ${passCount}/${shots.length}`;
+$("shoot_bar").style.width = pctPass + "%";
+$("shoot_pct").textContent = `验收 ${pctPass}%`;
+renderLivestream();
+}
+
+/* ================= v5 拍摄验收 + 素材关联（V2.0 P1） ================= */
+const ACC_LABELS = {
+accepted: ["验收通过", "green"],
+needs_reshoot: ["需补拍", "red"],
+pending: ["待验收", "amber"],
+};
+function getAcc(k) { return (S.data.shot_acceptance || {})[k] || null; }
+
+/* PATCH /api/v2/shoot/works/{id}/shots/accept：asset_ids 为全量覆盖语义 */
+async function submitAcceptanceRaw(k, shotNumber, status, note, assetIds, btn) {
+if (!S.activeWork) { toast("请先创建作品"); return; }
+S._accBusy = S._accBusy || {};
+if (S._accBusy[k]) return;
+S._accBusy[k] = true;
+if (btn) btn.disabled = true;
+try {
+const r = await ApiClient.patch(`/api/v2/shoot/works/${S.activeWork.id}/shots/accept`, {
+shot_key: k, shot_number: shotNumber, status: status, note: note || "", asset_ids: assetIds || [],
+});
+const res = RAW(r) || {};
+S.data.shot_acceptance = S.data.shot_acceptance || {};
+if (res.acceptance) S.data.shot_acceptance[res.shot_key || k] = res.acceptance;
+await saveWork();
+renderShoot();
+toast(status === "accepted" ? "已验收通过" : status === "needs_reshoot" ? "已标记需补拍" : "已设为待验收");
+} catch (e) {
+toast("验收提交失败：" + (e.message || "网络错误"));
+} finally {
+S._accBusy[k] = false;
+if (btn) btn.disabled = false;
+}
+}
+async function submitAcceptance(k, shotNumber, status, btn) {
+let note = "";
+if (status === "needs_reshoot") {
+note = prompt("请简要描述问题（会出现在补拍清单里）", "");
+if (note === null) return;
+}
+const cur = getAcc(k);
+await submitAcceptanceRaw(k, shotNumber, status, note || "", (cur && cur.asset_ids) || [], btn);
+}
+
+/* 关联素材：前端先验大小/类型，上传后取 asset id 并追加进该镜头 asset_ids */
+let _shotFileInput = null, _shotFileKey = null, _shotFileNum = null;
+function pickShotAsset(k, shotNumber) {
+if (!S.activeWork) { toast("请先创建作品"); return; }
+if (!_shotFileInput) {
+_shotFileInput = document.createElement("input");
+_shotFileInput.type = "file"; _shotFileInput.accept = "image/*,video/*"; _shotFileInput.style.display = "none";
+document.body.appendChild(_shotFileInput);
+_shotFileInput.addEventListener("change", () => {
+const f = _shotFileInput.files[0]; _shotFileInput.value = "";
+const kk = _shotFileKey, nn = _shotFileNum; _shotFileKey = null;
+if (f && kk) uploadShotAsset(kk, nn, f);
+});
+}
+_shotFileKey = k; _shotFileNum = shotNumber;
+_shotFileInput.click();
+}
+async function uploadShotAsset(k, shotNumber, file) {
+if (!S.activeWork) { toast("请先创建作品"); return; }
+if (file.size > 100 * 1024 * 1024) { toast("文件超过 100MB 上限，已拒绝上传"); return; }
+const mt = file.type || "";
+if (mt && !mt.startsWith("image/") && !mt.startsWith("video/")) { toast("只支持图片或视频文件"); return; }
+toast("正在上传 " + file.name + "…");
+try {
+const intent = V1(await ApiClient.post("/api/v1/assets/upload-intents", {
+org_id: S.org.id, work_id: S.activeWork.id,
+filename: file.name, mime: file.type || "application/octet-stream", size: file.size,
+}));
+const fd = new FormData();
+fd.append("upload_token", intent.upload_token);
+fd.append("file", file);
+const r = await fetch("/api/v1/assets/upload", {
+method: "POST", headers: { Authorization: "Bearer " + AuthClient.getAccessToken()},
+credentials: "include", body: fd,
+});
+const d = await r.json().catch(() => ({}));
+if (!r.ok) throw new Error(d.detail || d.message || "上传失败");
+const assetId = V1(d) ? V1(d).id : null;
+if (!assetId) throw new Error("上传成功但未返回素材 id");
+const ids = ((getAcc(k) || {}).asset_ids || []).slice();
+if (!ids.includes(assetId)) ids.push(assetId);
+toast("素材已关联到该镜头");
+await loadAssets();
+const cur = getAcc(k);
+await submitAcceptanceRaw(k, shotNumber, (cur && cur.status) || "pending", (cur && cur.note) || "", ids, null);
+} catch (e) {
+toast("素材上传失败：" + (e.message || "网络错误"));
+}
+}
+
+/* 补拍清单：GET /api/v2/shoot/works/{id}/reshoot-list */
+function ensureReshootModal() {
+if ($("reshoot_modal")) return;
+const m = document.createElement("div");
+m.className = "modal-mask"; m.id = "reshoot_modal";
+m.innerHTML = `<div class="modal" style="max-width:640px"><h3>补拍清单</h3>
+<div id="reshoot_body" style="max-height:50vh;overflow:auto"></div>
+<div style="display:flex;margin-top:16px"><button class="btn ghost sm" id="btn_close_reshoot" style="margin-left:auto">关闭</button></div></div>`;
+document.body.appendChild(m);
+m.addEventListener("click", (e) => { if (e.target === m || e.target.id === "btn_close_reshoot") m.classList.remove("show"); });
+}
+async function showReshootList() {
+if (!S.activeWork) { toast("请先创建作品"); return; }
+ensureReshootModal();
+const body = $("reshoot_body");
+body.innerHTML = '<p style="font-size:13px;color:var(--muted)">加载中…</p>';
+$("reshoot_modal").classList.add("show");
+try {
+const d = RAW(await ApiClient.get(`/api/v2/shoot/works/${S.activeWork.id}/reshoot-list`)) || {};
+const items = d.reshoot || [];
+const b = $("btn_reshoot_list");
+if (b) b.textContent = `补拍清单（${items.length}）`;
+if (!items.length) {
+body.innerHTML = '<p style="font-size:14px;color:var(--muted);padding:18px 4px">暂无需要补拍的镜头</p>';
+} else {
+body.innerHTML = items.map((it) => `
+<div style="border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px">
+<b style="font-size:13.5px">镜头 ${esc(it.shot_number)} · ${esc(it.shot_purpose || "")}</b>
+${it.note ? `<p style="font-size:12.5px;margin:6px 0"><span class="pill red" style="font-size:11px">问题</span> ${esc(it.note)}</p>` : ""}
+${it.reshoot_guide ? `<p style="font-size:12.5px;margin:6px 0;color:var(--ink2)">补拍指引：${esc(it.reshoot_guide)}</p>` : ""}
+${(it.failure_modes || []).length ? `<ul style="font-size:12px;color:var(--muted);margin:6px 0;padding-left:18px">${it.failure_modes.map((f) => `<li>${esc(f.symptom || "")} → ${esc(f.fix || "")}</li>`).join("")}</ul>` : ""}
+</div>`).join("");
+}
+} catch (e) {
+body.innerHTML = '<p class="err-text">加载失败：' + esc(e.message || "网络错误") + "</p>";
+}
+}
+
+/* 剪辑清单下载：GET /api/v2/shoot/works/{id}/edit-list.docx */
+async function exportEditList() {
+if (!S.activeWork) { toast("请先创建作品"); return; }
+errText("export_err", "");
+toast("正在生成剪辑清单…");
+try {
+const r = await fetch(`/api/v2/shoot/works/${S.activeWork.id}/edit-list.docx`, {
+headers: { Authorization: "Bearer " + AuthClient.getAccessToken()},
+credentials: "include",
+});
+if (!r.ok) {
+const d = await r.json().catch(() => ({}));
+throw new Error(d.detail || d.message || ("下载失败：" + r.status));
+}
+const blob = await r.blob();
+const name = ((S.data && S.data.product && S.data.product.product_name) || "未命名");
+const a = document.createElement("a");
+a.href = URL.createObjectURL(blob);
+a.download = `剪辑清单_${name}.docx`;
+document.body.appendChild(a); a.click(); a.remove();
+setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+toast("剪辑清单已下载");
+} catch (e) {
+errText("export_err", e.message || "下载失败");
+toast("剪辑清单下载失败：" + (e.message || "网络错误"));
+}
+}
+
+/* V2.0 P1：只改 app.js，用 JS 注入 UI（不改 HTML） */
+function injectP1UI() {
+const bp = $("btn_print");
+if (bp && !$("btn_reshoot_list")) {
+const b = document.createElement("button");
+b.className = "btn ghost sm"; b.id = "btn_reshoot_list";
+b.textContent = "补拍清单";
+b.addEventListener("click", showReshootList);
+bp.parentNode.insertBefore(b, bp);
+}
+const bea = $("btn_export_all");
+if (bea && !$("exp_editlist")) {
+const row = document.createElement("div");
+row.className = "dl-row";
+row.innerHTML = `<span class="dl-ic" style="background:#7A3E1F">剪辑</span><div><b style="font-size:13.5px">剪辑交付清单</b><div style="font-size:11.5px;color:var(--muted)">已验收素材的剪辑时间轴</div></div><button class="btn ghost sm" id="exp_editlist">下载</button>`;
+bea.parentNode.insertBefore(row, bea);
+row.querySelector("#exp_editlist").addEventListener("click", exportEditList);
+}
+}
+
+/* ================= #7 店播场控脚本 ================= */
+
+async function pollAiTask(taskId, label, timeoutMs) {
+  const t0 = Date.now();
+  timeoutMs = timeoutMs || 180000;
+  while (Date.now() - t0 < timeoutMs) {
+    const t = RAW(await ApiClient.get(`/api/v1/ai-tasks/${taskId}`));
+    if (t.status === "succeeded") return t.result || {};
+    if (t.status === "failed" || t.status === "cancelled") {
+      throw new Error((label || "AI 任务") + "失败：" + (t.error || "未知错误"));
+    }
+    await new Promise((r) => setTimeout(r, 2500));
+  }
+  throw new Error((label || "AI 任务") + "超时，请稍后在任务列表查看");
+}
+
+function renderLivestream() {
+  const box = $("live_result");
+  const sc = S.data.livestream_script;
+  if (!sc || !(sc.segments || []).length) {
+    $("live_status").textContent = "未生成";
+    $("live_status").className = "pill gray";
+    $("btn_export_live").style.display = "none";
+    return;
+  }
+  $("live_status").textContent = "已生成";
+  $("live_status").className = "pill green";
+  $("btn_export_live").style.display = "";
+  const segs = (sc.segments || []).map((s) => `
+    <div class="live-seg">
+      <span class="live-phase">${esc(s.phase || "")}</span><span class="live-time">${esc(String(s.start_minute ?? ""))}–${esc(String(s.end_minute ?? ""))} 分钟</span>
+      ${s.goal ? `<div class="live-goal">目标：${esc(s.goal)}</div>` : ""}
+      <ul class="live-script">${(s.script || []).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
+      ${(s.tips || []).map((t) => `<div class="live-tip">场控提示：${esc(t)}</div>`).join("")}
+    </div>`).join("");
+  const bags = (sc.lucky_bag_points || []).map((b) =>
+    `<li>${esc(String(b.at_minute ?? ""))} 分钟 · ${esc(b.name || "福袋")}：${esc(b.script || "")}</li>`).join("");
+  const closing = (sc.closing_scripts || []).map((x) => `<li>${esc(x)}</li>`).join("");
+  const rescue = (sc.rescue_scripts || []).map((x) =>
+    `<li><b>${esc(x.scene || "")}</b>：${esc(x.script || "")}</li>`).join("");
+  const prep = (sc.prep_checklist || []).map((x) => `<li>${esc(x)}</li>`).join("");
+  box.innerHTML = `
+    <h4 style="font-size:14px;margin-bottom:4px">${esc(sc.title || "店播场控脚本")}</h4>
+    <div class="live-tl">${segs}</div>
+    ${bags ? `<div class="live-block"><h4>福袋互动点</h4><ul class="live-script">${bags}</ul></div>` : ""}
+    ${closing ? `<div class="live-block"><h4>转款逼单话术</h4><ul class="live-script">${closing}</ul></div>` : ""}
+    ${rescue ? `<div class="live-block"><h4>冷场救场话术</h4><ul class="live-script">${rescue}</ul></div>` : ""}
+    ${prep ? `<div class="live-block"><h4>开播前准备</h4><ul class="live-script">${prep}</ul></div>` : ""}`;
+}
+
+async function genLivestreamScript() {
+  const category = $("live_category").value;
+  const duration = parseInt($("live_duration").value, 10) || 120;
+  errText("live_err", "");
+  aiLoading("正在生成场控脚本…");
+  try {
+    const t = RAW(await ApiClient.post("/api/v1/ai-tasks", {
+      task_type: "livestream_script",
+      org_id: S.org.id,
+      payload: {
+        product: S.data.product || {},
+        facts: usableFacts(),
+        category: category,
+        duration_minutes: duration,
+      },
+    }));
+    const result = await pollAiTask(t.id, "场控脚本");
+    if (!result.livestream_script || !(result.livestream_script.segments || []).length) {
+      throw new Error("AI 返回的脚本结构异常，请重试");
+    }
+    S.data.livestream_script = result.livestream_script;
+    await saveWork();
+    renderLivestream();
+    toast("场控脚本已生成");
+  } catch (e) {
+    errText("live_err", e.message || "生成失败");
+  } finally {
+    aiLoadingDone();
+  }
+}
+
+function exportLivestreamTxt() {
+  const sc = S.data.livestream_script;
+  if (!sc) { toast("请先生成场控脚本"); return; }
+  const p = S.data.product || {};
+  let txt = `${sc.title || "店播场控脚本"}\n产品：${p.product_name || ""} · 总时长约 ${sc.total_minutes || ""} 分钟\n\n`;
+  (sc.segments || []).forEach((s) => {
+    txt += `\n【${s.phase || ""}】${s.start_minute ?? ""}–${s.end_minute ?? ""} 分钟${s.goal ? " · 目标：" + s.goal : ""}\n`;
+    (s.script || []).forEach((x) => { txt += `  ${x}\n`; });
+    (s.tips || []).forEach((t) => { txt += `  ※ 场控提示：${t}\n`; });
+  });
+  if ((sc.lucky_bag_points || []).length) {
+    txt += "\n【福袋互动点】\n";
+    sc.lucky_bag_points.forEach((b) => { txt += `  ${b.at_minute} 分钟 · ${b.name}：${b.script}\n`; });
+  }
+  if ((sc.closing_scripts || []).length) {
+    txt += "\n【转款逼单话术】\n";
+    sc.closing_scripts.forEach((x) => { txt += `  ${x}\n`; });
+  }
+  if ((sc.rescue_scripts || []).length) {
+    txt += "\n【冷场救场话术】\n";
+    sc.rescue_scripts.forEach((x) => { txt += `  ${x.scene}：${x.script}\n`; });
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([txt], { type: "text/plain;charset=utf-8" }));
+  a.download = "店播场控脚本.txt";
+  document.body.appendChild(a); a.click(); a.remove();
+  toast("已导出 TXT");
+}
+
+/* ================= #9 拉呱版改写器 ================= */
+
+let colloqShotIdx = -1;
+
+async function openColloquialModal(i) {
+  const shots = (S.data.storyboard || {}).shots || [];
+  const s = shots[i];
+  if (!s) return;
+  const orig = String(s.voiceover || s.subtitle || "").trim();
+  if (!orig) { toast("该镜头暂无口播文案"); return; }
+  colloqShotIdx = i;
+  $("colloq_orig").textContent = orig;
+  $("colloq_new").textContent = "改写中…";
+  $("colloq_changes").innerHTML = "";
+  errText("colloq_err", "");
+  $("colloquial_modal").classList.add("show");
+  try {
+    const d = RAW(await ApiClient.post("/api/colloquial-rewrite", {
+      text: orig,
+      product_name: (S.data.product || {}).product_name || "",
+    }));
+    $("colloq_new").textContent = d.rewritten || "—";
+    $("colloq_changes").innerHTML =
+      (d.changes || []).map((c) => `<li>${esc(c)}</li>`).join("");
+  } catch (e) {
+    $("colloq_new").textContent = "—";
+    errText("colloq_err", e.message || "改写失败");
+  }
+}
+
+async function useColloquial() {
+  const shots = (S.data.storyboard || {}).shots || [];
+  const s = shots[colloqShotIdx];
+  const nw = $("colloq_new").textContent.trim();
+  if (!s || !nw || nw === "改写中…" || nw === "—") return;
+  s.voiceover = nw;
+  await saveWork();
+  renderShots();
+  $("colloquial_modal").classList.remove("show");
+  toast("已采用口语版");
 }
 function fillNote() { $("shoot_note").value = (S.data && S.data.shoot_note) || "";}
 
@@ -1083,6 +1699,335 @@ if (!el.classList.contains("in")) { el.classList.add("reveal"); io.observe(el);}
 });
 }
 
+/* ================= 待接入 5 项补齐 ================= */
+
+/* multipart 上传 helper（ApiClient 只做 JSON） */
+async function postForm(path, formData) {
+  const headers = { "X-Request-ID": ApiClient.genRequestId() };
+  try {
+    const t = AuthClient.getAccessToken();
+    if (t) headers["Authorization"] = "Bearer " + t;
+  } catch (e) { /* 忽略 */ }
+  const r = await fetch(path, { method: "POST", headers, credentials: "include", body: formData });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error((data && (data.message || data.detail)) || ("请求失败 HTTP " + r.status));
+    err.status = r.status; err.code = data.code; throw err;
+  }
+  return data;
+}
+
+/* ---------- #1 产品文档导入（v2） ---------- */
+let IMPORT_CANDS = [];
+async function onImportDocFile(e) {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  if (!/\.(txt|md)$/i.test(f.name)) { toast("只支持 .txt / .md 文件"); return; }
+  if (f.size > 2 * 1024 * 1024) { toast("文件过大（上限 2MB）"); return; }
+  if (!S.activeWork) { toast("请先创建作品"); return; }
+  const fd = new FormData();
+  fd.append("file", f);
+  fd.append("org_id", S.org.id);
+  fd.append("product_id", ((S.data.product || {}).product_name) || "");
+  errText("product_err", "");
+  toast("正在解析文档…");
+  try {
+    const d = V1(await postForm("/api/v1/facts/import-document", fd));
+    IMPORT_CANDS = d.candidates || [];
+    if (!IMPORT_CANDS.length) { toast("文档中未抽取出事实候选"); return; }
+    $("import_filename").textContent = d.filename || f.name;
+    const badge = $("import_ai_badge");
+    badge.textContent = d.ai_used ? "AI 抽取" : "规则解析";
+    badge.className = "pill " + (d.ai_used ? "green" : "gray");
+    $("import_candidates").innerHTML = IMPORT_CANDS.map((c, i) =>
+      '<label style="display:flex;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer;align-items:flex-start">' +
+      '<input type="checkbox" data-i="' + i + '" checked style="width:auto;margin-top:4px">' +
+      '<span style="flex:1"><span style="font-size:13.5px">' + esc(c.content) + '</span><br>' +
+      '<span class="pill gray" style="margin-top:4px;display:inline-block">' + esc(c.category) + '</span>' +
+      '<span style="font-size:11px;color:var(--muted);margin-left:6px">' + (c.source === "ai" ? "AI" : "规则") + '</span></span></label>'
+    ).join("");
+    $("import_modal").classList.add("show");
+  } catch (err) { errText("product_err", err.message || "导入失败"); }
+}
+async function confirmImport() {
+  const checked = Array.from(document.querySelectorAll("#import_candidates input:checked"))
+    .map((x) => IMPORT_CANDS[+x.dataset.i]).filter(Boolean);
+  if (!checked.length) { $("import_msg").textContent = "请至少勾选一条"; return; }
+  $("import_msg").textContent = "";
+  try {
+    const d = V1(await ApiClient.post("/api/v1/facts/batch", {
+      org_id: S.org.id,
+      product_id: ((S.data.product || {}).product_name) || "",
+      facts: checked.map((c) => ({ content: c.content, category: c.category,
+        source_type: "文档导入", source_ref: $("import_filename").textContent })),
+    }));
+    $("import_modal").classList.remove("show");
+    await loadFacts();
+    toast("已导入 " + d.length + " 条事实（草稿）");
+  } catch (err) { $("import_msg").textContent = err.message || "导入失败"; }
+}
+
+/* ---------- #2 成片上传归档（v6） ---------- */
+async function uploadFinalVideo(e) {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  if (!S.activeWork) { toast("请先创建作品"); return; }
+  if (f.size > 200 * 1024 * 1024) { toast("文件过大（上限 200MB）"); return; }
+  errText("export_err", "");
+  toast("正在上传成片…");
+  try {
+    const intent = V1(await ApiClient.post("/api/v1/assets/upload-intents", {
+      org_id: S.org.id, work_id: S.activeWork.id,
+      filename: f.name, mime: f.type || "video/mp4", size: f.size,
+    }));
+    const fd = new FormData();
+    fd.append("upload_token", intent.upload_token);
+    fd.append("file", f);
+    await postForm("/api/v1/assets/upload", fd);
+    toast("成片已归档");
+    await renderFinalArchive();
+  } catch (err) { errText("export_err", err.message || "上传失败"); }
+}
+async function _finalDownloadUrl(aid) {
+  const d = V1(await ApiClient.get("/api/v1/assets/" + aid + "/download?org_id=" + encodeURIComponent(S.org.id)));
+  return d.url;
+}
+async function toggleFinalPreview(aid, row) {
+  const box = row.nextElementSibling;
+  if (box.style.display !== "none") { box.style.display = "none"; box.innerHTML = ""; return; }
+  try {
+    const url = await _finalDownloadUrl(aid);
+    box.innerHTML = '<video controls preload="metadata" style="width:100%;border-radius:10px;background:#000" src="' + esc(url) + '"></video>';
+    box.style.display = "";
+  } catch (err) { toast(err.message || "预览失败"); }
+}
+async function downloadFinal(aid) {
+  try {
+    const url = await _finalDownloadUrl(aid);
+    const a = document.createElement("a");
+    a.href = url; a.download = "";
+    document.body.appendChild(a); a.click(); a.remove();
+  } catch (err) { toast(err.message || "下载失败"); }
+}
+async function deleteFinal(aid) {
+  if (!confirm("确定删除这条归档成片吗？")) return;
+  try {
+    await ApiClient.del("/api/v1/assets/" + aid + "?org_id=" + encodeURIComponent(S.org.id));
+    toast("已删除");
+    await renderFinalArchive();
+  } catch (err) { toast(err.message || "删除失败"); }
+}
+async function renderFinalArchive() {
+  const box = $("final_archive_list");
+  if (!S.activeWork) { box.innerHTML = ""; return; }
+  try {
+    const list = V1(await ApiClient.get("/api/v1/assets?org_id=" + encodeURIComponent(S.org.id) +
+      "&work_id=" + encodeURIComponent(S.activeWork.id))) || [];
+    const videos = list.filter((a) => (a.mime || "").indexOf("video/") === 0);
+    if (!videos.length) {
+      box.innerHTML = '<p style="font-size:12.5px;color:var(--muted);padding:8px 6px">暂无归档成片。</p>';
+      return;
+    }
+    box.innerHTML = videos.map((v) =>
+      '<div class="dl-row" data-aid="' + esc(v.id) + '">' +
+      '<span class="dl-ic" style="background:#0F5132">MP4</span>' +
+      '<div style="flex:1;min-width:0"><b style="font-size:13px">' + esc(v.filename) + '</b>' +
+      '<div style="font-size:11.5px;color:var(--muted);white-space:nowrap">' + (v.size / 1048576).toFixed(1) + ' MB · ' + esc((v.created_at || "").slice(0, 10)) + '</div></div>' +
+      '<button class="btn ghost sm" data-act="preview">预览</button>' +
+      '<button class="btn ghost sm" data-act="dl">下载</button>' +
+      '<button class="btn ghost sm" data-act="del">删除</button></div>' +
+      '<div style="display:none;padding:0 6px 10px"></div>'
+    ).join("");
+    box.querySelectorAll(".dl-row").forEach((row) => {
+      const aid = row.dataset.aid;
+      row.querySelector('[data-act="preview"]').addEventListener("click", () => toggleFinalPreview(aid, row));
+      row.querySelector('[data-act="dl"]').addEventListener("click", () => downloadFinal(aid));
+      row.querySelector('[data-act="del"]').addEventListener("click", () => deleteFinal(aid));
+    });
+  } catch (err) {
+    box.innerHTML = '<p class="err-text">加载失败：' + esc(err.message || "") + '</p>';
+  }
+}
+
+/* ---------- #3 示例案例库（v1） ---------- */
+const SAMPLE_CASES = [
+  { id: "apple", name: "烟台苹果",
+    img: "/static/assets/landing/products/yantai-apples.jpg",
+    desc: "果园采摘 → 枝头特写 → 切开展示，三个镜头讲清新鲜，适合当季上新时拍摄。",
+    product: { product_name: "烟台苹果", category: "水果 / 苹果", origin: "山东 · 烟台",
+      spec: "5斤装", price: "5斤装 29.9元", channel: "线上零售",
+      points: ["脆甜多汁", "果园现摘现发", "果径 80mm 以上"], duration: 60 },
+    facts: [
+      { content: "烟台苹果产自山东烟台", category: "产地" },
+      { content: "果径 80mm 以上", category: "规格" },
+      { content: "脆甜多汁，果园现摘现发", category: "口感" },
+      { content: "5斤装礼盒装，29.9元", category: "规格" },
+    ],
+    idea: { name: "果园现摘的新鲜感", tagline: "从枝头到舌尖，全程看得见",
+      hook_3s: "刚摘下来的苹果，咬一口是什么声音？",
+      core_idea: "用采摘→特写→切开三组镜头建立新鲜信任，口播强调现摘现发、当季上新",
+      audience_fit: "注重品质的家庭水果消费者", difficulty: "简单",
+      materials_needed: "手机、三脚架、水果刀、果篮", fact_refs: [] } },
+  { id: "scallion", name: "章丘大葱",
+    img: "/static/assets/landing/products/zhangqiu-scallions.jpg",
+    desc: "田间实拍加对比镜头，突出葱白长、葱株挺拔的视觉特点，一镜到底也好拍。",
+    product: { product_name: "章丘大葱", category: "蔬菜 / 大葱", origin: "山东 · 济南章丘",
+      spec: "10斤装", price: "10斤装 19.9元", channel: "线上零售",
+      points: ["葱白长达60厘米", "葱株挺拔", "田间现挖现发"], duration: 60 },
+    facts: [
+      { content: "章丘大葱产自山东济南章丘", category: "产地" },
+      { content: "葱白长达60厘米", category: "规格" },
+      { content: "葱株挺拔，口感脆嫩", category: "口感" },
+      { content: "田间现挖现发", category: "工艺" },
+    ],
+    idea: { name: "一镜到底的田间气势", tagline: "比人还高的葱，镜头里见分晓",
+      hook_3s: "你见过比人还高的大葱吗？",
+      core_idea: "田间实拍 + 对比镜头（与普通大葱/人物对比），一镜到底展示葱白长度",
+      audience_fit: "喜欢看猎奇与产地实拍的观众", difficulty: "简单",
+      materials_needed: "手机、稳定器", fact_refs: [] } },
+  { id: "chicken", name: "德州扒鸡",
+    img: "/static/assets/landing/products/dezhou-braised-chicken.jpg",
+    desc: "摆盘特写加撕开展示，用热气与脱骨镜头传递口感联想，配文案讲清老字号做法。",
+    product: { product_name: "德州扒鸡", category: "熟食 / 扒鸡", origin: "山东 · 德州",
+      spec: "500g/只", price: "500g 39.9元", channel: "线上零售",
+      points: ["传统卤制工艺", "脱骨酥烂", "老字号做法"], duration: 60 },
+    facts: [
+      { content: "德州扒鸡源自山东德州", category: "产地" },
+      { content: "采用传统卤制工艺", category: "工艺" },
+      { content: "脱骨酥烂，肉质细嫩", category: "口感" },
+      { content: "500g每只，39.9元", category: "规格" },
+    ],
+    idea: { name: "热气腾腾的脱骨瞬间", tagline: "一撕脱骨，老字号的底气",
+      hook_3s: "轻轻一撕，骨肉分离——这才是扒鸡！",
+      core_idea: "摆盘特写开场，撕开镜头 + 热气慢拍传递口感，口播讲老字号卤制工艺",
+      audience_fit: "熟食卤味爱好者、送礼需求人群", difficulty: "简单",
+      materials_needed: "手机、三脚架、白色摆盘", fact_refs: [] } },
+];
+function renderCasesGrid() {
+  $("cases_grid").innerHTML = SAMPLE_CASES.map((c, i) =>
+    '<div class="card" style="padding:0;overflow:hidden">' +
+    '<img src="' + c.img + '" alt="' + esc(c.name) + '" style="width:100%;aspect-ratio:16/10;object-fit:cover">' +
+    '<div style="padding:14px"><b style="font-size:15px">' + esc(c.name) + '</b>' +
+    '<p style="font-size:12.5px;color:var(--ink2);margin:8px 0;line-height:1.7">' + esc(c.desc) + '</p>' +
+    '<button class="btn primary sm" style="width:100%;justify-content:center" data-case="' + i + '">一键套用</button></div></div>'
+  ).join("");
+  $("cases_grid").querySelectorAll("[data-case]").forEach((b) =>
+    b.addEventListener("click", () => applyCase(+b.dataset.case)));
+}
+async function applyCase(i) {
+  const c = SAMPLE_CASES[i];
+  if (!c) return;
+  $("cases_msg").textContent = "";
+  try {
+    await createWork(c.name + " 拍摄方案");
+    const p = c.product;
+    S.data.product = {
+      product_name: p.product_name,
+      description: ["品类：" + p.category, "产地：" + p.origin, "规格：" + p.spec, "销售方式：" + p.channel].join("；"),
+      selling_points: p.points.slice(), price: p.price, audience: "",
+      evidence_materials: "",
+      shoot: { device: "手机", people: 1, lighting: "", location: "",
+        target_duration_seconds: p.duration, note: "" },
+    };
+    S.data.ideas = [JSON.parse(JSON.stringify(c.idea))];
+    S.data.direction = c.idea.name;
+    S.ideaSel = 0;
+    await saveWork();
+    for (const f of c.facts) {
+      await ApiClient.post("/api/v1/facts", { org_id: S.org.id,
+        content: f.content, category: f.category,
+        source_type: "human_statement", source_ref: "示例案例·" + c.name });
+    }
+    $("cases_modal").classList.remove("show");
+    toast("已套用「" + c.name + "」示例（含创意方向与事实草稿）");
+    go("v2");
+  } catch (err) { $("cases_msg").textContent = err.message || "套用失败"; }
+}
+
+/* ---------- #4 更多海报模板 ---------- */
+Object.assign(POSTER_TPLS, {
+  guochao: { name: "国潮竖版", bg: "linear-gradient(160deg,#0C4229 0%,#0F5132 45%,#7A1F1A 100%)" },
+  minimal_h: { name: "简约横版", bg: "linear-gradient(160deg,#F8F4EA 0%,#EFE7D2 100%)", light: true, horizontal: true },
+});
+
+/* ---------- #5 海报 AI 生图 ---------- */
+let IMG_CONFIGURED = null;
+async function checkImageStatus() {
+  try {
+    const d = V1(await ApiClient.get("/api/v1/poster/image/status"));
+    IMG_CONFIGURED = !!(d && d.configured);
+  } catch (e) { IMG_CONFIGURED = false; }
+  const btn = $("btn_gen_poster"), hint = $("ai_img_status");
+  if (!btn || !hint) return;
+  if (IMG_CONFIGURED) {
+    btn.disabled = false; btn.classList.remove("qa-disabled");
+    hint.textContent = "AI 配图服务可用：输入提示词生成海报背景图。";
+  } else {
+    btn.disabled = true; btn.classList.add("qa-disabled");
+    hint.textContent = "未配置图片生成服务（需配置 LUPIN_IMAGE_API_KEY），可先手动排版导出 PNG。";
+  }
+}
+async function genPosterImage() {
+  if (!IMG_CONFIGURED) { toast("未配置图片生成服务"); return; }
+  const prompt = $("ai_img_prompt").value.trim();
+  if (!prompt) { toast("请先输入配图提示词"); return; }
+  aiLoading("AI 正在作画…");
+  try {
+    const d = V1(await ApiClient.post("/api/v1/poster/image",
+      { org_id: S.org.id, prompt: prompt, size: "1024x1024" }, { timeoutMs: 150000 }));
+    const src = d.image_b64 ? ("data:image/png;base64," + d.image_b64) : d.image_url;
+    if (!src) throw new Error("图片服务未返回图片");
+    $("ai_img_preview").src = src;
+    $("ai_img_result").style.display = "";
+    $("btn_use_ai_img").onclick = async () => {
+      if (!S.activeWork) { toast("请先创建作品"); return; }
+      S.data.poster = collectPoster();
+      S.data.poster.ai_image = src;
+      await saveWork();
+      updatePosterPreview();
+      toast("已插入为海报背景");
+    };
+    toast("配图已生成，可插入为海报背景");
+  } catch (e) { toast(e.message || "生成失败"); }
+  finally { aiLoadingDone(); }
+}
+function drawCoverImage(ctx, dataUrl, W, H) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const sc = Math.max(W / img.width, H / img.height);
+      const dw = img.width * sc, dh = img.height * sc;
+      ctx.drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      resolve(true);
+    };
+    img.onerror = () => resolve(false);
+    img.src = dataUrl;
+  });
+}
+
+/* ---------- 待接入 5 项：事件绑定 ---------- */
+function bindTodo5() {
+  $("btn_import_doc").addEventListener("click", () => {
+    if (!S.activeWork) { toast("请先创建作品"); return; }
+    $("import_doc_file").click();
+  });
+  $("import_doc_file").addEventListener("change", onImportDocFile);
+  $("btn_confirm_import").addEventListener("click", confirmImport);
+  $("btn_close_import").addEventListener("click", () => $("import_modal").classList.remove("show"));
+  $("qa_import").addEventListener("click", () => { go("v2"); toast("点击「从文档导入」选择 .txt / .md 文件"); });
+  $("btn_upload_final").addEventListener("click", () => {
+    if (!S.activeWork) { toast("请先创建作品"); return; }
+    $("final_video_file").click();
+  });
+  $("final_video_file").addEventListener("change", uploadFinalVideo);
+  $("qa_cases").addEventListener("click", () => {
+    $("cases_msg").textContent = "";
+    renderCasesGrid();
+    $("cases_modal").classList.add("show");
+  });
+  $("btn_close_cases").addEventListener("click", () => $("cases_modal").classList.remove("show"));
+}
+
 /* ================= 事件绑定 ================= */
 function bindAll() {
 document.querySelectorAll(".nav-item[data-v]").forEach((b) => b.addEventListener("click", () => go(b.dataset.v)));
@@ -1097,6 +2042,7 @@ $("login_password").addEventListener("keydown", (e) => { if (e.key === "Enter") 
 $("btn_logout").addEventListener("click", doLogout);
 
 const newWork = () => newWorkFlow();
+bindTodo5();
 $("qa_new").addEventListener("click", newWork);
 $("btn_new_work").addEventListener("click", newWork);
 $("btn_new_work_top").addEventListener("click", newWork);
@@ -1131,13 +2077,13 @@ $("pane_feas").style.display = ""; $("pane_risk").style.display = "none";
 $("btn_run_risk").addEventListener("click", runRisk);
 $("btn_run_feas").addEventListener("click", runFeas);
 
-document.querySelectorAll("#poster_tpls.t").forEach((t) => t.addEventListener("click", () => {
-document.querySelectorAll("#poster_tpls.t").forEach((x) => x.classList.remove("active"));
+document.querySelectorAll("#poster_tpls .t").forEach((t) => t.addEventListener("click", () => {
+document.querySelectorAll("#poster_tpls .t").forEach((x) => x.classList.remove("active"));
 t.classList.add("active");
 updatePosterPreview();
 }));
 ["pe_title", "pe_sub", "pe_promo", "pe_btn"].forEach((id) => $(id).addEventListener("input", updatePosterPreview));
-$("btn_gen_poster").addEventListener("click", () => toast("图片生成能力待接入：当前版本支持模板排版与 PNG 导出，AI 生图后续版本支持"));
+$("btn_gen_poster").addEventListener("click", genPosterImage);
 $("btn_poster_save").addEventListener("click", savePosterDraft);
 $("btn_poster_png").addEventListener("click", exportPosterPNG);
 $("btn_copy_copy").addEventListener("click", async () => {
@@ -1148,6 +2094,7 @@ catch (e) { toast("复制失败，请手动选择复制");}
 });
 
 $("btn_print").addEventListener("click", () => window.print());
+injectP1UI();
 $("btn_upload_asset").addEventListener("click", () => {
 if (!S.activeWork) { toast("请先创建作品"); return;}
 $("file_asset").click();
@@ -1163,6 +2110,11 @@ S.data.shoot_note = $("shoot_note").value;
 await saveWork();
 toast("备注已保存");
 });
+$("btn_gen_live").addEventListener("click", genLivestreamScript);
+$("btn_export_live").addEventListener("click", exportLivestreamTxt);
+$("btn_close_colloquial").addEventListener("click", () => $("colloquial_modal").classList.remove("show"));
+$("colloquial_modal").addEventListener("click", (e) => { if (e.target === $("colloquial_modal")) $("colloquial_modal").classList.remove("show"); });
+$("btn_use_colloquial").addEventListener("click", useColloquial);
 
 $("btn_delivery_check").addEventListener("click", runDeliveryCheck);
 $("exp_docx").addEventListener("click", exportDocx);
@@ -1209,9 +2161,11 @@ go("v0");
 }
 } else {
 renderUser();
-go("v0");
+// /login 入口：未登录时直接落在登录视图，而不是首页
+go(location.pathname === "/login" ? "v-login" : "v0");
 }
 revealIn($("v0"));
+initShootCondForm();
 }
 
 document.addEventListener("DOMContentLoaded", init);

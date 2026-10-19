@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0F5132">
+<title>鲁品开拍｜把山东好物，拍成值得记住的故事</title>
+<meta name="description" content="面向山东特色农产品的 AI 营销与短视频创作工作台。从产品资料、创意策划到分镜脚本、拍摄清单与成果交付，让创意更清晰地落到拍摄现场。">
+<style>
+  :root{
+    --lp-forest:#0F5132;
+    --lp-paper:#F8F4EA;
+    --lp-vermilion:#C62828;
+    --lp-wheat:#D4A05A;
+    --lp-teal:#2E7D6B;
+    --lp-ink:#252820;
+    --lp-muted:#5B5F52;
+    --lp-card:#FFFDF6;
+    --lp-hair:#E4DCC6;
+    --font:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{font-family:var(--font);color:var(--lp-ink);line-height:1.75;-webkit-font-smoothing:antialiased;
+    background-color:var(--lp-paper);
+    background-image:url("/static/assets/landing/textures/cream-paper-soft.jpg");
+    background-size:520px auto;background-blend-mode:multiply}
+  body::before{content:"";position:fixed;inset:0;background:rgba(248,244,234,.80);pointer-events:none;z-index:0}
+  body>*{position:relative;z-index:1}
+  img{max-width:100%;display:block}
+  a{color:inherit}
+  ::selection{background:var(--lp-forest);color:#fff}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+  section{scroll-margin-top:84px}
+
+  /* ============ A · 顶部导航 ============ */
+  .nav{position:fixed;top:0;left:0;right:0;z-index:60;transition:background .25s ease,box-shadow .25s ease;
+    background:rgba(248,244,234,.72);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+  .nav.scrolled{background:rgba(248,244,234,.94);box-shadow:0 6px 24px rgba(37,40,32,.10)}
+  .nav-inner{max-width:1180px;margin:0 auto;padding:0 28px;height:68px;display:flex;align-items:center;gap:30px}
+  .brand{display:flex;align-items:center;gap:11px;text-decoration:none;font-weight:800;font-size:18px;letter-spacing:.06em;margin-right:auto}
+  .seal-logo{width:36px;height:36px;flex:none;background:var(--lp-vermilion);color:#fff;border-radius:7px;
+    display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:900;letter-spacing:.05em;
+    transform:rotate(-4deg);box-shadow:inset 0 0 0 2px rgba(255,255,255,.28)}
+  .nav-links{display:flex;gap:26px;font-size:15px;color:var(--lp-muted);align-items:center}
+  .nav-links a{text-decoration:none;transition:color .15s;border-radius:6px}
+  .nav-links a:hover{color:var(--lp-forest)}
+  .nav-links a:focus-visible{outline:3px solid var(--lp-wheat);outline-offset:4px;color:var(--lp-forest)}
+  .btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;font-weight:800;
+    border-radius:999px;transition:transform .16s ease,background .16s ease,box-shadow .16s ease;cursor:pointer;border:none;font-family:var(--font)}
+  .btn:hover{transform:translateY(-1px)}
+  .btn:active{transform:translateY(0)}
+  .btn:focus-visible{outline:3px solid var(--lp-wheat);outline-offset:2px}
+  .btn-forest{background:var(--lp-forest);color:#fff}
+  .btn-forest:hover{background:#0C4229;box-shadow:0 8px 20px rgba(15,81,50,.28)}
+  .btn-nav{font-size:14.5px;padding:10px 24px}
+  .burger{display:none;background:none;border:none;cursor:pointer;padding:8px;margin-left:auto}
+  .burger span{display:block;width:24px;height:2.5px;background:var(--lp-ink);border-radius:2px;margin:5px 0;transition:transform .2s,opacity .2s}
+
+  /* ============ B · Hero ============ */
+  .hero{position:relative;min-height:96svh;display:flex;align-items:center;overflow:hidden;background:#0E2E1E}
+  .hero-media{position:absolute;inset:0}
+  .hero-media .hero-poster,.hero-media .hero-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 38%}
+  .hero-media.noimg{display:none}
+  .hero-fallback{position:absolute;inset:0;background:linear-gradient(135deg,#0F5132 0%,#1B6B45 60%,#2E7D6B 100%);display:none}
+  .hero.noimg .hero-fallback{display:block}
+  .hero-shade{position:absolute;inset:0;background:
+    linear-gradient(to right, rgba(10,32,20,.78) 0%, rgba(10,32,20,.52) 42%, rgba(10,32,20,.08) 75%),
+    linear-gradient(to top, rgba(10,32,20,.55) 0%, transparent 34%)}
+  .hero-inner{position:relative;z-index:2;width:100%;max-width:1180px;margin:0 auto;padding:120px 28px 90px;color:#FBF8EE}
+  .hero-badge{display:inline-flex;align-items:center;gap:9px;font-size:13.5px;letter-spacing:.14em;color:#F2DDA8;
+    border:1px solid rgba(212,160,90,.6);border-radius:999px;padding:8px 18px;margin-bottom:26px;font-weight:600}
+  .hero-badge i{width:7px;height:7px;border-radius:50%;background:var(--lp-wheat);font-style:normal}
+  .hero h1{font-size:clamp(44px,6.8vw,88px);line-height:1.22;font-weight:900;letter-spacing:.02em;max-width:12em}
+  .hero h1 .mark{color:#F2DDA8}
+  .hero .sub{margin-top:22px;font-size:clamp(16px,2vw,20px);color:#EDE4CC;max-width:30em}
+  .hero-ctas{display:flex;gap:14px;margin-top:36px;flex-wrap:wrap}
+  .btn-hero{font-size:16.5px;padding:16px 40px}
+  .btn-paper{background:#FBF8EE;color:var(--lp-forest)}
+  .btn-paper:hover{background:#fff;box-shadow:0 10px 26px rgba(0,0,0,.25)}
+  .btn-outline{border:1.5px solid rgba(251,248,238,.65);color:#FBF8EE;background:transparent}
+  .btn-outline:hover{border-color:#FBF8EE;background:rgba(251,248,238,.12)}
+  .hero-note{margin-top:26px;font-size:13px;color:rgba(237,228,204,.75);letter-spacing:.04em}
+  /* 入场动画：轻、短 */
+  @keyframes fadeUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+  .hero .anim{opacity:0;animation:fadeUp .7s ease forwards}
+  .hero .d1{animation-delay:.10s}.hero .d2{animation-delay:.24s}.hero .d3{animation-delay:.38s}.hero .d4{animation-delay:.52s}
+
+  /* ============ 通用章节 ============ */
+  .sec{padding:96px 0}
+  .kicker{display:flex;align-items:center;gap:12px;font-size:13.5px;color:var(--lp-vermilion);
+    font-weight:800;letter-spacing:.3em;margin-bottom:18px}
+  .kicker::before{content:"";width:34px;height:3px;background:var(--lp-vermilion);border-radius:2px}
+  .sec h2{font-size:clamp(30px,4vw,46px);font-weight:900;line-height:1.35;letter-spacing:.01em}
+  .sec h2 .u{position:relative;white-space:nowrap}
+  .sec h2 .u::after{content:"";position:absolute;left:0;right:0;bottom:2px;height:8px;
+    background:linear-gradient(to right,rgba(212,160,90,.55),rgba(212,160,90,.15));z-index:-1;border-radius:3px}
+  .sec-desc{margin-top:14px;color:var(--lp-muted);font-size:16.5px;max-width:42em}
+  .js .reveal{opacity:0;transform:translateY(26px);transition:opacity .65s ease,transform .65s ease}
+  .js .reveal.in{opacity:1;transform:none}
+
+  /* ============ C · 核心能力 ============ */
+  .feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:52px}
+  .feat{background:var(--lp-card);border:1px solid var(--lp-hair);border-radius:18px;padding:34px 30px;
+    transition:transform .18s ease,box-shadow .18s ease;position:relative;overflow:hidden}
+  .feat:hover{transform:translateY(-4px);box-shadow:0 16px 36px rgba(15,81,50,.12)}
+  .feat::after{content:"";position:absolute;left:0;right:0;top:0;height:4px;
+    background:linear-gradient(to right,var(--lp-forest),var(--lp-teal));opacity:0;transition:opacity .18s}
+  .feat:hover::after{opacity:1}
+  .feat .icon{width:58px;height:58px;border-radius:16px;background:rgba(15,81,50,.08);
+    display:flex;align-items:center;justify-content:center;margin-bottom:20px}
+  .feat .icon svg{width:30px;height:30px}
+  .feat h3{font-size:19px;font-weight:800;margin-bottom:10px}
+  .feat p{font-size:14.5px;color:var(--lp-muted)}
+
+  /* ============ D · 产品案例 ============ */
+  #cases{background:rgba(255,253,246,.6);border-top:1px solid var(--lp-hair);border-bottom:1px solid var(--lp-hair)}
+  .case-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:52px}
+  .case{background:var(--lp-card);border:1px solid var(--lp-hair);border-radius:18px;overflow:hidden;
+    transition:transform .18s ease,box-shadow .18s ease;text-decoration:none;display:block}
+  .case:hover{transform:translateY(-4px);box-shadow:0 16px 36px rgba(37,40,32,.12)}
+  .case:focus-visible{outline:3px solid var(--lp-wheat);outline-offset:3px}
+  .case .ph{aspect-ratio:16/9.2;overflow:hidden;background:#EDE6D2;position:relative}
+  .case .ph img{width:100%;height:100%;object-fit:cover;transition:transform .5s ease}
+  .case:hover .ph img{transform:scale(1.045)}
+  .case .tx{padding:26px 26px 28px}
+  .case .tx .k{font-size:12.5px;font-weight:800;color:var(--lp-teal);letter-spacing:.22em}
+  .case h3{font-size:21px;font-weight:800;margin:10px 0 8px}
+  .case p{font-size:14.5px;color:var(--lp-muted)}
+  .case .go{display:inline-flex;align-items:center;gap:8px;margin-top:16px;font-size:14.5px;font-weight:800;color:var(--lp-forest)}
+  .case .go::after{content:"→";transition:transform .15s}
+  .case:hover .go::after{transform:translateX(4px)}
+  .disclaimer{margin-top:26px;font-size:13px;color:var(--lp-muted);border:1px dashed var(--lp-hair);
+    border-radius:12px;padding:14px 18px;background:rgba(212,160,90,.07)}
+
+  /* ============ E · 创作流程 ============ */
+  .flow{margin-top:56px;position:relative}
+  .flow-line{position:absolute;top:31px;left:5%;right:5%;height:3px;background:var(--lp-hair);border-radius:2px;z-index:0}
+  .flow-line i{display:block;height:100%;width:0;background:linear-gradient(to right,var(--lp-forest),var(--lp-teal));
+    border-radius:2px;transition:width .8s ease}
+  .flow-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:26px 22px;position:relative;z-index:1}
+  .fstep{text-align:center;padding:0 6px;opacity:.92;transition:opacity .3s}
+  .fstep .dot{width:62px;height:62px;margin:0 auto 16px;border-radius:50%;background:var(--lp-card);
+    border:2px solid var(--lp-hair);display:flex;align-items:center;justify-content:center;
+    font-size:15px;font-weight:900;color:var(--lp-muted);transition:all .3s;position:relative}
+  .fstep.lit{opacity:1}
+  .fstep.lit .dot{border-color:var(--lp-forest);color:#fff;background:var(--lp-forest);
+    box-shadow:0 8px 20px rgba(15,81,50,.3)}
+  .fstep h3{font-size:16.5px;font-weight:800;margin-bottom:8px}
+  .fstep p{font-size:13.5px;color:var(--lp-muted);line-height:1.65}
+
+  /* ============ F · 地域文化 × 产品表达 ============ */
+  #culture{background:rgba(15,81,50,.045);border-top:1px solid var(--lp-hair);border-bottom:1px solid var(--lp-hair)}
+  .cul-grid{display:grid;grid-template-columns:1fr 1fr;gap:56px;margin-top:52px;align-items:start}
+  .cul-list{display:grid;gap:18px}
+  .cul-item{display:flex;gap:18px;background:var(--lp-card);border:1px solid var(--lp-hair);
+    border-radius:16px;padding:24px 26px}
+  .cul-item .n{flex:none;width:40px;height:40px;border-radius:10px;background:var(--lp-vermilion);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px;transform:rotate(-4deg);
+    box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.3)}
+  .cul-item h3{font-size:17px;font-weight:800;margin-bottom:6px}
+  .cul-item p{font-size:14px;color:var(--lp-muted)}
+  .cul-photos{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .cul-photos figure{border-radius:14px;overflow:hidden;border:1px solid var(--lp-hair);
+    box-shadow:0 10px 26px rgba(37,40,32,.10);position:relative}
+  .cul-photos img{width:100%;height:100%;object-fit:cover;aspect-ratio:4/3.1}
+  .cul-photos figcaption{position:absolute;left:0;right:0;bottom:0;padding:28px 14px 12px;color:#fff;
+    font-size:13.5px;font-weight:700;line-height:1.5;background:linear-gradient(to top,rgba(15,30,20,.72),transparent)}
+
+  /* ============ G · 功能展示 ============ */
+  .demo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:52px}
+  .demo{background:var(--lp-card);border:1px solid var(--lp-hair);border-radius:18px;overflow:hidden}
+  .demo .bar{display:flex;gap:7px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--lp-hair);background:rgba(15,81,50,.05)}
+  .demo .bar i{width:11px;height:11px;border-radius:50%}
+  .demo .bar i:nth-child(1){background:#D4A05A}.demo .bar i:nth-child(2){background:#2E7D6B}.demo .bar i:nth-child(3){background:#C62828}
+  .demo .bar span{margin-left:8px;font-size:12.5px;color:var(--lp-muted)}
+  .demo img{width:100%;aspect-ratio:16/10.4;object-fit:cover;object-position:top;background:var(--lp-card)}
+  .demo .tx{padding:22px 24px 24px}
+  .demo h3{font-size:17.5px;font-weight:800;margin-bottom:8px}
+  .demo p{font-size:14px;color:var(--lp-muted)}
+  .demo-note{margin-top:22px;font-size:13px;color:var(--lp-muted);text-align:center}
+
+  /* ============ H · CTA（视频背景） ============ */
+  .cta{position:relative;overflow:hidden;color:#F4EEDC}
+  .cta-border{height:64px;background:url("/static/assets/landing/heritage/landscape-border.jpg") repeat-x center/auto 64px;opacity:.95}
+  .cta-video-wrap{position:relative;overflow:hidden;min-height:600px;display:flex;align-items:center;
+    background:linear-gradient(135deg,#0C4229 0%,#0F5132 55%,#14603C 100%)}
+  .cta-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .cta-shade{position:absolute;inset:0;background:
+    linear-gradient(to bottom, rgba(10,32,20,.60) 0%, rgba(10,32,20,.38) 48%, rgba(10,32,20,.66) 100%)}
+  .cta-inner{position:relative;z-index:2;width:100%;max-width:1180px;margin:0 auto;padding:96px 28px;text-align:center;color:#F4EEDC}
+  .cta-inner .seal-big{width:64px;height:64px;margin:0 auto 26px;background:var(--lp-vermilion);color:#fff;border-radius:12px;
+    display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:900;transform:rotate(-4deg);
+    box-shadow:inset 0 0 0 3px rgba(255,255,255,.28),0 12px 30px rgba(0,0,0,.3)}
+  .cta-inner h2{font-size:clamp(28px,4vw,46px);font-weight:900;line-height:1.4;max-width:20em;margin:0 auto}
+  .cta-inner h2 .hl{color:#F2DDA8}
+  .cta-inner p{color:#D9CFB4;margin-top:16px;font-size:16px}
+  .cta-inner .btn-row{margin-top:36px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+  .btn-cta{font-size:17px;padding:17px 46px}
+
+  footer{background:#1E2A22;color:#CFC8B2;padding:56px 0 40px;font-size:14px}
+  footer .wrap{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:40px}
+  footer h4{color:#F4EEDC;font-size:15px;font-weight:800;margin-bottom:16px;letter-spacing:.08em}
+  footer p{font-size:13.5px;line-height:1.8}
+  footer .flinks{display:grid;gap:10px}
+  footer .flinks a{text-decoration:none;font-size:13.5px}
+  footer .flinks a:hover{color:#F4EEDC}
+  .fbrand{display:flex;align-items:center;gap:10px;font-weight:800;color:#F4EEDC;font-size:16px;margin-bottom:14px}
+  .fbase{margin-top:44px;padding-top:22px;border-top:1px solid rgba(207,200,178,.18);
+    display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:12.5px;color:#9A937C}
+
+  @media (min-width: 961px){
+    .nav-links .btn-nav{display:none}
+  }
+  @media (max-width: 960px){
+    .burger{display:block}
+    .nav-links{position:fixed;top:68px;left:12px;right:12px;background:var(--lp-paper);border:1px solid var(--lp-hair);
+      border-radius:16px;box-shadow:0 18px 44px rgba(37,40,32,.16);flex-direction:column;align-items:stretch;
+      padding:10px;display:none;gap:0}
+    .nav-links.open{display:flex}
+    .nav-links a{padding:14px 18px;border-radius:10px;font-size:16px}
+    .nav-links a:hover{background:rgba(15,81,50,.07)}
+    .nav-links .btn-nav{margin:8px;text-align:center}
+    .nav-cta-desktop{display:none}
+    .sec{padding:68px 0}
+    .feat-grid,.case-grid,.demo-grid{grid-template-columns:1fr}
+    .cul-grid{grid-template-columns:1fr;gap:32px}
+    .flow-grid{grid-template-columns:repeat(2,1fr)}
+    .flow-line{display:none}
+    .hero{min-height:88svh}
+    .hero-shade{background:
+      linear-gradient(to top, rgba(10,32,20,.82) 0%, rgba(10,32,20,.42) 46%, rgba(10,32,20,.12) 78%)}
+    footer .wrap{grid-template-columns:1fr;gap:28px}
+  }
+  @media (prefers-reduced-motion: reduce){
+    html{scroll-behavior:auto}
+    *,*::before,*::after{animation:none !important;transition:none !important}
+    .js .reveal{opacity:1;transform:none}
+    .hero .anim{opacity:1}
+  }
+</style>
+</head>
+<body>
+
+<!-- A · 顶部导航 -->
+<nav class="nav" id="nav" aria-label="主导航">
+  <div class="nav-inner">
+    <a class="brand" href="#top" aria-label="鲁品开拍首页"><span class="seal-logo">鲁品</span>鲁品开拍</a>
+    <button class="burger" id="burger" aria-label="打开菜单" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-links" id="navLinks">
+      <a href="#top">首页</a>
+      <a href="#cases">产品案例</a>
+      <a href="#features">核心功能</a>
+      <a href="#flow">创作流程</a>
+      <a href="#about">关于项目</a>
+      <a class="btn btn-forest btn-nav" href="/login">进入工作台</a>
+    </div>
+    <a class="btn btn-forest btn-nav nav-cta-desktop" href="/login">进入工作台</a>
+  </div>
+</nav>
+
+<!-- B · 首屏 Hero -->
+<header class="hero" id="top">
+  <div class="hero-fallback"></div>
+  <div class="hero-media" id="heroMedia">
+    <img class="hero-poster" src="/static/assets/landing/hero/hero-poster-brand.webp" alt="" aria-hidden="true" fetchpriority="high" data-hero="1">
+    <video class="hero-video" id="heroVideo" muted autoplay loop playsinline preload="auto"
+      poster="/static/assets/landing/hero/hero-poster-brand.webp" aria-hidden="true" tabindex="-1">
+      <source src="/static/assets/landing/hero/hero-brand.mp4" type="video/mp4">
+    </video>
+  </div>
+  <div class="hero-shade"></div>
+  <div class="hero-inner">
+    <span class="hero-badge anim d1"><i></i>2026 山东省首届大学生 AI 大模型创新传播大赛 · 赛道三</span>
+    <h1 class="anim d2">把山东好物，<br>拍成<span class="mark">值得记住的故事</span></h1>
+    <p class="sub anim d3">从真实产品资料与核心卖点出发，让 AI 创意变成能照着拍的分镜脚本。</p>
+    <div class="hero-ctas anim d4">
+      <a class="btn btn-paper btn-hero" href="/login">开始创作</a>
+      <a class="btn btn-outline btn-hero" href="#demo">看看工作流</a>
+    </div>
+    <p class="hero-note anim d4">面向山东特色农产品的 AI 短视频策划与拍摄工作台</p>
+  </div>
+</header>
+
+<!-- C · 核心能力 -->
+<section class="sec" id="features">
+  <div class="wrap">
+    <div class="kicker reveal">核心能力</div>
+    <h2 class="reveal">从一个好点子，到一套<span class="u">能落地的方案</span></h2>
+    <p class="sec-desc reveal">围绕真实产品资料，把创意策划、分镜、现场执行与成果交付连成一条清晰的工作流。</p>
+    <div class="feat-grid">
+      <div class="feat reveal">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6"/><path d="M9 16l2 2 4-4" stroke="#C62828"/></svg></div>
+        <h3>产品资料与事实确认</h3>
+        <p>集中整理产品特点、核心卖点与已有凭证；把已确认信息和待核实内容区分开，减少创作中的误写。</p>
+      </div>
+      <div class="feat reveal">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.8.6 1.5 1.4 1.5 2.1h4c0-.7.7-1.5 1.5-2.1A6 6 0 0 0 12 3z"/><circle cx="18.5" cy="5.5" r="1.4" fill="#C62828" stroke="none"/></svg></div>
+        <h3>AI 营销创意</h3>
+        <p>结合产品特点与实际拍摄条件，生成多种短视频创意方向，并提示需要留意的表达风险。</p>
+      </div>
+      <div class="feat reveal">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="11" rx="2"/><path d="M3 9l2-4 3 2 3-2 3 2 3-2 2 4"/><circle cx="12" cy="14.5" r="2.4"/><circle cx="12" cy="14.5" r=".6" fill="#C62828" stroke="none"/></svg></div>
+        <h3>可视化分镜编辑</h3>
+        <p>选定创意后，自动整理景别、运镜、台词与时长；哪一镜需要调整，就单独修改，不必推倒重来。</p>
+      </div>
+      <div class="feat reveal">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="7" width="13" height="11" rx="2.5"/><path d="M15.5 10.5l6-3v9l-6-3z"/><circle cx="9" cy="12.5" r="2.6"/><circle cx="9" cy="12.5" r=".7" fill="#C62828" stroke="none"/></svg></div>
+        <h3>拍摄执行指导</h3>
+        <p>把分镜转成现场拍摄清单，逐项记录完成进度；拍摄进度自动保存，执行过程更清楚。</p>
+      </div>
+      <div class="feat reveal">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M4.5 18l5-5 3.5 3.5L17 12l2.5 2.5"/><path d="M17.5 6.5h.01" stroke="#C62828" stroke-width="2.6"/></svg></div>
+        <h3>海报和发布文案</h3>
+        <p>从同一套产品资料延展出海报与配套发布文案，模板可预览、图片可导出，减少重复整理。</p>
+      </div>
+      <div class="feat reveal">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4" stroke="#C62828"/></svg></div>
+        <h3>风险审核与成果交付</h3>
+        <p>发布前进行风险检查，将脚本、字幕与拍摄清单统一导出；配合七项交付检查与效果复盘，尽量减少遗漏。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- D · 山东特色产品案例 -->
+<section class="sec" id="cases">
+  <div class="wrap">
+    <div class="kicker reveal">产品案例</div>
+    <h2 class="reveal">一方水土，<span class="u">一种拍法</span></h2>
+    <p class="sec-desc reveal">从烟台苹果的晶亮、章丘大葱的挺拔，到德州扒鸡的油润色泽，为不同产品寻找更贴切的镜头语言。</p>
+    <div class="case-grid">
+      <a class="case reveal" href="/login">
+        <div class="ph">
+          <img src="/static/assets/landing/products/yantai-apples.jpg" alt="烟台苹果概念拍摄" loading="lazy" decoding="async">
+        </div>
+        <div class="tx">
+          <span class="k">概念拍摄方案</span>
+          <h3>烟台苹果</h3>
+          <p>以枝头采摘、果皮水珠与切面特写串联画面，呈现清新、爽脆的视觉联想。</p>
+          <span class="go">进入工作台开始创作</span>
+        </div>
+      </a>
+      <a class="case reveal" href="/login">
+        <div class="ph">
+          <img src="/static/assets/landing/products/zhangqiu-scallions.jpg" alt="章丘大葱概念拍摄" loading="lazy" decoding="async">
+        </div>
+        <div class="tx">
+          <span class="k">概念拍摄方案</span>
+          <h3>章丘大葱</h3>
+          <p>以田间全景、挺拔葱身与葱白细节呈现形态特点，让地域印象落在看得见的画面里。</p>
+          <span class="go">进入工作台开始创作</span>
+        </div>
+      </a>
+      <a class="case reveal" href="/login">
+        <div class="ph">
+          <img src="/static/assets/landing/products/dezhou-braised-chicken.jpg" alt="德州扒鸡概念拍摄" loading="lazy" decoding="async">
+        </div>
+        <div class="tx">
+          <span class="k">概念拍摄方案</span>
+          <h3>德州扒鸡</h3>
+          <p>以整鸡陈列、轻轻撕开的近景与热气细节呈现食欲感；具体工艺与传承信息以可核实资料为准。</p>
+          <span class="go">进入工作台开始创作</span>
+        </div>
+      </a>
+    </div>
+    <p class="disclaimer reveal">视觉说明：以上为 AI 生成的概念画面，用于展示镜头方向与构图思路；不代表真实商品实拍，也不作为产地、商家或品质证明。</p>
+  </div>
+</section>
+
+<!-- E · 完整创作流程 -->
+<section class="sec" id="flow">
+  <div class="wrap">
+    <div class="kicker reveal">创作流程</div>
+    <h2 class="reveal">八个环节，让创意走进<span class="u">拍摄现场</span></h2>
+    <p class="sec-desc reveal">从资料整理到分镜、拍摄清单与交付复盘，每一步都有明确产出，也保留调整空间。</p>
+    <div class="flow">
+      <div class="flow-line" aria-hidden="true"><i id="flowFill"></i></div>
+      <div class="flow-grid" id="flowGrid">
+        <div class="fstep reveal"><div class="dot">01</div><h3>整理产品资料</h3><p>记录产品特点、核心卖点与可用拍摄条件</p></div>
+        <div class="fstep reveal"><div class="dot">02</div><h3>确认关键信息</h3><p>区分已确认事实与待核实内容</p></div>
+        <div class="fstep reveal"><div class="dot">03</div><h3>生成创意方向</h3><p>围绕产品亮点提出多种拍摄思路</p></div>
+        <div class="fstep reveal"><div class="dot">04</div><h3>细化分镜脚本</h3><p>明确景别、镜头动作、台词与时长</p></div>
+        <div class="fstep reveal"><div class="dot">05</div><h3>按清单拍摄</h3><p>逐镜执行，记录完成进度</p></div>
+        <div class="fstep reveal"><div class="dot">06</div><h3>准备营销物料</h3><p>海报与发布文案按同一套资料生成</p></div>
+        <div class="fstep reveal"><div class="dot">07</div><h3>检查表达风险</h3><p>标记需核实或需谨慎使用的表述</p></div>
+        <div class="fstep reveal"><div class="dot">08</div><h3>整理成果交付</h3><p>导出脚本与清单，检查并复盘关键环节</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- F · 非遗文化与现代营销 -->
+<section class="sec" id="culture">
+  <div class="wrap">
+    <div class="kicker reveal">地域文化 × 产品表达</div>
+    <h2 class="reveal">让齐鲁气质，<span class="u">自然进入画面</span></h2>
+    <p class="sec-desc reveal">地域元素不是贴花。让山水、田野与传统纹样克制出现，把视觉留给产品，把故事留给风土。</p>
+    <div class="cul-grid">
+      <div class="cul-list">
+        <div class="cul-item reveal">
+          <span class="n">印</span>
+          <div><h3>国潮农产品海报</h3><p>将印章、回纹等元素用在边角与层次上，信息先读得清，风格再慢慢显出来。</p></div>
+        </div>
+        <div class="cul-item reveal">
+          <span class="n">境</span>
+          <div><h3>地域文化视觉表达</h3><p>以齐鲁山水、田野与村落作为开场或转场灵感，让地域特色服务于产品叙事。</p></div>
+        </div>
+        <div class="cul-item reveal">
+          <span class="n">纹</span>
+          <div><h3>传统纹样与现代版式</h3><p>纹样控制在标题、边框与局部点缀中，不堆砌符号，也不让装饰盖过产品。</p></div>
+        </div>
+        <div class="cul-item reveal">
+          <span class="n">协</span>
+          <div><h3>图文视频协同</h3><p>同一份产品资料可延展为分镜与营销文案，减少重复录入，让视觉与信息保持一致。</p></div>
+        </div>
+      </div>
+      <div class="cul-photos">
+        <figure class="reveal">
+          <img src="/static/assets/landing/stories/farmer-orchard.jpg" alt="果园采摘" loading="lazy" decoding="async">
+          <figcaption>果园画面 · 从生长场景开始讲述</figcaption>
+        </figure>
+        <figure class="reveal">
+          <img src="/static/assets/landing/stories/rural-village.jpg" alt="齐鲁村落与田野" loading="lazy" decoding="async">
+          <figcaption>齐鲁村落 · 为地域叙事提供灵感</figcaption>
+        </figure>
+        <figure class="reveal">
+          <img src="/static/assets/landing/stories/apple-blossom.jpg" alt="苹果花" loading="lazy" decoding="async">
+          <figcaption>花期意象 · 提前规划拍摄节奏</figcaption>
+        </figure>
+        <figure class="reveal">
+          <img src="/static/assets/landing/stories/ink-mountain.jpg" alt="水墨山水" loading="lazy" decoding="async">
+          <figcaption>山水意象 · 为片头与转场建立气韵</figcaption>
+        </figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- G · 重点功能展示 -->
+<section class="sec" id="demo">
+  <div class="wrap">
+    <div class="kicker reveal">功能展示</div>
+    <h2 class="reveal">从创意到交付，<span class="u">看得到的工作台</span></h2>
+    <p class="sec-desc reveal">以下为开发中工作台的实际界面截图，展示产品资料、创意生成与交付管理等核心环节。可进入工作台体验当前已开放功能。</p>
+    <div class="demo-grid">
+      <div class="demo reveal">
+        <div class="bar"><i></i><i></i><i></i><span>创意策划</span></div>
+        <img src="/static/assets/landing/demo/flow-2-workbench.png" alt="AI 创意策划真实界面" loading="lazy" decoding="async">
+        <div class="tx"><h3>AI 创意策划</h3><p>输入产品信息，一次生成多条短视频创意方向，附带风险提示。</p></div>
+      </div>
+      <div class="demo reveal">
+        <div class="bar"><i></i><i></i><i></i><span>产品资料</span></div>
+        <img src="/static/assets/landing/demo/flow-3-facts.png" alt="产品资料与事实库真实界面" loading="lazy" decoding="async">
+        <div class="tx"><h3>产品资料与事实库</h3><p>产品资料结构化保存，关键事实标注状态并保留追溯线索，让创意有所依据。</p></div>
+      </div>
+      <div class="demo reveal">
+        <div class="bar"><i></i><i></i><i></i><span>交付中心</span></div>
+        <img src="/static/assets/landing/demo/flow-6-delivery.png" alt="交付中心真实界面" loading="lazy" decoding="async">
+        <div class="tx"><h3>交付中心</h3><p>脚本、字幕、清单打包导出，七项交付检查，发布前最后把关。</p></div>
+      </div>
+    </div>
+    <p class="demo-note reveal">页面截图来自本地开发环境，实际可用功能以当前部署版本为准。</p>
+  </div>
+</section>
+
+<!-- H · 结束 CTA（麦田视频背景） -->
+<div class="cta">
+  <div class="cta-border" aria-hidden="true"></div>
+  <div class="cta-video-wrap">
+    <video class="cta-video" muted loop playsinline preload="none"
+           poster="/static/assets/landing/hero/cta-poster.jpg" aria-hidden="true" tabindex="-1">
+      <source data-src="/static/assets/landing/hero/cta-wheat.mp4" type="video/mp4">
+    </video>
+    <div class="cta-shade" aria-hidden="true"></div>
+    <div class="cta-inner">
+      <div class="seal-big reveal">鲁</div>
+      <h2 class="reveal">好物自有风土，<br>表达也该<span class="hl">有章法</span>。</h2>
+      <p class="reveal">选一款产品开始，把已知信息、创意构思与执行清单整理成一套能落地的拍摄方案。</p>
+      <div class="btn-row reveal">
+        <a class="btn btn-paper btn-cta" href="/login">从一款产品开始</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 页脚 -->
+<footer id="about">
+  <div class="wrap">
+    <div>
+      <div class="fbrand"><span class="seal-logo">鲁品</span>鲁品开拍</div>
+      <p>面向山东特色农产品的 AI 营销与短视频策划工具。将产品资料、创意构思、分镜脚本与拍摄清单串联起来，让好点子更容易走到现场。</p>
+      <p style="margin-top:12px">2026 山东省首届大学生 AI 大模型创新传播大赛 · 赛道三参赛作品展示页。</p>
+    </div>
+    <div>
+      <h4>快速导航</h4>
+      <div class="flinks">
+        <a href="#features">核心功能</a>
+        <a href="#cases">产品案例</a>
+        <a href="#flow">创作流程</a>
+        <a href="#demo">功能展示</a>
+      </div>
+    </div>
+    <div>
+      <h4>开始使用</h4>
+      <div class="flinks">
+        <a href="/login">进入工作台</a>
+        <a href="/app">创作工作台</a>
+        <a href="#top">回到顶部</a>
+      </div>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="fbase">
+      <span>鲁品开拍 · 参赛作品展示页</span>
+      <span>概念图片为 AI 生成示意，不作为真实商品或产地证明</span>
+    </div>
+  </div>
+</footer>
+
+<script src="/static/js/landing.js" defer></script>
+</body>
+</html>

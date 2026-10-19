@@ -10,15 +10,18 @@
 
 task_type → prompt 版本映射：
 """
-from . import feasibility_v1, ideas_v1, regen_shot_v1, risk_review_v1, storyboard_v1
+from . import feasibility_v1, ideas_v1, regen_shot_v1, risk_review_v1, storyboard_v1, storyboard_v2, livestream_v1, colloquial_v1
 from .common import FACT_GROUNDING_RULES, SHOT_FIELDS_DESC, facts_block, product_block
 
 PROMPT_MODULES = {
     "ideas": ideas_v1,
     "storyboard": storyboard_v1,
+    "storyboard_v2": storyboard_v2,
     "regen_shot": regen_shot_v1,
     "feasibility": feasibility_v1,
     "risk_check": risk_review_v1,
+    "livestream_script": livestream_v1,
+    "colloquial_rewrite": colloquial_v1,
 }
 
 # 兼容：老 backend/prompts.py 的导入路径
@@ -27,6 +30,9 @@ from .ideas_v1 import build_idea_messages
 from .regen_shot_v1 import build_regen_shot_messages
 from .risk_review_v1 import REVIEW_PROMPT_TMPL, build_risk_review_messages
 from .storyboard_v1 import build_storyboard_messages
+from .storyboard_v2 import build_storyboard_v2_messages
+from .livestream_v1 import build_livestream_messages
+from .colloquial_v1 import build_colloquial_messages
 
 
 def get_prompt_version(task_type: str) -> str:
@@ -48,7 +54,10 @@ __all__ = [
     "build_storyboard_messages",
     "build_regen_shot_messages",
     "build_feasibility_messages",
+    "build_storyboard_v2_messages",
     "build_risk_review_messages",
+    "build_livestream_messages",
+    "build_colloquial_messages",
     "REVIEW_PROMPT_TMPL",
     "FACT_GROUNDING_RULES",
     "SHOT_FIELDS_DESC",

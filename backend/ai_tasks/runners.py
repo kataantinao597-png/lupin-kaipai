@@ -83,9 +83,9 @@ def run_ideas(task_id: str, is_cancelled: Callable[[], bool],
 
 def run_storyboard(task_id: str, is_cancelled: Callable[[], bool],
                    payload: dict[str, Any]) -> dict[str, Any]:
-    """034：分镜生成异步 runner。payload: {product, direction, facts}。"""
+    """034：分镜生成异步 runner。payload: {product, direction, facts, video_purpose?, available_resources?}。"""
     from ..ai.prompts import get_prompt_version
-    from ..prompts import build_storyboard_messages
+    from ..prompts import build_storyboard_messages, build_storyboard_v2_messages
     from ..validator import validate_dict
 
     if is_cancelled():
@@ -97,13 +97,21 @@ def run_storyboard(task_id: str, is_cancelled: Callable[[], bool],
     facts = payload.get("facts") or []
     _check_fact_refs(payload, facts)  # S6.1：gateway 调用前检查引用事实
 
+    _purpose = (payload.get("video_purpose") or "").strip()
+    _use_v2 = _purpose in {"brand", "sales", "intro", "record"}
+    _v2_purpose = _purpose if _use_v2 else "intro"
+    _resources = payload.get("available_resources") or []
+
     def make_messages(feedback):
+        if _use_v2:
+            return build_storyboard_v2_messages(
+                product, direction, _v2_purpose, _resources, facts, feedback)
         return build_storyboard_messages(product, direction, facts, feedback)
 
     sb, meta = gw.generate_with_retry(
         "storyboard", make_messages, validate_dict,
         model=payload.get("model") or None, temperature=0.3,
-        prompt_version=get_prompt_version("storyboard"))
+        prompt_version=get_prompt_version("storyboard_v2" if _use_v2 else "storyboard"))
     if is_cancelled():
         _cancelled()
     return {
@@ -113,8 +121,69 @@ def run_storyboard(task_id: str, is_cancelled: Callable[[], bool],
     }
 
 
+def _validate_livestream(data: dict):
+    """校验店播场控脚本结构。返回 (errors, validated)。"""
+    errors = []
+    if not isinstance(data, dict):
+        return ["返回不是 JSON 对象"], None
+    segs = data.get("segments")
+    if not isinstance(segs, list) or not segs:
+        errors.append("segments 为空或不是数组")
+    else:
+        for i, s in enumerate(segs):
+            if not isinstance(s, dict):
+                errors.append(f"segments[{i}] 不是对象")
+                continue
+            for k in ("phase", "start_minute", "end_minute", "script"):
+                if k not in s:
+                    errors.append(f"segments[{i}] 缺少字段 {k}")
+    if errors:
+        return errors, None
+    return [], data
+
+
+def run_livestream_script(task_id: str, is_cancelled: Callable[[], bool],
+                          payload: dict[str, Any]) -> dict[str, Any]:
+    """店播场控脚本异步 runner。payload: {product, facts, category, duration_minutes}。"""
+    from ..ai.prompts import get_prompt_version
+    from ..ai.prompts.livestream_v1 import build_livestream_messages
+
+    if is_cancelled():
+        _cancelled()
+    from ..ai.gateway import AIGateway
+    gw = AIGateway(service=_get_server_ai(), task_id=task_id)
+    product = payload.get("product") or {}
+    facts = payload.get("facts") or []
+    category = payload.get("category") or "水果"
+    try:
+        duration = int(payload.get("duration_minutes") or 120)
+    except (TypeError, ValueError):
+        duration = 120
+    duration = max(30, min(duration, 480))
+    _check_fact_refs(payload, facts)  # S6.1：gateway 调用前检查引用事实
+
+    def make_messages(feedback):
+        msgs = build_livestream_messages(product, facts, category, duration)
+        if feedback:
+            msgs.append({"role": "user", "content": feedback})
+        return msgs
+
+    script, meta = gw.generate_with_retry(
+        "livestream_script", make_messages, _validate_livestream,
+        model=payload.get("model") or None, temperature=0.7,
+        prompt_version=get_prompt_version("livestream_script"))
+    if is_cancelled():
+        _cancelled()
+    return {
+        "livestream_script": script,
+        "attempts": meta["attempts"],
+        "usage": meta["usage"],
+    }
+
+
 # 034：task_type → runner 映射
 RUNNERS: dict[str, Callable] = {
     "ideas": run_ideas,
     "storyboard": run_storyboard,
+    "livestream_script": run_livestream_script,
 }

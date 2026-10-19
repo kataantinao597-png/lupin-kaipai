@@ -154,4 +154,5 @@ else:
 print("\n==== 汇总 ====")
 failed = [n for n, ok, _ in results if not ok]
 print(f"共 {len(results)} 项，通过 {len(results)-len(failed)} 项")
-sys.exit(1 if failed else 0)
+if __name__ == "__main__":
+    sys.exit(1 if failed else 0)

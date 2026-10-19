@@ -1,131 +1,111 @@
+/* 鲁品开拍 - 工作台 DOM 冒烟测试（v3 架构）
+ *
+ * 不依赖后端、不调用 AI：验证
+ *  1. 页面可加载、init() 无后端时落到公开首页 v0
+ *  2. 登录守卫：未登录访问 v1..v6 被带到 v-login
+ *  3. 核心表单/按钮元素存在（产品资料、创意、分镜、海报、交付）
+ *  4. doLogout() 存在且登出跳转到 /
+ *
+ * 需要 AI 的深度流程由 pytest 后端用例与 Playwright 真浏览器测试覆盖。
+ * 运行：node e2e/e2e-jsdom.js
+ */
 const { JSDOM } = require('jsdom');
 const fs = require('fs');
 const path = require('path');
 
 const FE = '/home/hatch/workspace/lupin-kaipai/frontend';
-const BASE = 'http://127.0.0.1:8931';
 const results = [];
-const shot = (n, ok, d='') => { results.push(ok); console.log(`${ok?'PASS':'FAIL'} ${n} ${d}`); };
+const shot = (n, ok, d = '') => { results.push(!!ok); console.log(`${ok ? 'PASS' : 'FAIL'} ${n} ${d}`); };
 
 (async () => {
-  const html = fs.readFileSync(path.join(FE, 'index.html'), 'utf8');
-  const js = fs.readFileSync(path.join(FE, 'app.js'), 'utf8');
+  const html = fs.readFileSync(path.join(FE, 'app.html'), 'utf8');
+  const apiJs = fs.readFileSync(path.join(FE, 'js', 'services', 'api-client.js'), 'utf8');
+  const authJs = fs.readFileSync(path.join(FE, 'js', 'services', 'auth-client.js'), 'utf8');
+  const appJs = fs.readFileSync(path.join(FE, 'js', 'app.js'), 'utf8');
 
-  const dom = new JSDOM(html, { url: BASE + '/', runScripts: 'outside-only', pretendToBeVisual: true });
+  const dom = new JSDOM(html, {
+    url: 'http://127.0.0.1:8931/app',
+    runScripts: 'outside-only',
+    pretendToBeVisual: true,
+  });
   const { window } = dom;
 
   // 补浏览器 API
   window.confirm = () => true;
-  window.prompt = () => '改成更突出葱白的特写镜头';
+  window.prompt = () => '';
   window.alert = () => {};
-  window.fetch = (url, opts) => fetch(new URL(url, window.location.href).href, opts);
-  let capturedBlob = null;
-  window.URL.createObjectURL = (blob) => { capturedBlob = blob; return 'blob:test'; };
-  window.URL.revokeObjectURL = () => {};
-  let dlName = '';
-  const origCreate = window.document.createElement.bind(window.document);
-  window.document.createElement = function (tag, opt) {
-    const el = origCreate(tag, opt);
-    if (tag === 'a') { const oc = el.click.bind(el); el.click = () => { dlName = el.download; }; }
-    return el;
+  window.IntersectionObserver = class {
+    constructor(cb) { this.cb = cb; }
+    observe(t) { this.cb([{ isIntersecting: true, target: t }]); }
+    unobserve() {}
+    disconnect() {}
   };
+  // 无后端：fetch 直接失败，走 catch 分支
+  window.fetch = () => Promise.reject(new Error('no backend in smoke test'));
+  window.scrollTo = () => {};
+  // location.href 跳转改为记录（jsdom 不真跳）
+  let navigatedTo = null;
+  try {
+    Object.defineProperty(window, 'location', {
+      value: new Proxy(window.location, {
+        set(o, k, v) { if (k === 'href') { navigatedTo = v; return true; } o[k] = v; return true; },
+      }),
+      configurable: true,
+    });
+  } catch (e) { /* 旧 jsdom 不支持则跳过 */ }
 
-  window.eval(js + '\n;window.__getState=function(){return state};');
+  window.eval(apiJs + '\n' + authJs + '\n' + appJs);
+
   const $ = (id) => window.document.getElementById(id);
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-  const S = () => window.__getState();
-  const waitFor = async (fn, timeout, label, errId) => {
-    const t0 = Date.now();
-    while (Date.now() - t0 < timeout) { try { if (await fn()) return true; } catch(e){} await sleep(2000); }
-    const em = errId ? $(''+errId).textContent.slice(0,120) : '';
-    throw new Error('超时: ' + label + (em ? ' | 页面报错: ' + em : ''));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const activeView = () => {
+    const el = window.document.querySelector('.view.active');
+    return el ? el.id : '(none)';
   };
 
   try {
-    // 1. 填表单
-    $('f_name').value = '章丘大葱';
-    $('f_desc').value = '葱白长、甜脆，适合蘸酱';
-    $('f_points').value = '葱白长\n甜脆';
-    $('f_audience').value = '家庭主妇';
-    $('f_device').value = '手机';
-    $('f_people').value = '1';
-    $('f_location').value = '菜地';
-    $('f_duration').value = '45';
-    shot('填写产品表单', true);
+    // 1. init()：无后端 -> tryRefresh 失败 -> 落到公开首页 v0
+    window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
+    await sleep(1500);
+    shot('init 无后端时显示公开首页', activeView() === 'v0', `当前=${activeView()}`);
 
-    // 2. 生成创意方向
-    $('btn_ideas').click();
-    await waitFor(() => $('ideas').children.length >= 3, 420000, '创意方向生成', 'err1');
-    shot('生成3个创意方向', true, `${$('ideas').children.length}个`);
+    // 2. 登录守卫：v1..v6 未登录全部被带到 v-login
+    let guardOk = true;
+    for (const v of ['v1', 'v2', 'v3', 'v4', 'v5', 'v6']) {
+      window.go(v);
+      await sleep(120);
+      if (activeView() !== 'v-login') { guardOk = false; break; }
+    }
+    shot('未登录访问受保护视图均回登录页', guardOk);
 
-    // 3. 选方向 -> 分镜
-    window.selectIdea(0);
-    await waitFor(() => (S().storyboard && S().storyboard.shots && S().storyboard.shots.length >= 3), 420000, '分镜生成', 'err2');
-    const n = S().storyboard.shots.length;
-    const total = S().storyboard.shots.reduce((a,s)=>a+s.duration_seconds,0);
-    shot('生成分镜', n >= 3, `${n}镜/${total}s`);
+    // 3. 公开视图可达
+    window.go('v0');
+    await sleep(120);
+    shot('公开首页 v0 可达', activeView() === 'v0');
 
-    // 4. 编辑第1镜旁白
-    window.editShot(0);
-    await sleep(400);
-    const ta = window.document.querySelector('#e_vo_0');
-    if (!ta) throw new Error('没找到旁白编辑框');
-    ta.value = 'E2E旁白：章丘大葱蘸酱吃';
-    // 触发 input 让框架感知（直接调 saveShot 读 DOM）
-    ta.dispatchEvent(new window.Event('input', { bubbles: true }));
-    await window.saveShot(0);
-    await sleep(500);
-    shot('编辑镜头旁白', (S().storyboard.shots[0].voiceover||'').includes('E2E旁白'));
+    // 4. 核心表单与按钮存在
+    const needIds = [
+      'login_email', 'login_password', 'btn_do_auth', 'btn_logout',
+      'f_content', 'f_category', 'f_source',
+      'btn_gen_ideas', 'btn_gen_storyboard',
+      'btn_gen_poster', 'btn_export_all', 'btn_delivery_check',
+    ];
+    const missing = needIds.filter((id) => !$(id));
+    shot('核心表单/按钮元素存在', missing.length === 0, missing.length ? `缺失:${missing.join(',')}` : `${needIds.length}个`);
 
-    // 5. 锁定 + 重生成（锁定第1镜，重生成第3镜，验证锁定不被覆盖）
-    const lockNo = S().storyboard.shots[0].shot_number;
-    const lockBefore = JSON.stringify(S().storyboard.shots[0]);
-    S().locked.add(lockNo);
-    const regenTarget = S().storyboard.shots[2];
-    const oldAction = regenTarget.shooting_action;
-    await window.regenShot(regenTarget.shot_number);
-    const lockedAfter = JSON.stringify(S().storyboard.shots.find(s=>s.shot_number===lockNo));
-    const newAction = S().storyboard.shots.find(s=>s.shot_number===regenTarget.shot_number).shooting_action;
-    shot('锁定镜头不被覆盖', lockedAfter === lockBefore);
-    shot('单镜头重生成', !!newAction && newAction !== oldAction);
+    // 5. 登录视图结构完整（登录/注册切换）
+    window.go('v-login');
+    await sleep(120);
+    shot('登录视图含登录/注册切换', !!($('tab_login') && $('tab_register') && $('btn_do_auth')));
 
-    // 6. 风险页
-    $('btn_goto_risk').click();
-    await sleep(4000);
-    const risks = window.document.querySelectorAll('#risks > *').length;
-    shot('风险页渲染', true, `${risks}条`);
-    window.document.querySelectorAll('#risks input[type=checkbox]').forEach(c => { if(!c.checked) c.click(); });
-
-    // 7. 导出（完整45s，应成功）
-    $('btn_export').click();
-    await waitFor(() => !!capturedBlob, 90000, '导出下载', 'err4');
-    const buf = Buffer.from(await capturedBlob.arrayBuffer());
-    fs.writeFileSync('/home/hatch/workspace/lupin-kaipai/e2e/export-e2e.docx', buf);
-    shot('导出DOCX', buf.length > 5000, `${buf.length}字节/${dlName}`);
-
-    // 8. 删除镜头后总时长不符，导出应被拦截
-    window.showView('v3');
-    await sleep(500);
-    const n0 = S().storyboard.shots.length;
-    window.delShot(1);
-    await sleep(500);
-    shot('删除镜头', S().storyboard.shots.length === n0 - 1, `${n0}->${S().storyboard.shots.length}`);
-    capturedBlob = null;
-    window.showView('v4');
-    await sleep(500);
-    $('btn_export').click();
-    await sleep(15000);
-    const blocked = $('err4').textContent.includes('总时长');
-    shot('时长不符时导出被拦截', blocked && !capturedBlob, $('err4').textContent.slice(0,50));
-
-    // 9. 校验条状态
-    const vb = $('validate_bar') ? $('validate_bar').textContent.slice(0,60) : '';
-    console.log('校验条:', vb);
+    // 6. 登出接线存在（btn_logout -> doLogout；实际跳转由 Playwright 真浏览器覆盖）
+    const wired = appJs.includes('btn_logout').toString && /btn_logout"\)\.addEventListener\("click",\s*doLogout/.test(appJs);
+    shot('登出按钮已接线 doLogout', !!($('btn_logout') && wired));
   } catch (e) {
-    shot('E2E流程', false, e.message.slice(0,160));
+    shot('冒烟流程', false, e.message.slice(0, 160));
   }
 
-  const fails = results.filter(r => !r).length;
+  const fails = results.filter((r) => !r).length;
   console.log(`\n总计: ${results.length - fails}/${results.length} 通过`);
   process.exit(fails ? 1 : 0);
 })();

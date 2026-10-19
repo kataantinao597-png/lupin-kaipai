@@ -71,11 +71,17 @@ def is_blocked_ip(ip_str: str) -> bool:
     )
 
 
-def validate_outbound_url(url: str, *, purpose: str = "出站请求") -> str:
+def validate_outbound_url(url: str, *, purpose: str = "出站请求",
+                          via_proxy: bool = False) -> str:
     """校验出站 URL。合法返回原 URL；不合法抛 SSRFError。
 
     检查项：scheme 仅 http/https；禁止 URL userinfo；
     字面 IP 直接判内网；域名解析后逐个 IP 判内网。
+
+    via_proxy=True 时跳过"域名解析后判内网"一步：此时实际 TCP 连接
+    只打到代理服务器，DNS 由代理侧解析，本机解析结果与真实出口无关，
+    在代理出口环境（如沙箱经 egress-proxy 出站）下直接判会误杀合法域名。
+    字面量内网 IP 依然拦截（代理也可能被诱导访问内网），纵深防御不断。
     """
     if not url or not isinstance(url, str):
         raise SSRFError(f"{purpose}：URL 为空")
@@ -101,11 +107,13 @@ def validate_outbound_url(url: str, *, purpose: str = "出站请求") -> str:
         if is_blocked_ip(host):
             raise SSRFError(f"{purpose}：禁止访问内网/保留地址（{host}）")
         return url
-    # 域名：解析后逐个 IP 判定（DNS 重绑定防护靠缓存）
-    for ip in resolve_host(host):
-        if is_blocked_ip(ip):
-            raise SSRFError(
-                f"{purpose}：{host} 解析到内网/保留地址（{ip}），已拦截")
+    # 域名：解析后逐个 IP 判定（DNS 重绑定防护靠缓存）；
+    # via_proxy 时跳过——真实连接只打到代理，本机 DNS 结果与出口无关
+    if not via_proxy:
+        for ip in resolve_host(host):
+            if is_blocked_ip(ip):
+                raise SSRFError(
+                    f"{purpose}：{host} 解析到内网/保留地址（{ip}），已拦截")
     return url
 
 

@@ -7,6 +7,18 @@ from typing import Dict, List, Optional
 
 from .ai_service import DEFAULT_MODEL, parse_json_content
 
+# 统一风险文案常量（V2.0 P0 改造：三处硬编码统一到此处）。
+# 使用方：
+#   - backend/exporter.py:127（DOCX 导出，另一路在改，待其接入）
+#   - frontend/js/risk.js:55（死代码）
+#   - frontend/js/app.js:703（线上活代码）
+# 前端通过 GET /api/v2/risk-text 获取本常量，保持文案一致。
+# 注意：措辞必须守住"不把未发现风险表述为已保证合规"这条线。
+NO_RISK_FOUND_TEXT = (
+    "本脚本旁白/字幕中未发现需要标注的风险断言。"
+    "但以下待确认事项发布前必须人工确认，本工具不保证广告合规。"
+)
+
 # 第一层：关键词表（按类别组织；命中 -> 初检 flag）
 RISK_WORDS = {
     # (关键词, 等级, 原因)

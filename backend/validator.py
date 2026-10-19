@@ -11,6 +11,23 @@ NEEDS_MULTI_PEOPLE = ["双人", "多人", "群演", "演员", "助手协助", "�
 # 可行性规则：需要特殊场地的关键词
 NEEDS_SPECIAL_LOCATION = ["摄影棚", "影棚", "演播室", "专业厨房", "实验室"]
 
+# 抽象运镜/动作词：出现时必须配具体做法（量化数字或方法词），否则记 warning
+ABSTRACT_ACTION_WORDS = ["缓慢", "稍微", "适当", "轻轻", "慢慢"]
+# 具体做法的标记：数字单位或方法关键词，出现任一即视为"有具体做法"
+CONCRETE_MARKERS = ["秒", "cm", "厘米", "米", "度", "支架", "双手", "单手",
+                    "焦点", "对焦", "匀速", "固定", "抵住", "步骤", "第", "先", "再", "然后"]
+
+
+def _is_v2_storyboard(sb: "Storyboard") -> bool:
+    """是否为 v2 分镜：任一镜头填充了 v2 专属字段即视为 v2。"""
+    for s in sb.shots:
+        if (s.final_duration_seconds is not None
+                or s.record_duration_seconds is not None
+                or s.shoot_steps
+                or s.acceptance_criteria):
+            return True
+    return False
+
 
 def rule_feasibility_scan(sb: "Storyboard") -> list:
     """规则层可行性预检：快速、确定性。返回 [(shot_number, status, reason, constraints)]。
@@ -64,21 +81,46 @@ def validate_business(sb: Storyboard) -> List[str]:
     if len(shots) > MAX_SHOTS:
         errors.append(f"[规则] 镜头数量 {len(shots)} 超过上限 {MAX_SHOTS}，请精简分镜")
 
-    # 2. 总时长误差 ≤ 2 秒
-    total = sum(s.duration_seconds for s in shots)
+    # 2. 总时长误差 ≤ 2 秒（v2 用 final_duration_seconds；v1 回退到 duration_seconds，行为不变）
+    total = sum(s.effective_final_seconds for s in shots)
     if abs(total - sb.target_duration_seconds) > 2:
         errors.append(
-            f"[规则] 总时长 {total}s 与目标 {sb.target_duration_seconds}s "
+            f"[规则] 总成片时长 {total}s 与目标 {sb.target_duration_seconds}s "
             f"误差 {abs(total - sb.target_duration_seconds):.1f}s，超过 2s 上限"
         )
 
     # 2b. 单镜头时长不能超过目标总时长（服务端最终校验）
     for s in shots:
-        if s.duration_seconds > sb.target_duration_seconds:
+        if s.effective_final_seconds > sb.target_duration_seconds:
             errors.append(
-                f"[规则] 镜头 {s.shot_number}: 单镜头时长 {s.duration_seconds}s "
+                f"[规则] 镜头 {s.shot_number}: 单镜头成片时长 {s.effective_final_seconds}s "
                 f"超过目标总时长 {sb.target_duration_seconds}s"
             )
+
+    # 2c. v2：录制时长必须 ≥ 成片使用时长（要多拍几条备选）
+    for s in shots:
+        if s.record_duration_seconds is not None:
+            if s.record_duration_seconds < s.effective_final_seconds:
+                errors.append(
+                    f"[规则] 镜头 {s.shot_number}: 建议录制时长 {s.record_duration_seconds}s "
+                    f"小于成片使用时长 {s.effective_final_seconds}s，录制时长应≥成片时长"
+                )
+
+    # 2d. v2 模式：验收标准与拍摄步骤必填（v1 数据无这些字段，跳过以保持向后兼容）
+    if _is_v2_storyboard(sb):
+        for s in shots:
+            if not s.acceptance_criteria:
+                errors.append(f"[规则] 镜头 {s.shot_number}: acceptance_criteria 为空，"
+                              f"必须给出可观察的画面验收标准")
+            if not s.shoot_steps:
+                errors.append(f"[规则] 镜头 {s.shot_number}: shoot_steps 为空，"
+                              f"必须给出按顺序的具体拍摄步骤")
+            if not s.failure_modes:
+                errors.append(f"[规则] 镜头 {s.shot_number}: failure_modes 为空，"
+                              f"至少给出1个常见失败情况及解决步骤")
+            if not s.reshoot_guide:
+                errors.append(f"[规则] 镜头 {s.shot_number}: reshoot_guide 为空，"
+                              f"必须给出补拍指引")
 
     # 3. 单人手机拍摄约束
     if sb.shoot.device == "手机" and sb.shoot.people == 1:
@@ -100,6 +142,27 @@ def validate_business(sb: Storyboard) -> List[str]:
         errors.append("[规则] materials_checklist 为空，但镜头中有道具/素材需求，需补齐")
 
     return errors
+
+
+def validate_warnings(sb: Storyboard) -> List[str]:
+    """非阻断性检查，返回警告信息列表（不影响通过/不通过）。
+
+    目前只做抽象词检查：shooting_action / camera_movement / shoot_steps 中出现
+    "缓慢/稍微/适当/轻轻/慢慢"等无量化词，且同一文本中没有具体做法
+    （数字单位或方法关键词）时，提示创作者补充具体做法。
+    """
+    warnings: List[str] = []
+    for s in sb.shots:
+        texts = [s.shooting_action or "", s.camera_movement or ""] + list(s.shoot_steps or [])
+        for text in texts:
+            for word in ABSTRACT_ACTION_WORDS:
+                if word in text and not any(m in text for m in CONCRETE_MARKERS):
+                    warnings.append(
+                        f"[提示] 镜头 {s.shot_number}: 出现抽象词「{word}」但无具体做法"
+                        f"（{text[:30]}…），建议补充量化（如X秒/距离）或手法（如双手持机/焦点锁定）"
+                    )
+                    break  # 每个文本只报一次，避免刷屏
+    return warnings
 
 
 def validate_dict(data: dict) -> Tuple[List[str], "Storyboard | None"]:

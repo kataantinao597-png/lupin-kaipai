@@ -240,12 +240,16 @@ from .api.v1.ideas import router as ideas_router  # noqa: E402
 from .api.v1.risks import router as risks_router  # noqa: E402
 from .api.v1.exports import router as exports_router  # noqa: E402
 from .api.v1.feasibility import router as feasibility_router  # noqa: E402
+from .api.v1.colloquial import router as colloquial_router  # noqa: E402
+from .api.v1.shoot_v2 import router as shoot_v2_router  # noqa: E402
 
 _mount(auth_router)
 _mount(ideas_router)
 _mount(risks_router)
 _mount(exports_router)
 _mount(feasibility_router)
+_mount(colloquial_router)
+_mount(shoot_v2_router)
 
 # Phase 2：API v1（组织 / RBAC / 租户隔离新体系），不影响现有 /api/* 接口
 try:
@@ -271,9 +275,18 @@ except Exception as e:  # noqa: BLE001
 # S6.1：事实库 API（独立 try 块，与审核闭环组解耦）
 try:
     from .api.v1.facts import router as facts_router  # noqa: E402  # S6.1
+    from .api.v1.fact_import import router as fact_import_router  # noqa: E402
     _mount(facts_router, prefix="/api/v1")
+    _mount(fact_import_router, prefix="/api/v1")
 except Exception as e:  # noqa: BLE001
     log.info(f"事实库 API 加载跳过: {type(e).__name__}: {e}")
+
+# 海报 AI 生图 API（产品文档导入 5 项补齐）
+try:
+    from .api.v1.poster_image import router as poster_image_router  # noqa: E402
+    _mount(poster_image_router, prefix="/api/v1")
+except Exception as e:  # noqa: BLE001
+    log.info(f"海报生图 API 加载跳过: {type(e).__name__}: {e}")
 
 # S8.1/S8.2/S8.3：媒体资产 + 分镜时间轴 API
 try:
@@ -391,8 +404,17 @@ def ready():
 
 
 @app.get("/")
-def index():
-    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+def landing():
+    # 公开展示页：未登录用户的默认入口（三层架构第一层）
+    return FileResponse(os.path.join(FRONTEND_DIR, "landing.html"))
+
+
+@app.get("/app")
+@app.get("/login")
+def workbench():
+    # 创作工作台：/app 直接进入；/login 落到登录视图（前端 init 按 pathname 决定）
+    # 登录态由 httpOnly refresh Cookie 恢复，未登录访问受保护视图会被带到登录页
+    return FileResponse(os.path.join(FRONTEND_DIR, "app.html"))
 
 
 if os.path.isdir(FRONTEND_DIR):

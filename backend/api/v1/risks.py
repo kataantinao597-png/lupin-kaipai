@@ -79,3 +79,14 @@ def delivery_check_route(req: DeliveryCheckRequest):
         shoot_state=req.shoot_state,
         check_type=req.check_type,
     )
+
+
+@router.get("/api/v2/risk-text")
+def get_risk_text():
+    """返回统一的风险文案常量，供前端展示层取用，保持三处文案一致。
+
+    V2.0 P0 改造：frontend/js/risk.js:55 与 frontend/js/app.js:703
+    应改为从本接口取文案，不再硬编码。
+    """
+    from ...risk import NO_RISK_FOUND_TEXT
+    return {"no_risk_found_text": NO_RISK_FOUND_TEXT}

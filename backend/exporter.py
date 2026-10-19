@@ -16,6 +16,92 @@ from docx.oxml.ns import qn, nsdecls
 
 FONT = "微软雅黑"
 
+# 风险"无异常"文案统一：以 backend/risk.py 的常量为准，
+# 措辞守住"不把未发现风险表述为已保证合规"这条线。
+try:
+    from .risk import NO_RISK_FOUND_TEXT
+except Exception:  # 独立脚本运行时回退，避免循环导入拖垮导出
+    NO_RISK_FOUND_TEXT = (
+        "本脚本旁白/字幕中未发现需要标注的风险断言。"
+        "但以下待确认事项发布前必须人工确认，本工具不保证广告合规。"
+    )
+
+VIDEO_PURPOSE_LABELS = {
+    "brand": "品牌宣传",
+    "sales": "商品销售",
+    "intro": "产品介绍",
+    "record": "产地记录",
+}
+
+
+def _g(d, key, default=""):
+    """dict 安全取值（v1 老数据缺新字段时不报错）。"""
+    if not isinstance(d, dict):
+        return default
+    v = d.get(key, default)
+    return default if v is None else v
+
+
+def _shot_final_seconds(s: dict) -> float:
+    """成片使用时长：优先 final_duration_seconds，缺省回退 duration_seconds（v1 兼容）。"""
+    v = _g(s, "final_duration_seconds", None)
+    if v is None:
+        v = _g(s, "duration_seconds", 0)
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _shot_record_seconds(s: dict) -> float:
+    """建议录制时长：优先 record_duration_seconds，缺省回退 duration_seconds（v1 兼容）。"""
+    v = _g(s, "record_duration_seconds", None)
+    if v is None:
+        v = _g(s, "duration_seconds", 0)
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _fmt_seconds(v) -> str:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    return str(int(f)) if f == int(f) else str(round(f, 1))
+
+
+def _estimate_shoot_minutes(shots) -> int:
+    """预计现场拍摄耗时（分钟）：sum(建议录制时长) * 1.5（含转场/走位），向上取整，至少 1 分钟。"""
+    total = sum(_shot_record_seconds(s) for s in shots)
+    import math
+    return max(1, math.ceil(total * 1.5 / 60))
+
+
+def _label_para(doc, label: str, text: str, keep=False):
+    """'标签：内容' 段落，标签加粗。空内容直接跳过（v1 兼容）。"""
+    text = (text or "").strip()
+    if not text:
+        return None
+    p = doc.add_paragraph()
+    r = p.add_run(label + "：")
+    r.bold = True
+    p.add_run(text)
+    if keep:
+        p.paragraph_format.keep_together = True
+    fix_font(p)
+    return p
+
+
+def _shot_duration_text(s: dict) -> str:
+    """时长行：v2 显示'录制Xs / 成片Ys'，v1 只显示'Xs'。"""
+    rec = _g(s, "record_duration_seconds", None)
+    final = _shot_final_seconds(s)
+    if rec is None:
+        return _fmt_seconds(final) + "s"
+    return "录制%s / 成片%ss" % (_fmt_seconds(rec), _fmt_seconds(final))
+
 
 def fix_font(paragraph):
     for r in paragraph.runs:
@@ -55,6 +141,12 @@ def set_no_row_split(row):
 
 
 def build_doc(data: dict) -> Document:
+    """拍摄执行单 DOCX（V2.0）。
+
+    章节：一、任务概要 / 二、分镜表（每镜头独立小节） / 三、素材准备清单 /
+    四、宣传事实风险提示 / 五、用户待确认事项。
+    v1 老数据（无 v2 新字段）可正常导出，缺字段的节自动跳过。
+    """
     doc = Document()
     doc.styles["Normal"].font.size = Pt(10.5)
 
@@ -63,72 +155,148 @@ def build_doc(data: dict) -> Document:
     fix_font(title)
     para(doc, "（鲁品开拍 · AI 辅助生成，须经人工确认后执行）")
 
-    heading(doc, "一、产品信息", level=1)
-    para(doc, "产品：" + data["product_summary"])
-    para(doc, "目标受众：" + data["target_audience"])
-    para(doc, "创意方向：" + data["creative_direction"])
-    para(doc, "目标时长：" + str(data["target_duration_seconds"]) + " 秒")
-    shoot = data.get("shoot", {})
+    # ---------- 一、任务概要 ----------
+    heading(doc, "一、任务概要", level=1)
+    para(doc, "产品：" + str(_g(data, "product_summary")))
+    para(doc, "目标受众：" + str(_g(data, "target_audience")))
+    para(doc, "创意方向：" + str(_g(data, "creative_direction")))
+    purpose = _g(data, "video_purpose", "")
+    para(doc, "视频用途：" + VIDEO_PURPOSE_LABELS.get(purpose, purpose or "未指定"))
+    shots = data.get("shots") or []
+    final_total = sum(_shot_final_seconds(s) for s in shots)
+    para(doc, "成片目标时长：%s 秒（目标 %s 秒）" % (
+        _fmt_seconds(final_total), _fmt_seconds(_g(data, "target_duration_seconds", 0))), bold=True)
+    para(doc, "预计现场拍摄耗时：约 %d 分钟（含机位架设、走位与多条录制）" % _estimate_shoot_minutes(shots))
+    shoot = data.get("shoot", {}) or {}
     para(doc, "拍摄条件：%s，%s人%s%s" % (
         shoot.get("device", ""), shoot.get("people", ""),
         ("，" + shoot["lighting"]) if shoot.get("lighting") else "",
         ("，" + shoot["location"]) if shoot.get("location") else "",
     ))
 
+    # ---------- 二、分镜表（每镜头独立小节） ----------
     heading(doc, "二、分镜表", level=1)
-    shots = data["shots"]
-    table = doc.add_table(rows=1, cols=6)
-    table.style = "Table Grid"
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    hdr = ["镜头", "时长", "景别/运镜", "画面与拍摄动作", "旁白/字幕", "道具与素材"]
-    for i, htxt in enumerate(hdr):
-        cell = table.rows[0].cells[i]
-        cell.text = htxt
-        for p in cell.paragraphs:
-            fix_font(p)
-            for r in p.runs:
-                r.bold = True
-    set_repeat_header(table.rows[0])
-    set_no_row_split(table.rows[0])
     for s in shots:
-        row = table.add_row().cells
-        vals = [
-            str(s["shot_number"]),
-            str(s["duration_seconds"]) + "s",
-            s["shot_type"] + "\n" + s["camera_movement"],
-            s["scene_description"] + "\n【动作】" + s["shooting_action"],
-            "旁白：" + s["voiceover"] + "\n字幕：" + s["subtitle"],
-            "道具：" + "、".join(s["props"]) + "\n素材：" + "、".join(s["required_assets"]),
-        ]
-        for i, v in enumerate(vals):
-            row[i].text = v
-            for p in row[i].paragraphs:
-                fix_font(p)
-        set_no_row_split(table.rows[-1])
-    total = sum(s["duration_seconds"] for s in shots)
-    para(doc, "总拍摄时长：%s 秒（目标 %s 秒）" % (total, data["target_duration_seconds"]), bold=True)
+        num = _g(s, "shot_number", "?")
+        heading(doc, "镜头 %s" % num, level=2)
 
+        _label_para(doc, "镜头目的", _g(s, "shot_purpose"))
+        _label_para(doc, "时长", _shot_duration_text(s))
+        _label_para(doc, "景别/运镜",
+                    ("%s / %s" % (_g(s, "shot_type"), _g(s, "camera_movement"))).strip(" /"))
+        _label_para(doc, "手机摆放与光线", _g(s, "phone_setup"))
+        _label_para(doc, "前置条件", _g(s, "prerequisites"))
+        _label_para(doc, "画面", _g(s, "scene_description"))
+        _label_para(doc, "拍摄动作", _g(s, "shooting_action"))
+
+        steps = _g(s, "shoot_steps", []) or []
+        if steps:
+            p = doc.add_paragraph()
+            r = p.add_run("拍摄步骤：")
+            r.bold = True
+            fix_font(p)
+            for i, st in enumerate(steps, 1):
+                ip = doc.add_paragraph("%d. %s" % (i, st))
+                ip.paragraph_format.left_indent = Cm(0.75)
+                fix_font(ip)
+
+        criteria = _g(s, "acceptance_criteria", []) or []
+        if criteria:
+            p = doc.add_paragraph()
+            r = p.add_run("验收标准（逐条对照，全部打勾再过）：")
+            r.bold = True
+            fix_font(p)
+            for c in criteria:
+                ip = doc.add_paragraph("☐ " + str(c))
+                ip.paragraph_format.left_indent = Cm(0.75)
+                fix_font(ip)
+
+        fmodes = _g(s, "failure_modes", []) or []
+        if fmodes:
+            p = doc.add_paragraph()
+            r = p.add_run("常见失败与处理：")
+            r.bold = True
+            fix_font(p)
+            for fm in fmodes:
+                if isinstance(fm, dict):
+                    sym, fix = fm.get("symptom", ""), fm.get("fix", "")
+                else:
+                    sym, fix = str(fm), ""
+                line = ("⚠ %s → %s" % (sym, fix)) if fix else ("⚠ " + sym)
+                ip = doc.add_paragraph(line)
+                ip.paragraph_format.left_indent = Cm(0.75)
+                fix_font(ip)
+
+        _label_para(doc, "补拍指引", _g(s, "reshoot_guide"))
+        _label_para(doc, "替代拍法", _g(s, "alt_approach"))
+        trans = _g(s, "transition")
+        enote = _g(s, "edit_notes")
+        if trans or enote:
+            combo = "；".join(t for t in [trans and ("转场：" + trans),
+                                         enote and ("剪辑：" + enote)] if t)
+            _label_para(doc, "转场与剪辑", combo)
+
+        vo, sub = _g(s, "voiceover"), _g(s, "subtitle")
+        if vo or sub:
+            p = doc.add_paragraph()
+            r = p.add_run("旁白 / 字幕：")
+            r.bold = True
+            fix_font(p)
+            if vo:
+                vp = doc.add_paragraph("旁白：" + vo)
+                vp.paragraph_format.left_indent = Cm(0.75)
+                fix_font(vp)
+            if sub:
+                sp = doc.add_paragraph("字幕：" + sub)
+                sp.paragraph_format.left_indent = Cm(0.75)
+                fix_font(sp)
+
+        props = _g(s, "props", []) or []
+        assets = _g(s, "required_assets", []) or []
+        if props or assets:
+            parts = []
+            if props:
+                parts.append("道具：" + "、".join(props))
+            if assets:
+                parts.append("素材：" + "、".join(assets))
+            _label_para(doc, "道具与素材", "；".join(parts))
+
+        fact_refs = _g(s, "fact_refs", []) or []
+        if fact_refs:
+            _label_para(doc, "引用事实", "、".join(str(f) for f in fact_refs))
+
+    # ---------- 三、素材准备清单 ----------
     heading(doc, "三、素材准备清单", level=1)
-    for m in data["materials_checklist"]:
-        p = doc.add_paragraph(m, style="List Bullet")
+    for m in data.get("materials_checklist") or []:
+        p = doc.add_paragraph(str(m), style="List Bullet")
         p.paragraph_format.keep_together = True
         fix_font(p)
 
+    # ---------- 四、宣传事实风险提示 ----------
     heading(doc, "四、宣传事实风险提示", level=1)
     para(doc, "说明：以下内容缺乏充分依据，请人工核实确认后再决定是否使用。本工具不保证广告合规。")
-    if data["risk_flags"]:
-        for r in data["risk_flags"]:
+    risk_flags = data.get("risk_flags") or []
+    if risk_flags:
+        for r in risk_flags:
             status = "【已人工确认】" if r.get("confirmed") else "【待人工确认】"
             src = r.get("source", "")
-            para(doc, "%s【%s风险】%s\n原因：%s%s" % (
-                status, r["level"], r["text"], r["reason"],
-                f"（来源：{src}）" if src else ""), keep=True)
+            shot_ref = r.get("shot_number") or r.get("shot_ref") or ""
+            where = ("（关联：镜头 %s" % shot_ref) if shot_ref else "(关联："
+            text = r.get("text", "")
+            if where.endswith("（关联：") and text:
+                where += "文案「%s」" % (text[:20] + ("…" if len(text) > 20 else ""))
+            where += ")"
+            para(doc, "%s【%s风险】%s\n原因：%s%s%s" % (
+                status, r.get("level", ""), text, r.get("reason", ""),
+                where, f"（来源：{src}）" if src else ""), keep=True)
     else:
-        para(doc, "本次未发现明显风险提示（仍建议人工通读旁白/字幕复核）。")
+        para(doc, NO_RISK_FOUND_TEXT)
 
+    # ---------- 五、用户待确认事项 ----------
     heading(doc, "五、用户待确认事项", level=1)
-    if data["pending_confirmations"]:
-        for i, c in enumerate(data["pending_confirmations"], 1):
+    pending = data.get("pending_confirmations") or []
+    if pending:
+        for i, c in enumerate(pending, 1):
             para(doc, "%d. %s" % (i, c), keep=True)
     else:
         para(doc, "无。")

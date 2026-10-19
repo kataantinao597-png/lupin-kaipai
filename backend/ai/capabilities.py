@@ -19,6 +19,9 @@ TASK_REQUIREMENTS: dict[str, dict] = {
     "regen_shot":  {"needs_json": True,  "needs_vision": False},
     "feasibility": {"needs_json": True,  "needs_vision": False},
     "risk_check":  {"needs_json": True,  "needs_vision": False},
+    "fact_extract": {"needs_json": True,  "needs_vision": False},
+    "livestream_script": {"needs_json": True,  "needs_vision": False},
+    "colloquial_rewrite": {"needs_json": True,  "needs_vision": False},
 }
 
 

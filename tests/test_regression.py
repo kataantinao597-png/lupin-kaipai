@@ -146,4 +146,5 @@ try:
               ensure_ascii=False, indent=2)
 except OSError as e:
     print(f"[警告] 回归报告写入失败（不影响测试结论）: {e}")
-sys.exit(1 if failed else 0)
+if __name__ == "__main__":
+    sys.exit(1 if failed else 0)

@@ -105,10 +105,17 @@ def _as_aware(dt: Optional[datetime]) -> Optional[datetime]:
 
 
 def _safe_filename(name: str) -> str:
-    """文件名清洗：取 basename，去非法字符，防穿越。"""
+    """展示用文件名：取 basename，去路径分隔符与控制字符，保留中文。"""
     base = os.path.basename(name or "file")
-    base = re.sub(r"[^A-Za-z0-9._\-一-鿿]", "_", base).strip("._") or "file"
+    base = re.sub(r"[\x00-\x1f\x7f/\\]", "_", base).strip("._") or "file"
     return base[:128]
+
+
+def _safe_key_name(name: str) -> str:
+    """对象 key 用名：存储层 key 白名单只认 ASCII，中文转下划线。"""
+    base = os.path.basename(name or "file")
+    base = re.sub(r"[^A-Za-z0-9._-]", "_", base).strip("._") or "file"
+    return base[:64]
 
 
 def _asset_out(a: models.Asset) -> AssetOut:
@@ -173,7 +180,7 @@ def create_upload_intent(
                             code=error_codes.INVALID_PARAM, http_status=400)
 
     safe_name = _safe_filename(req.filename)
-    key = f"{req.org_id}/{req.work_id}/{uuid.uuid4().hex}_{safe_name}"
+    key = f"{req.org_id}/{req.work_id}/{uuid.uuid4().hex}_{_safe_key_name(req.filename)}"
     now = datetime.now(timezone.utc)
     intent = models.UploadIntent(
         token=secrets.token_urlsafe(32),

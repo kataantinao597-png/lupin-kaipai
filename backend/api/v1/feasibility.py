@@ -25,6 +25,25 @@ class FeasibilityCheckRequest(BaseModel):
     storyboard: dict
 
 
+class FeasibilityV2Request(BaseModel):
+    """V2.0 P0：拍摄可行性预检（纯规则，不调模型）。"""
+    product: dict = {}
+    shoot: dict = {}
+    video_purpose: str = ""
+
+
+@router.post("/api/v2/feasibility-check")
+def check_feasibility_v2(req: FeasibilityV2Request):
+    """V2.0 P0：生成分镜前的拍摄可行性预检。
+
+    纯规则检查，不消耗 AI 配额。返回：
+    {"status": "ready"|"need_confirm"|"need_alternative", "checks": [...]}
+    need_alternative 一定带有 alternative 替代路线，绝不直接拒单。
+    """
+    from ...feasibility_v2 import check_feasibility
+    return check_feasibility(req.product, req.shoot, req.video_purpose)
+
+
 def _validate_feasibility(data: dict, shot_numbers: list):
     """校验模型返回的可行性报告结构。"""
     errors = []
