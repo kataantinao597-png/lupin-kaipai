@@ -52,6 +52,8 @@ ALL_PERMISSIONS = frozenset({
     "work:export",               # 导出全部数据（050 重要操作）
     # 事实库
     "fact:create", "fact:read", "fact:update", "fact:delete", "fact:approve",
+    # 产品档案（V3.0 B-1：跨项目复用的产品资料中心）
+    "product:create", "product:read", "product:update", "product:delete",
     # 审核
     "review:submit", "review:approve",
     # 媒体资产（S8.1）
@@ -65,6 +67,7 @@ ROLE_PERMISSIONS: dict[str, frozenset] = {
         "org:read",
         "work:create", "work:read", "work:update",
         "fact:create", "fact:read", "fact:update",
+        "product:create", "product:read", "product:update",
         "review:submit",
         "asset:upload", "asset:read",
     }),
@@ -72,6 +75,7 @@ ROLE_PERMISSIONS: dict[str, frozenset] = {
         "org:read",
         "work:read",
         "fact:read", "fact:approve",
+        "product:read",
         "review:submit", "review:approve",
         "asset:read",
     }),
@@ -79,6 +83,7 @@ ROLE_PERMISSIONS: dict[str, frozenset] = {
         "org:read",
         "work:read",
         "fact:read",
+        "product:read",
         "asset:read",
     }),
 }

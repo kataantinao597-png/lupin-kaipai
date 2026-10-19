@@ -270,6 +270,40 @@ class FactVersion(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
+class Product(Base):
+    """V3.0 B-1：产品档案（跨项目复用的产品资料中心）。
+
+    - 产品信息不再只散落在各 work.data_json，由档案统一维护。
+    - code 在组织内唯一，是产品的稳定业务标识；
+      facts.product_id 自由字符串可引用 id 或 code（B-2 兼容）。
+    - 删除产品时若仍有 facts 引用（id 或 code 任一命中），禁止删除。
+    - version 乐观锁（088 同模式），更新必须带 expected_version。
+    """
+    __tablename__ = "products"
+    __table_args__ = (
+        Index("ix_product_org", "org_id"),
+        UniqueConstraint("org_id", "code", name="uq_product_org_code"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id", ondelete="CASCADE"),
+                    nullable=False)
+    code = Column(String(64), nullable=False)  # 组织内唯一的产品编号
+    name = Column(String(128), nullable=False)
+    category = Column(String(64), nullable=False, default="")  # 品类
+    origin = Column(String(128), nullable=False, default="")  # 产地
+    brand_profile = Column(Text, nullable=False, default="")  # 品牌资料
+    brand_tone = Column(String(128), nullable=False, default="")  # 品牌语气
+    selling_points = Column(JSON, nullable=False, default=list)  # 卖点列表
+    ad_restrictions = Column(Text, nullable=False, default="")  # 宣传限制
+    no_expand_claims = Column(Text, nullable=False, default="")  # 禁止擅自扩展的信息
+    # 088：乐观锁版本
+    version = Column(Integer, nullable=False, default=1, server_default="1")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
+                        onupdate=_now)
+
+
 class WorkVersion(Base):
     """091：作品历史快照（兄弟组 API 已引用，此处补模型定义）。
 

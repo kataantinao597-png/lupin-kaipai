@@ -1,7 +1,9 @@
 """事实库 API（S6.1：状态机 + 变更审计 + 内容版本）。
 
 - POST   /api/v1/facts                        创建事实（初始 draft，需 fact:create）
-- GET    /api/v1/facts?org_id=&status=         事实列表（需 fact:read）
+- GET    /api/v1/facts?org_id=&status=         事实列表（需 fact:read；
+                                              可加 product_id 按产品筛选，V3.0 B-2：
+                                              product_id 是自由字符串，兼容存量）
 - GET    /api/v1/facts/{id}?org_id=            事实详情（需 fact:read）
 - POST   /api/v1/facts/{id}/transition        状态流转（提交需 fact:update；
                                               确认/驳回/撤销需 fact:approve）
@@ -96,14 +98,20 @@ def create_fact(
 def list_facts(
     org_id: str,
     status_filter: str | None = Query(default=None, alias="status"),
+    product_id: str | None = Query(default=None),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """事实列表（可按状态过滤）。需要 fact:read 权限。"""
+    """事实列表（可按状态过滤）。需要 fact:read 权限。
+
+    V3.0 B-2：可加 product_id 按产品筛选。product_id 是自由字符串
+    （可引用产品 id 或 code），存量无 product_id 的事实保持可查。
+    """
     _require_fact_perm(db, user, org_id, "fact:read", "查看事实库")
     repo = FactRepository(db)
     try:
-        facts = repo.list_by_org(org_id, status=status_filter)
+        facts = repo.list_by_org(org_id, status=status_filter,
+                                 product_id=product_id)
     except ValueError as e:
         raise BusinessError(str(e), code=error_codes.INVALID_PARAM,
                             http_status=400)

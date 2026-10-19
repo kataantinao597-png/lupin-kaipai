@@ -348,3 +348,48 @@ class FactVersionOut(BaseModel):
     allow_use: bool = False
     created_by: str = ""
     created_at: Optional[datetime] = None
+
+
+# ---------------- V3.0 B-1：产品档案 ----------------
+
+class ProductCreate(BaseModel):
+    org_id: str = Field(..., description="组织 ID")
+    code: str = Field(..., min_length=1, description="产品编号（组织内唯一，创建后不可改）")
+    name: str = Field(..., min_length=1, description="产品名称")
+    category: str = Field(default="", description="品类")
+    origin: str = Field(default="", description="产地")
+    brand_profile: str = Field(default="", description="品牌资料")
+    brand_tone: str = Field(default="", description="品牌语气")
+    selling_points: list[str] = Field(default_factory=list, description="产品卖点")
+    ad_restrictions: str = Field(default="", description="宣传限制")
+    no_expand_claims: str = Field(default="", description="禁止擅自扩展的信息")
+
+
+class ProductUpdate(BaseModel):
+    org_id: str = Field(..., description="组织 ID")
+    expected_version: int = Field(..., description="乐观锁版本号（必填）")
+    name: Optional[str] = Field(default=None, description="产品名称")
+    category: Optional[str] = Field(default=None, description="品类")
+    origin: Optional[str] = Field(default=None, description="产地")
+    brand_profile: Optional[str] = Field(default=None, description="品牌资料")
+    brand_tone: Optional[str] = Field(default=None, description="品牌语气")
+    selling_points: Optional[list[str]] = Field(default=None, description="产品卖点")
+    ad_restrictions: Optional[str] = Field(default=None, description="宣传限制")
+    no_expand_claims: Optional[str] = Field(default=None, description="禁止擅自扩展的信息")
+
+
+class ProductOut(BaseModel):
+    id: str
+    org_id: str
+    code: str
+    name: str
+    category: str = ""
+    origin: str = ""
+    brand_profile: str = ""
+    brand_tone: str = ""
+    selling_points: list[str] = []
+    ad_restrictions: str = ""
+    no_expand_claims: str = ""
+    version: int = 1
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None

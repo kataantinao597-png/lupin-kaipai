@@ -45,6 +45,9 @@ FACT_UNVERIFIED = 3001      # 事实未核实 / 不允许使用
 FACT_NOT_FOUND = 3002
 FACT_EXPIRED = 3003
 FACT_CONFLICT = 3004        # 同一属性存在冲突事实
+PRODUCT_NOT_FOUND = 3005    # 产品档案不存在（V3.0 B-1）
+PRODUCT_CODE_CONFLICT = 3006  # 同一组织内产品编号重复（V3.0 B-1）
+PRODUCT_HAS_FACTS = 3007    # 仍有事实引用该产品，禁止删除（V3.0 B-1）
 
 # ---- 4xxx 组织与权限 ----
 PERMISSION_DENIED = 4001
@@ -86,6 +89,9 @@ ERROR_MESSAGES: dict[int, str] = {
     FACT_NOT_FOUND: "事实不存在",
     FACT_EXPIRED: "事实已过期，需重新核实",
     FACT_CONFLICT: "事实存在冲突",
+    PRODUCT_NOT_FOUND: "产品档案不存在",
+    PRODUCT_CODE_CONFLICT: "同一组织内产品编号已存在",
+    PRODUCT_HAS_FACTS: "该产品仍有事实引用，无法删除",
     PERMISSION_DENIED: "权限不足",
     ORG_NOT_FOUND: "组织不存在",
     MEMBER_NOT_FOUND: "成员不存在",

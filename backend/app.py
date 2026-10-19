@@ -276,8 +276,10 @@ except Exception as e:  # noqa: BLE001
 try:
     from .api.v1.facts import router as facts_router  # noqa: E402  # S6.1
     from .api.v1.fact_import import router as fact_import_router  # noqa: E402
+    from .api.v1.products import router as products_router  # noqa: E402  # V3.0 B-1
     _mount(facts_router, prefix="/api/v1")
     _mount(fact_import_router, prefix="/api/v1")
+    _mount(products_router, prefix="/api/v1")
 except Exception as e:  # noqa: BLE001
     log.info(f"事实库 API 加载跳过: {type(e).__name__}: {e}")
 

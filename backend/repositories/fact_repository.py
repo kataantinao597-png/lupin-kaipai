@@ -96,6 +96,7 @@ class FactRepository:
             stmt.order_by(Fact.updated_at.desc()).limit(limit)))
 
     def list_by_org(self, org_id: str, status: str | None = None,
+                    product_id: str | None = None,
                     limit: int = 200, offset: int = 0) -> list[Fact]:
         stmt = select(Fact).where(Fact.org_id == org_id)
         if status is not None:
@@ -104,6 +105,10 @@ class FactRepository:
             if status not in FACT_STATUSES:
                 raise ValueError(f"非法事实状态: {status}")
             stmt = stmt.where(Fact.status == status)
+        if product_id is not None:
+            # V3.0 B-2：按产品筛选。product_id 是自由字符串
+            # （可引用产品 id 或 code，兼容存量数据）。
+            stmt = stmt.where(Fact.product_id == product_id)
         return list(self.db.scalars(
             stmt.order_by(Fact.updated_at.desc()).limit(limit).offset(offset)))
 
