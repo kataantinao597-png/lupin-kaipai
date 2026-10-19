@@ -82,7 +82,7 @@ window.go = go;
 function onEnter(v) {
   if (v === "v1") renderWorkbench();
   else if (v === "v2") { fillProductForm(); loadFacts(); }
-  else if (v === "v3") { renderStepper(); renderIdeas(); renderShots(); }
+  else if (v === "v3") { renderStepper(); renderIdeas(); renderShots(); updateRiskDirtyBadge(); } // V2.1：进入分镜视图刷新标脏徽章
   else if (v === "v4") { renderPoster(); }
   else if (v === "v5") { renderShoot(); loadAssets(); fillNote(); }
   else if (v === "v6") { renderDeliveryTitles(); loadTimeline(); renderFinalArchive(); }
@@ -848,11 +848,14 @@ async function shotAction(act, i) {
     if (vo === null) return;
     const dur = prompt("时长（秒）：", String(s.duration_seconds || ""));
     if (dur === null) return;
+    const oldVo = s.voiceover || "";
     s.scene_description = scene.trim();
     s.voiceover = vo.trim();
     const d = parseFloat(dur);
     if (d > 0) s.duration_seconds = d;
+    if (s.voiceover !== oldVo) { markRiskDirty(); } // V2.1：口播文案变更 → 风险检查标脏
     await saveWork(); renderShots();
+    updateRiskDirtyBadge();
     toast("已更新");
   } else if (act === "colloquial") {
     openColloquialModal(i);
@@ -866,7 +869,9 @@ async function shotAction(act, i) {
         instruction: instruction.trim(), locked: [],
       }));
       S.data.storyboard = d.storyboard;
+      markRiskDirty(); // V2.1：重生成改变镜头文案 → 风险检查标脏
       await saveWork(); renderShots();
+      updateRiskDirtyBadge();
       if (d.warning) toast("注意：" + d.warning); else toast("已重生成");
     } catch (e) {
       toast("重生成失败：" + (e.message || "网络错误"));
@@ -888,6 +893,18 @@ async function addShot() {
 }
 
 /* ---------- 风险 / 可行性 ---------- */
+/* ---------- V2.1：文案修改后风险检查标脏 ---------- */
+function markRiskDirty() {
+  // 只有"风险检查已运行过"时才标脏；没跑过的不需要
+  if (S.data && S.data.risk != null && !S.data.risk_dirty) {
+    S.data.risk_dirty = true;
+  }
+}
+function updateRiskDirtyBadge() {
+  const el = $("risk_dirty_badge");
+  if (el) el.style.display = (S.data && S.data.risk_dirty && S.data.risk != null) ? "" : "none";
+}
+
 async function runRisk() {
   const sb = S.data.storyboard;
   if (!sb) { toast("请先生成分镜"); return; }
@@ -900,8 +917,10 @@ async function runRisk() {
       selling_points: p.selling_points || [], product: p, facts: usableFacts(),
     }));
     S.data.risk = (d.flags || []).map((f) => ({ ...f, confirmed: false }));
+    S.data.risk_dirty = false; // V2.1：重新运行后清除标脏
     await saveWork();
     renderRisks();
+    updateRiskDirtyBadge();
     if (!S.data.risk.length) {
       // V2.0：文案从后端统一接口取，不再硬编码
       try {
@@ -1530,9 +1549,11 @@ async function useColloquial() {
   const s = shots[colloqShotIdx];
   const nw = $("colloq_new").textContent.trim();
   if (!s || !nw || nw === "改写中…" || nw === "—") return;
+  if (nw !== (s.voiceover || "")) { markRiskDirty(); } // V2.1：口播文案变更 → 风险检查标脏
   s.voiceover = nw;
   await saveWork();
   renderShots();
+  updateRiskDirtyBadge();
   $("colloquial_modal").classList.remove("show");
   toast("已采用口语版");
 }
@@ -2110,6 +2131,9 @@ $("tab_feas").classList.add("active"); $("tab_risk").classList.remove("active");
 $("pane_feas").style.display = ""; $("pane_risk").style.display = "none";
 });
 $("btn_run_risk").addEventListener("click", runRisk);
+// V2.1：风险检查标脏徽章（JS 注入，不动 HTML）
+$("btn_run_risk").insertAdjacentHTML("afterend",
+  '<span id="risk_dirty_badge" style="display:none;font-size:12.5px;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:999px;padding:4px 10px">文案已修改，风险检查需重新运行</span>');
 $("btn_run_feas").addEventListener("click", runFeas);
 
 document.querySelectorAll("#poster_tpls .t").forEach((t) => t.addEventListener("click", () => {
