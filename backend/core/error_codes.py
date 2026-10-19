@@ -60,6 +60,10 @@ PUBLISH_CHECK_BLOCKED = 3016  # 发布前检查未通过，阻止流转（V3.0 F
 ASSET_REF_NOT_FOUND = 3017  # 素材引用不存在（V3.0 G）
 ASSET_REF_CONFLICT = 3018  # 同一项目已引用过该素材（V3.0 G）
 ASSET_HAS_REFS = 3019  # 仍有项目引用该素材，禁止删除实体（V3.0 G）
+EFFECT_METRIC_INVALID = 3020  # 指标数据非法（V3.0 H）
+EFFECT_METRIC_NOT_FOUND = 3021  # 效果指标不存在（V3.0 H）
+REVIEW_SUGGESTION_NOT_FOUND = 3022  # 复盘建议不存在（V3.0 H）
+REVIEW_ONLY_PUBLISHED = 3023  # 只有已发布/已复盘记录才能复盘（V3.0 H）
 
 # ---- 4xxx 组织与权限 ----
 PERMISSION_DENIED = 4001

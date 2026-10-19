@@ -21,6 +21,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     Column,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -1408,7 +1409,95 @@ class PublishRecord(Base):
     # 发布后数据（阶段 H 效果复盘用；首期手动录入）
     post_metrics = Column(JSON, nullable=False, default=dict)
     notes = Column(Text, nullable=False, default="")
+    # V3.0 H：复盘结论（人工撰写）与复盘时间
+    review_note = Column(Text, nullable=False, default="")
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(String(64), nullable=False, default="")
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_now,
                         onupdate=_now)
+
+
+# ---- V3.0 H：效果复盘 ----
+
+# 指标来源：人工录入 / 平台截图导入（数据哪来必须标清）
+METRIC_SOURCE_MANUAL = "manual"
+METRIC_SOURCE_SCREENSHOT = "screenshot"
+METRIC_SOURCES = (METRIC_SOURCE_MANUAL, METRIC_SOURCE_SCREENSHOT)
+METRIC_SOURCE_LABELS = {
+    METRIC_SOURCE_MANUAL: "人工录入",
+    METRIC_SOURCE_SCREENSHOT: "平台截图导入",
+}
+
+# 复盘建议处理状态：待人工处理 / 已采纳 / 已忽略
+SUGGESTION_PENDING = "pending"
+SUGGESTION_ADOPTED = "adopted"
+SUGGESTION_DISMISSED = "dismissed"
+SUGGESTION_STATUSES = (SUGGESTION_PENDING, SUGGESTION_ADOPTED,
+                       SUGGESTION_DISMISSED)
+
+
+class EffectMetric(Base):
+    """V3.0 H：效果指标（一次录入批次）。
+
+    - 所有数据人工录入，绝不编造；每条必带来源 + 数据起止日期。
+    - metrics 为灵活 JSON：{plays, likes, comments, shares, favorites,
+      followers_gain, ...}，不同平台字段不同。
+    - 支持多次追加；历史即"看板"数据源，无数据时展示空状态。
+    """
+    __tablename__ = "effect_metrics"
+    __table_args__ = (
+        Index("ix_em_org", "org_id"),
+        Index("ix_em_rec", "publish_record_id"),
+        Index("ix_em_org_rec", "org_id", "publish_record_id"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id",
+                                          ondelete="CASCADE"),
+                    nullable=False)
+    publish_record_id = Column(String(32),
+                               ForeignKey("publish_records.id",
+                                          ondelete="CASCADE"),
+                               nullable=False)
+    # 数据来源：manual=人工录入 / screenshot=平台截图导入
+    source = Column(String(32), nullable=False, default=METRIC_SOURCE_MANUAL)
+    # 数据起止日期（这批指标统计的是哪段时间）
+    date_start = Column(Date, nullable=True)
+    date_end = Column(Date, nullable=True)
+    # 指标值（灵活字段，各平台不同）
+    metrics = Column(JSON, nullable=False, default=dict)
+    note = Column(Text, nullable=False, default="")
+    # 录入时间（何时记的这条）
+    recorded_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    created_by = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class ReviewSuggestion(Base):
+    """V3.0 H：AI 改进建议。
+
+    - AI 建议只展示、只等人工采纳；绝不自动覆盖已确认的文案、
+      已发布版本和任何已确认内容（仅存文本 + 状态）。
+    """
+    __tablename__ = "review_suggestions"
+    __table_args__ = (
+        Index("ix_rs_org", "org_id"),
+        Index("ix_rs_rec", "publish_record_id"),
+        Index("ix_rs_org_rec", "org_id", "publish_record_id"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    org_id = Column(String(32), ForeignKey("organizations.id",
+                                          ondelete="CASCADE"),
+                    nullable=False)
+    publish_record_id = Column(String(32),
+                               ForeignKey("publish_records.id",
+                                          ondelete="CASCADE"),
+                               nullable=False)
+    suggestion_text = Column(Text, nullable=False, default="")
+    # 待人工处理 / 已采纳 / 已忽略
+    status = Column(String(16), nullable=False, default=SUGGESTION_PENDING)
+    ai_meta = Column(JSON, nullable=False, default=dict)
+    created_by = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
