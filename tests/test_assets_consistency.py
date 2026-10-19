@@ -22,23 +22,32 @@ def _make_png(w: int = 3, h: int = 2) -> bytes:
 
 @pytest.fixture()
 def api_client(tmp_path, monkeypatch):
-    url = f"sqlite:///{tmp_path}/api.db"
-    monkeypatch.setenv("DATABASE_URL", url)
-    monkeypatch.setenv("LUPIN_DB_AUTO_CREATE", "0")
     # V2.1：test_ai_observability.py 会泄漏 daemon 写库线程（lupin-ai-recorder），
-    # 它按进程级 DATABASE_URL 懒解析引擎，可能与本 fixture 的 tmp 库并发写
-    # 触发 SQLite "database is locked"。此处截断新记录入队并排空残留，
-    # 让写线程在测试期间保持空闲。
+    # 它在 reset_engine() 之后按进程级 DATABASE_URL 懒解析引擎。
+    # 若在其队列/在途写入未落定时就切换 DATABASE_URL + reset_engine()，
+    # 写线程会把 ai_calls 记录写进本 fixture 的 tmp 库，与 fixture 写入并发
+    # 触发 SQLite "database is locked"（e3q8）。顺序必须是：
+    # ① 先截断新入队 → ② 排空残留 → ③ 等在途写落定 → ④ 最后再切库。
     import queue as _queue_mod
     import time as _time
     from backend import ai_observability as _obs
     monkeypatch.setattr(_obs, "record_call_async", lambda rec: None)
-    while True:
+    for _ in range(20):  # 排空 + 确认无在途（在途写只用旧库会话，无害）
+        drained = 0
+        while True:
+            try:
+                _obs._record_q.get_nowait()
+                drained += 1
+            except _queue_mod.Empty:
+                break
+        _time.sleep(0.3)
         try:
             _obs._record_q.get_nowait()
         except _queue_mod.Empty:
-            break
-    _time.sleep(0.2)  # 让已出队、正在提交的记录落定
+            if drained == 0:
+                break
+    url = f"sqlite:///{tmp_path}/api.db"
+    monkeypatch.setenv("DATABASE_URL", url)
     from backend.auth.database import reset_engine, get_session_factory, get_db
     from backend.auth.deps import get_current_user
     from backend.media.storage import reset_storage
