@@ -188,9 +188,26 @@ async function saveWork() {
     if (i >= 0) S.works[i] = w;
   } catch (e) {
     if (e && e.status === 409) {
-      toast("作品在别处被修改，已重新加载最新版本");
-      await loadWorks();
-      renderWorkbench();
+      // V2.1：409 版本冲突不再静默丢数据——让用户二选一
+      const keep = confirm("作品在别处被修改过，本地还有未保存的内容。\n\n点「确定」= 保留我的修改并强制保存（覆盖别处的修改）\n点「取消」= 放弃我的修改，加载最新版本");
+      if (keep) {
+        try {
+          const fresh = V1(await ApiClient.get("/api/v1/works/" + S.activeWork.id));
+          S.activeWork.version = fresh.version;
+          const w = V1(await ApiClient.patch("/api/v1/works/" + S.activeWork.id,
+            { data: S.data, version: S.activeWork.version }));
+          S.activeWork = w;
+          const i = S.works.findIndex((x) => x.id === w.id);
+          if (i >= 0) S.works[i] = w;
+          toast("已强制保存，覆盖了别处的修改");
+        } catch (e2) {
+          toast("强制保存失败：" + (e2.message || "网络错误") + "，你的修改还在本地，请稍后重试");
+        }
+      } else {
+        await loadWorks();
+        renderWorkbench();
+        toast("已放弃本地修改，加载了最新版本");
+      }
     } else {
       toast("保存失败：" + (e.message || "网络错误"));
     }
@@ -1088,17 +1105,28 @@ function shootKey(s, i) {
   for (let j = 0; j < h.length; j++) x = ((x << 5) - x + h.charCodeAt(j)) | 0;
   return "s" + (s.shot_number || i + 1) + "_" + Math.abs(x).toString(36);
 }
-// 五态顺序：待拍摄 → 已拍摄待验收 → 验收通过 → 需要补拍 → 用替代方案 → 待拍摄
+// V2.1：六态 + 转换约束。点击卡片进入转换表中的第一个合法状态，不再无脑循环。
+// 待拍摄 → 拍摄中、用替代方案
 const SHOOT_STATES = [
   ["todo", "待拍摄", "amber"],
+  ["shooting", "拍摄中", "blue"],
   ["shot", "已拍摄·待验收", "blue"],
   ["passed", "验收通过", "green"],
   ["reshoot", "需要补拍", "red"],
   ["alt", "用替代方案", "gray"],
 ];
+const SHOOT_TRANSITIONS = {
+  todo: ["shooting", "alt"],
+  shooting: ["shot", "alt"],
+  shot: ["passed", "reshoot", "alt"],
+  reshoot: ["shooting", "alt"],
+  passed: ["reshoot", "alt"],
+  alt: ["shooting", "todo"],
+};
 function nextShootState(cur) {
-  const idx = SHOOT_STATES.findIndex(([v]) => v === cur);
-  return SHOOT_STATES[(idx + 1) % SHOOT_STATES.length][0];
+  const allowed = SHOOT_TRANSITIONS[cur];
+  if (allowed && allowed.length) return allowed[0];
+  return "todo";
 }
 function renderShoot() {
 const sb = S.data.storyboard;
@@ -1143,13 +1171,20 @@ const s = S.data.storyboard.shots[i];
 c.querySelector(".check").addEventListener("click", async () => {
 const cur = ((S.data.shoot_state || {})[k] || {}).status || "todo";
 const nxt = nextShootState(cur);
-S.data.shoot_state[k] = { status: nxt, note: "" };
+// V2.1：用替代方案必须填写原因，取消则中止切换
+let note = "";
+if (nxt === "alt") {
+  const reason = prompt("请填写使用替代方案的原因：", "");
+  if (reason === null) return;
+  note = (reason || "").trim();
+}
+S.data.shoot_state[k] = { status: nxt, note };
 await saveWork();
 renderShoot();
 if (nxt === "reshoot" && s.reshoot_guide) {
   alert(`【镜头 ${s.shot_number} 补拍指引】\n${s.reshoot_guide}`);
-} else if (nxt === "alt" && s.alt_approach) {
-  toast("已切换为替代方案：" + s.alt_approach.slice(0, 40));
+} else if (nxt === "alt") {
+  toast("已记录替代方案" + (s.alt_approach ? "：" + s.alt_approach.slice(0, 40) : ""));
 }
 });
 /* V2.0 P1：验收按钮组（阻止冒泡，不触发状态切换） */

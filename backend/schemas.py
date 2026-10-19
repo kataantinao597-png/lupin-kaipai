@@ -69,6 +69,12 @@ class RiskFlag(BaseModel):
     level: Literal["高", "中", "低"]
     reason: str = Field(default="")
     confirmed: bool = Field(default=False, description="人工是否已确认")
+    # V2.1：关联定位（全可选，向后兼容）
+    shot_number: Optional[int] = Field(default=None, description="关联的镜头编号")
+    linked_text: str = Field(default="", description="关联的原文（旁白/字幕/输入卖点）")
+    suggestion: str = Field(default="", description="修改建议")
+    status: Literal["open", "confirmed", "waived"] = Field(
+        default="open", description="处理状态：待处理/已确认/已豁免")
 
 
 class Storyboard(BaseModel):

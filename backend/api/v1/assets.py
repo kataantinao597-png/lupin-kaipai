@@ -248,19 +248,29 @@ def upload_file(
         raise BusinessError("文件哈希与声明不一致",
                             code=error_codes.INVALID_PARAM, http_status=400)
 
-    # 入库 + 建资产 + 建处理任务（同一事务）
+    # 入库 + 建资产 + 建处理任务（同一事务）。
+    # V2.1 一致性：commit（含 flush）失败时回滚并清理已入库的存储文件，
+    # 避免"DB 无记录但存储有文件"的孤儿；清理失败不掩盖原始异常。
     get_storage().put(intent.key, data)
     intent.used = True
-    asset = models.Asset(
-        org_id=intent.org_id, work_id=intent.work_id, key=intent.key,
-        filename=intent.filename, mime=mime, size=len(data), sha256=digest,
-        status=models.ASSET_STATUS_READY, created_by=user.id,
-    )
-    db.add(asset)
-    db.flush()
-    task = models.MediaTask(asset_id=asset.id)
-    db.add(task)
-    db.commit()
+    try:
+        asset = models.Asset(
+            org_id=intent.org_id, work_id=intent.work_id, key=intent.key,
+            filename=intent.filename, mime=mime, size=len(data), sha256=digest,
+            status=models.ASSET_STATUS_READY, created_by=user.id,
+        )
+        db.add(asset)
+        db.flush()
+        task = models.MediaTask(asset_id=asset.id)
+        db.add(task)
+        db.commit()
+    except Exception:
+        db.rollback()
+        try:
+            get_storage().delete(intent.key)
+        except Exception:
+            pass
+        raise
     db.refresh(asset)
     return success(_asset_out(asset).model_dump())
 
@@ -355,10 +365,17 @@ def download_raw(
     if asset is None or asset.status != models.ASSET_STATUS_READY:
         raise BusinessError("资产不存在",
                             code=error_codes.RESOURCE_NOT_FOUND, http_status=404)
-    path = get_storage().local_path(asset.key)
+    storage = get_storage()
+    # V2.1 一致性：DB 有记录但物理文件丢失 → 410（不要 500）。
+    # 注意 LocalStorageBackend.local_path 在文件缺失时返回 None，
+    # 不可用 local_path 是否为 None 区分"本地缺文件"与"S3 后端"。
+    if not storage.exists(asset.key):
+        raise BusinessError("文件已丢失，请重新上传",
+                            code=error_codes.RESOURCE_NOT_FOUND,
+                            http_status=410)
+    path = storage.local_path(asset.key)
     if path is None:
         # S3 后端：重定向到预签名 URL
-        storage = get_storage()
         presigned = getattr(storage, "presigned_url", None)
         if presigned is None:
             raise BusinessError("当前存储后端不支持直接下载",

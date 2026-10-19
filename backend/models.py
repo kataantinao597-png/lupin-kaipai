@@ -202,6 +202,8 @@ class Fact(Base):
     product_id = Column(String(64), nullable=False, default="")
     content = Column(Text, nullable=False)
     category = Column(String(64), nullable=False, default="")
+    scope = Column(String(128), nullable=False, default="", server_default="",
+                   comment="适用范围，如：仅烟台产地款")
     # official_document | enterprise_material | human_statement | ai_inference
     source_type = Column(String(32), nullable=False, default="human_statement")
     source_ref = Column(Text, nullable=False, default="")

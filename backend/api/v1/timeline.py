@@ -22,13 +22,17 @@ from ...auth.deps import get_current_user
 from ...auth.models import User
 from ...core import error_codes
 from ...core.exceptions import BusinessError
+from ...core.config import get_settings
 from ...core.response import ApiResponse, success
 from ...rbac import assert_can, get_membership, has_permission
 from ...repositories.storyboard_repository import StoryboardRepository
 
 router = APIRouter(prefix="/works", tags=["v1-timeline"])
 
-TOLERANCE_SECONDS = 2.0  # 与 validator.validate_business 的容差一致
+
+def _tolerance_seconds() -> float:
+    """时长容差（秒），与 validator.validate_business 共用配置 LUPIN_DURATION_TOLERANCE。"""
+    return get_settings().LUPIN_DURATION_TOLERANCE
 
 
 class TimelineShot(BaseModel):
@@ -119,7 +123,7 @@ def get_timeline(
         work_id=work_id, storyboard_id=storyboard_id,
         target_duration_seconds=target,
         total_duration_seconds=total, diff_seconds=diff,
-        within_tolerance=abs(diff) <= TOLERANCE_SECONDS,
+        within_tolerance=abs(diff) <= _tolerance_seconds(),
         shot_count=len(shots), shots=shots,
     )
     return success(out.model_dump())

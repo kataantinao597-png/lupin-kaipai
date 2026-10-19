@@ -57,11 +57,12 @@ class FactRepository:
     @transactional_method
     def create(self, org_id: str, content: str, product_id: str = "",
                category: str = "", source_type: str = "human_statement",
-               source_ref: str = "",
+               source_ref: str = "", scope: str = "",
                expires_at: datetime | None = None) -> Fact:
         fact = Fact(
             org_id=org_id, content=content.strip(), product_id=product_id,
             category=category, source_type=source_type, source_ref=source_ref,
+            scope=scope or "",
             expires_at=expires_at,
         )
         self.db.add(fact)

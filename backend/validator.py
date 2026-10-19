@@ -81,12 +81,15 @@ def validate_business(sb: Storyboard) -> List[str]:
     if len(shots) > MAX_SHOTS:
         errors.append(f"[规则] 镜头数量 {len(shots)} 超过上限 {MAX_SHOTS}，请精简分镜")
 
-    # 2. 总时长误差 ≤ 2 秒（v2 用 final_duration_seconds；v1 回退到 duration_seconds，行为不变）
+    # 2. 总时长误差 ≤ 容差（默认 2s，可用 LUPIN_DURATION_TOLERANCE 配置；v2 用
+    # final_duration_seconds；v1 回退到 duration_seconds，行为不变）
+    from .core.config import get_settings
+    tol = get_settings().LUPIN_DURATION_TOLERANCE
     total = sum(s.effective_final_seconds for s in shots)
-    if abs(total - sb.target_duration_seconds) > 2:
+    if abs(total - sb.target_duration_seconds) > tol:
         errors.append(
             f"[规则] 总成片时长 {total}s 与目标 {sb.target_duration_seconds}s "
-            f"误差 {abs(total - sb.target_duration_seconds):.1f}s，超过 2s 上限"
+            f"误差 {abs(total - sb.target_duration_seconds):.1f}s，超过 {tol:g}s 上限"
         )
 
     # 2b. 单镜头时长不能超过目标总时长（服务端最终校验）
@@ -162,6 +165,27 @@ def validate_warnings(sb: Storyboard) -> List[str]:
                         f"（{text[:30]}…），建议补充量化（如X秒/距离）或手法（如双手持机/焦点锁定）"
                     )
                     break  # 每个文本只报一次，避免刷屏
+
+    # V2.1：首尾镜头结构建议（非阻断）
+    if sb.shots:
+        first = sb.shots[0]
+        if not any(k in (first.shot_type or "") for k in ("远景", "全景", "大远景")):
+            warnings.append(
+                f"[结构] 首镜景别为「{first.shot_type or '未填'}」，"
+                "建议开场用远景/全景先交代环境，再切入主体"
+            )
+        last = sb.shots[-1]
+        closing_text = " ".join([
+            last.voiceover or "", last.subtitle or "",
+            last.shot_purpose or "", last.transition or "",
+        ])
+        if not any(k in closing_text for k in
+                   ("结尾", "收尾", "总结", "回顾", "购买", "下单",
+                    "关注", "再见", "谢谢", "结语")):
+            warnings.append(
+                f"[结构] 末镜（镜头 {last.shot_number}）缺少收尾感，"
+                "建议加一句收束（总结/购买引导/关注），避免视频戛然而止"
+            )
     return warnings
 
 

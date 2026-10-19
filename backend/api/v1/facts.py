@@ -49,6 +49,7 @@ def _fact_out(f: models.Fact) -> FactOut:
         id=f.id, org_id=f.org_id, product_id=f.product_id or "",
         content=f.content or "", category=f.category or "",
         source_type=f.source_type or "", source_ref=f.source_ref or "",
+        scope=f.scope or "",
         status=sm.normalize_status(f.status),
         allow_use=bool(f.allow_use),
         verified_by=f.verified_by, verified_at=f.verified_at,
@@ -85,6 +86,7 @@ def create_fact(
         org_id=req.org_id, content=req.content,
         product_id=req.product_id, category=req.category,
         source_type=req.source_type, source_ref=req.source_ref,
+        scope=req.scope,
         expires_at=req.expires_at,
     )
     return success(_fact_out(fact))

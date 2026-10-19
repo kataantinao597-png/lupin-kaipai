@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     # ---------- 服务 ----------
     PORT: int = Field(default=8080)
     ENV: str = Field(default="development", description="development | staging | production")
+    LUPIN_DURATION_TOLERANCE: float = Field(
+        default=2.0,
+        description="分镜总成片时长与目标时长的允许误差（秒）",
+    )
 
     @field_validator("LUPIN_API_BASE")
     @classmethod

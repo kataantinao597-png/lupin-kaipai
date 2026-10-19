@@ -272,6 +272,7 @@ class FactCreate(BaseModel):
         default="human_statement",
         description="来源类型：official_document|enterprise_material|human_statement|ai_inference")
     source_ref: str = Field(default="", description="来源引用/证据链接")
+    scope: str = Field(default="", description="适用范围，如：仅烟台产地款")
     expires_at: Optional[datetime] = Field(default=None, description="有效期截止")
 
     @field_validator("source_type")
@@ -292,6 +293,7 @@ class FactOut(BaseModel):
     category: str = ""
     source_type: str = ""
     source_ref: str = ""
+    scope: str = ""
     status: str
     allow_use: bool = False
     verified_by: Optional[str] = None

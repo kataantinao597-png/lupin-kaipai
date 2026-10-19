@@ -3,6 +3,7 @@
 不声称广告合规保证；只做"依据缺失"提示，最终由人工确认。
 """
 import json
+import re
 from typing import Dict, List, Optional
 
 from .ai_service import DEFAULT_MODEL, parse_json_content
@@ -65,6 +66,11 @@ HINT_PATTERNS = ["更轻松", "更健康", "身体好", "气色好", "睡得香"
 def rule_scan(text: str, where: str = "") -> List[Dict]:
     """第一层：关键词扫描。返回 flag 列表。"""
     flags = []
+    # V2.1：从 where（"镜头{n}旁白/字幕"）解析关联镜头编号
+    shot_number = None
+    m = re.search(r"镜头(\d+)", where or "")
+    if m:
+        shot_number = int(m.group(1))
     for _cat, words in RISK_WORDS.items():
         for kw, level, reason in words:
             if kw in text:
@@ -72,6 +78,8 @@ def rule_scan(text: str, where: str = "") -> List[Dict]:
                     "text": kw, "level": level,
                     "reason": f"{reason}（出现位置：{where}）",
                     "source": "规则初检", "confirmed": False,
+                    "shot_number": shot_number,
+                    "linked_text": (text or "")[:120],
                 })
     return flags
 
@@ -167,7 +175,8 @@ def check_fact_grounding(sb_dict: dict, facts: list) -> list:
     """规则层：检查旁白/字幕中的事实宣称是否有事实依据。
     
     有效引用要求：事实 ID 存在，且 status=confirmed，且 allow_use=true。
-    返回 [{"shot_number": n, "text": 涉及文案, "level": "中", "reason": 原因}]
+    返回 [{"shot_number": n, "text": 涉及文案, "level": "中", "reason": 原因,
+           "linked_text": 关联原文}]
     不依赖模型，确定性检查。
     """
     facts = facts or []
@@ -212,5 +221,6 @@ def check_fact_grounding(sb_dict: dict, facts: list) -> list:
                 "text": text[:60],
                 "level": "中",
                 "reason": "含产品事实宣称但未关联已确认事实，请核实依据",
+                "linked_text": text[:200],
             })
     return flags

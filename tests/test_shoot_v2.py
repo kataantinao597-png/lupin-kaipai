@@ -136,10 +136,28 @@ def _accept(client, wid, **kw):
     return client.patch(f"/api/v2/shoot/works/{wid}/shots/accept", json=body)
 
 
+def _shoot_flow(client, wid, shot_key, shot_number, target="captured_pending_review"):
+    """V2.1：把镜头拍摄状态沿合法转换链推到目标态。"""
+    chain = {"shooting": ["shooting"],
+             "captured_pending_review": ["shooting", "captured_pending_review"],
+             "passed": ["shooting", "captured_pending_review", "passed"],
+             "substituted": ["substituted"]}[target]
+    for st in chain:
+        kw = {"shoot_status": st}
+        if st == "substituted":
+            kw["note"] = "现场无果园，改室内摆拍"
+        r = _accept(client, wid, shot_key=shot_key, shot_number=shot_number,
+                    status="pending", **kw)
+        assert r.status_code == 200, r.text
+    return chain
+
+
 # ---------- 验收写入 ----------
 
 def test_accept_ok_writes_record(api_client):
     client, ids = api_client
+    # V2.1：先走拍摄流到 captured_pending_review，才能验收通过
+    _shoot_flow(client, ids["work_v2"], "s1_abc", 1)
     r = _accept(client, ids["work_v2"], shot_key="s1_abc", shot_number=1,
                 status="accepted", note="画面清晰",
                 asset_ids=[ids["asset1"]])
@@ -148,6 +166,7 @@ def test_accept_ok_writes_record(api_client):
     assert d["shot_key"] == "s1_abc"
     assert d["acceptance"]["status"] == "accepted"
     assert d["acceptance"]["asset_ids"] == [ids["asset1"]]
+    assert d["shoot_status"] == "captured_pending_review"
 
 
 def test_accept_invalid_status_400(api_client):
@@ -186,6 +205,7 @@ def test_cross_org_work_404(api_client):
 
 def test_reshoot_list_only_needs_reshoot(api_client):
     client, ids = api_client
+    _shoot_flow(client, ids["work_v2"], "s1_a", 1)
     _accept(client, ids["work_v2"], shot_key="s1_a", shot_number=1,
             status="accepted")
     _accept(client, ids["work_v2"], shot_key="s2_b", shot_number=2,
@@ -206,6 +226,7 @@ def test_reshoot_list_only_needs_reshoot(api_client):
 
 def test_reshoot_list_empty_not_faked(api_client):
     client, ids = api_client
+    _shoot_flow(client, ids["work_v2"], "s1_a", 1)
     _accept(client, ids["work_v2"], shot_key="s1_a", shot_number=1,
             status="accepted")
     r = client.get(f"/api/v2/shoot/works/{ids['work_v2']}/reshoot-list")
@@ -218,6 +239,7 @@ def test_reshoot_list_empty_not_faked(api_client):
 
 def test_edit_list_sums_and_four_durations(api_client):
     client, ids = api_client
+    _shoot_flow(client, ids["work_v2"], "s1_a", 1)
     _accept(client, ids["work_v2"], shot_key="s1_a", shot_number=1,
             status="accepted", asset_ids=[ids["asset1"]])
     _accept(client, ids["work_v2"], shot_key="s2_b", shot_number=2,
@@ -271,3 +293,92 @@ def test_edit_list_docx_200(api_client):
     assert "wordprocessingml" in r.headers["content-type"]
     assert r.content[:2] == b"PK"  # zip = docx
     assert len(r.content) > 3000
+
+
+# ---------- V2.1 状态机 ----------
+
+def test_shoot_illegal_transition_400(api_client):
+    client, ids = api_client
+    # pending 不能直达 passed
+    r = _accept(client, ids["work_v2"], shot_key="s9_x", shot_number=1,
+                status="pending", shoot_status="passed")
+    assert r.status_code == 400, r.text
+    assert "不能从 pending 直接到 passed" in r.text
+
+
+def test_shoot_substituted_requires_note_400(api_client):
+    client, ids = api_client
+    r = _accept(client, ids["work_v2"], shot_key="s9_x", shot_number=1,
+                status="pending", shoot_status="substituted", note="  ")
+    assert r.status_code == 400, r.text
+
+
+def test_shoot_substituted_with_note_ok(api_client):
+    client, ids = api_client
+    r = _accept(client, ids["work_v2"], shot_key="s9_x", shot_number=1,
+                status="pending", shoot_status="substituted",
+                note="无果园，改室内摆拍")
+    assert r.status_code == 200, r.text
+    assert r.json()["shoot_status"] == "substituted"
+
+
+def test_accept_requires_shoot_done_400(api_client):
+    client, ids = api_client
+    # 无拍摄记录（缺省 pending）直接验收 → 400
+    r = _accept(client, ids["work_v2"], shot_key="s9_x", shot_number=1,
+                status="accepted")
+    assert r.status_code == 400, r.text
+    assert "请先完成拍摄再验收" in r.text
+
+
+def test_accept_after_shoot_ok(api_client):
+    client, ids = api_client
+    _shoot_flow(client, ids["work_v2"], "s9_x", 1)
+    r = _accept(client, ids["work_v2"], shot_key="s9_x", shot_number=1,
+                status="accepted")
+    assert r.status_code == 200, r.text
+    assert r.json()["acceptance"]["status"] == "accepted"
+
+
+def test_legal_rework_chain(api_client):
+    """passed→rework→shooting→captured_pending_review→accepted 合法链走通。"""
+    client, ids = api_client
+    wid = ids["work_v2"]
+    # 拍完并验收通过
+    _shoot_flow(client, wid, "s9_x", 1, target="passed")
+    r = _accept(client, wid, shot_key="s9_x", shot_number=1, status="accepted")
+    assert r.status_code == 200, r.text
+    # 发现问题 → 需要补拍（验收态）
+    r = _accept(client, wid, shot_key="s9_x", shot_number=1,
+                status="needs_reshoot", note="逆光过曝")
+    assert r.status_code == 200, r.text
+    # 拍摄态：passed → rework → shooting → captured_pending_review
+    for st in ("rework", "shooting", "captured_pending_review"):
+        r = _accept(client, wid, shot_key="s9_x", shot_number=1,
+                    status="needs_reshoot", shoot_status=st)
+        assert r.status_code == 200, (st, r.text)
+    # 重新验收通过
+    r = _accept(client, wid, shot_key="s9_x", shot_number=1, status="accepted")
+    assert r.status_code == 200, r.text
+    assert r.json()["shoot_status"] == "captured_pending_review"
+
+
+def test_legacy_shoot_state_mapping(api_client):
+    """旧版前端五态值（shot=已拍待验收）兼容：可直接验收。"""
+    client, ids = api_client
+    wid = ids["work_v2"]
+    # 直接写一条旧格式拍摄状态（模拟历史数据）
+    from backend.models import Work
+    from backend.auth.database import get_session_factory
+    db = get_session_factory()()
+    try:
+        w = db.query(Work).filter(Work.id == wid).first()
+        data = json.loads(w.data_json)
+        data["shoot_state"] = {"s9_x": {"status": "shot", "note": ""}}
+        w.data_json = json.dumps(data, ensure_ascii=False)
+        db.commit()
+    finally:
+        db.close()
+    r = _accept(client, wid, shot_key="s9_x", shot_number=1, status="accepted")
+    assert r.status_code == 200, r.text
+    assert r.json()["shoot_status"] == "captured_pending_review"

@@ -46,8 +46,38 @@ from ...rbac import require_work_access
 router = APIRouter(tags=["shoot-v2"])
 
 ACCEPTANCE_KEY = "shot_acceptance"
+SHOOT_STATE_KEY = "shoot_state"
 
 ACCEPT_STATUSES = ("accepted", "needs_reshoot", "pending")
+
+# V2.1：拍摄六态转换表（key=当前状态，value=允许的下一状态）
+SHOOT_TRANSITIONS = {
+    "pending": ["shooting", "substituted"],
+    "shooting": ["captured_pending_review", "substituted"],
+    "captured_pending_review": ["passed", "rework", "substituted"],
+    "rework": ["shooting", "substituted"],
+    "passed": ["rework", "substituted"],
+    "substituted": ["shooting", "pending"],
+}
+
+# V2.1：验收三态转换表
+ACCEPT_TRANSITIONS = {
+    "pending": ["accepted", "needs_reshoot"],
+    "needs_reshoot": ["accepted", "pending"],
+    "accepted": ["needs_reshoot", "pending"],
+}
+
+# 旧版前端五态值 → 新版六态（历史数据兼容）
+LEGACY_SHOOT_STATUS_MAP = {
+    "todo": "pending",
+    "shot": "captured_pending_review",
+    "passed": "passed",
+    "reshoot": "rework",
+    "alt": "substituted",
+}
+
+# 转为 accepted 前，拍摄状态必须已到这些阶段
+SHOOT_DONE_FOR_ACCEPT = ("captured_pending_review", "passed", "substituted")
 
 PRE_PUBLISH_CHECKLIST = [
     "旁白与画面是否对应",
@@ -63,8 +93,12 @@ class AcceptShotRequest(BaseModel):
     shot_key: str = Field(..., description="前端约定的镜头键，如 s3_a1b2c3")
     shot_number: int = Field(default=0, description="镜头编号，用于回查分镜信息")
     status: str = Field(..., description="accepted|needs_reshoot|pending")
-    note: str = Field(default="", description="验收备注/问题说明")
+    note: str = Field(default="", description="验收备注/问题说明（转替代方案时必填）")
     asset_ids: list[str] = Field(default_factory=list, description="关联的素材 id")
+    shoot_status: str | None = Field(
+        default=None,
+        description="六态拍摄状态（可选）：pending/shooting/"
+                    "captured_pending_review/passed/rework/substituted")
 
 
 # ---------- 内部工具 ----------
@@ -159,6 +193,36 @@ def _shot_key_for(shot_number: int) -> str:
     return f"s{shot_number}"
 
 
+def _normalize_shoot_status(raw: Any) -> str:
+    """拍摄状态归一化：缺省/未知值 → pending；旧版五态值映射到新版六态。"""
+    if not isinstance(raw, str) or not raw:
+        return "pending"
+    if raw in SHOOT_TRANSITIONS:
+        return raw
+    return LEGACY_SHOOT_STATUS_MAP.get(raw, "pending")
+
+
+def _shoot_states(data: dict) -> dict:
+    st = data.get(SHOOT_STATE_KEY) or {}
+    return st if isinstance(st, dict) else {}
+
+
+def _current_shoot_status(data: dict, shot_key: str) -> str:
+    rec = _shoot_states(data).get(shot_key)
+    raw = rec.get("status") if isinstance(rec, dict) else None
+    return _normalize_shoot_status(raw)
+
+
+def _check_transition(current: str, nxt: str, table: dict, kind: str) -> None:
+    """状态转换校验：相同状态视为幂等 no-op；非法转换 → 400。"""
+    if nxt == current:
+        return
+    if nxt not in table.get(current, []):
+        raise BusinessError(
+            f"{kind}不能从 {current} 直接到 {nxt}",
+            code=error_codes.INVALID_PARAM, http_status=400)
+
+
 # ---------- 1. 验收写入 ----------
 
 @router.patch("/api/v2/shoot/works/{work_id}/shots/accept")
@@ -169,9 +233,16 @@ def accept_shot(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """写入单个镜头的验收状态。
+    """写入单个镜头的验收状态（含 V2.1 状态机）。
 
     权限：work:update。asset_ids 必须存在且属于同一组织，否则 400。
+
+    状态机规则：
+    - shoot_status（六态）按 SHOOT_TRANSITIONS 转换；非法 → 400；
+      转入 substituted 时 note 必填，否则 400。
+    - status（验收三态）按 ACCEPT_TRANSITIONS 转换；非法 → 400。
+    - 转为 accepted 时，拍摄状态须已在
+      captured_pending_review/passed/substituted，否则 400。
     """
     _work, _ms = access
     # Depends 会话可能已关闭，当前会话重新加载以获得可写对象（同 works.py）
@@ -186,9 +257,15 @@ def accept_shot(
         raise BusinessError(
             f"非法验收状态: {req.status}（仅允许 {','.join(ACCEPT_STATUSES)}）",
             code=error_codes.INVALID_PARAM, http_status=400)
+    if req.shoot_status is not None and req.shoot_status not in SHOOT_TRANSITIONS:
+        raise BusinessError(
+            f"非法拍摄状态: {req.shoot_status}"
+            f"（仅允许 {','.join(SHOOT_TRANSITIONS)}）",
+            code=error_codes.INVALID_PARAM, http_status=400)
     if not req.shot_key or not req.shot_key.strip():
         raise BusinessError("shot_key 不能为空",
                             code=error_codes.INVALID_PARAM, http_status=400)
+    shot_key = req.shot_key.strip()
     # 校验 asset_ids：存在且同组织
     asset_ids = [a for a in (req.asset_ids or []) if a]
     if asset_ids:
@@ -204,7 +281,40 @@ def accept_shot(
                 code=error_codes.INVALID_PARAM, http_status=400)
 
     data = _load_data(work)
+
+    # --- 拍摄状态转换（先于验收门禁，以便同请求内"拍完即验收"） ---
+    cur_shoot = _current_shoot_status(data, shot_key)
+    if req.shoot_status is not None:
+        _check_transition(cur_shoot, req.shoot_status,
+                          SHOOT_TRANSITIONS, "拍摄状态")
+        if req.shoot_status != cur_shoot and req.shoot_status == "substituted" \
+                and not (req.note or "").strip():
+            raise BusinessError("使用替代方案必须填写原因备注（note）",
+                                code=error_codes.INVALID_PARAM, http_status=400)
+        if req.shoot_status != cur_shoot:
+            states = _shoot_states(data)
+            states[shot_key] = {
+                "status": req.shoot_status,
+                "note": req.note or "",
+                "updated_at": _now_iso(),
+            }
+            data[SHOOT_STATE_KEY] = states
+            cur_shoot = req.shoot_status
+
+    # --- 验收状态转换 ---
     acceptance = _acceptance(data)
+    old_rec = acceptance.get(shot_key)
+    cur_acc = old_rec.get("status") if isinstance(old_rec, dict) else "pending"
+    if cur_acc not in ACCEPT_STATUSES:
+        cur_acc = "pending"
+    _check_transition(cur_acc, req.status, ACCEPT_TRANSITIONS, "验收状态")
+
+    # --- 验收门禁：accepted 要求拍摄已完成 ---
+    if req.status == "accepted" and cur_shoot not in SHOOT_DONE_FOR_ACCEPT:
+        raise BusinessError(
+            f"请先完成拍摄再验收（当前拍摄状态：{cur_shoot}）",
+            code=error_codes.INVALID_PARAM, http_status=400)
+
     record = {
         "status": req.status,
         "note": req.note or "",
@@ -213,10 +323,11 @@ def accept_shot(
         "updated_at": _now_iso(),
         "updated_by": user.id,
     }
-    acceptance[req.shot_key.strip()] = record
+    acceptance[shot_key] = record
     data[ACCEPTANCE_KEY] = acceptance
     _save_data(db, work, data)
-    return {"shot_key": req.shot_key.strip(), "acceptance": record}
+    return {"shot_key": shot_key, "acceptance": record,
+            "shoot_status": cur_shoot}
 
 
 # ---------- 2. 补拍清单 ----------
