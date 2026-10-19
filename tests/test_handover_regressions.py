@@ -6,6 +6,7 @@ import inspect
 import json
 import os
 import sys
+import typing
 import unittest
 from unittest.mock import patch
 
@@ -13,7 +14,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from backend import app as app_module
+from fastapi import Request
+
+from backend.api.v1 import ideas as ideas_module
+from backend.app import health
+from backend.core import deps as _deps
 from backend.ai_service import AIService, AIFatalError, parse_json_content
 
 
@@ -48,22 +53,32 @@ class HandoverRegressionTests(unittest.TestCase):
 
     def test_regenerate_shot_declares_request_context(self):
         """The route must receive Request before using rate limiting or headers."""
-        request = inspect.signature(app_module.regenerate_shot).parameters
-        self.assertIn("request", request)
-        self.assertIs(request["request"].annotation, app_module.Request)
+        sig = inspect.signature(ideas_module.regenerate_shot)
+        self.assertIn("request", sig.parameters)
+        # ideas.py 使用 from __future__ import annotations，signature 给出的是
+        # 字符串注解，用 get_type_hints 解析后再与 fastapi.Request 对比。
+        hints = typing.get_type_hints(ideas_module.regenerate_shot)
+        self.assertIs(hints["request"], Request)
 
     def test_health_reports_configured_model(self):
-        old_ai = app_module.ai
+        sentinel = object()
+        old = getattr(_deps.get_ai_service, "_singleton", sentinel)
         try:
             class FakeAI:
                 call_count = 0
                 total_tokens = 0
                 model = "custom-model"
 
-            app_module.ai = FakeAI()
-            self.assertEqual(app_module.health()["model"], "custom-model")
+            _deps.get_ai_service._singleton = FakeAI()
+            self.assertEqual(health()["model"], "custom-model")
         finally:
-            app_module.ai = old_ai
+            if old is sentinel:
+                try:
+                    delattr(_deps.get_ai_service, "_singleton")
+                except AttributeError:
+                    pass
+            else:
+                _deps.get_ai_service._singleton = old
 
     def test_non_json_success_response_is_reported_as_fatal_error(self):
         service = AIService(api_key="test-key", base_url="https://example.com/v1")

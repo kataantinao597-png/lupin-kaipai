@@ -5,7 +5,6 @@ pytestmark = pytest.mark.unit
 import os
 import sys
 import unittest
-from unittest.mock import patch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -13,7 +12,7 @@ if ROOT not in sys.path:
 
 from starlette.requests import Request
 
-from backend import app as app_module
+from backend.api.v1 import feasibility as feas_module
 from backend.ai_service import AIFatalError
 
 
@@ -41,15 +40,17 @@ def valid_storyboard():
 
 class FeasibilityFallbackTests(unittest.TestCase):
     def test_model_failure_returns_rule_results_without_502(self):
-        class FailingAI:
+        class FailingGateway:
             def generate_with_retry(self, *args, **kwargs):
                 raise AIFatalError("模型不可用")
 
-        with patch.object(app_module, "get_ai", return_value=FailingAI()):
-            result = app_module.check_feasibility(
-                app_module.FeasibilityCheckRequest(storyboard=valid_storyboard()),
-                request_for_test(),
-            )
+        # 新版 check_feasibility(req, request, gw=Depends(get_ai_gateway))：
+        # 直接调用时注入一个失败的 gateway，走"模型失败降级为规则结果"分支。
+        result = feas_module.check_feasibility(
+            feas_module.FeasibilityCheckRequest(storyboard=valid_storyboard()),
+            request_for_test(),
+            gw=FailingGateway(),
+        )
         self.assertFalse(result["model_completed"])
         self.assertEqual(result["results"][0]["status"], "需要人工确认")
         self.assertIn("模型检查未完成", result["notice"])
