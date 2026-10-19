@@ -300,6 +300,7 @@ async function renderWorkbench() {
         <div class="meta"><span>${esc(p.stage)}</span><span>${p.pct}%</span></div><div class="progress"><i style="width:${p.pct}%"></i></div>
         <div style="display:flex;gap:8px;margin-top:10px">
           <button class="btn ghost sm" data-act="open" style="flex:1;justify-content:center">继续创作</button>
+          ${done ? "" : `<button class="btn ghost sm" data-act="arch" title="归档">归档</button>`}
           <button class="btn ghost sm" data-act="del" title="删除">删</button>
         </div></div></div>`;
     }).join("");
@@ -307,8 +308,25 @@ async function renderWorkbench() {
   grid.querySelectorAll(".work").forEach((card) => {
     const id = card.dataset.id;
     card.querySelector('[data-act="open"]').addEventListener("click", (e) => { e.stopPropagation(); openWork(id); });
+    const archBtn = card.querySelector('[data-act="arch"]');
+    if (archBtn) archBtn.addEventListener("click", (e) => { e.stopPropagation(); archiveWork(id); });
     card.querySelector('[data-act="del"]').addEventListener("click", (e) => { e.stopPropagation(); deleteWork(id); });
   });
+}
+
+/* V2.1：归档作品（后端 PATCH 已支持 status=archived，前端只加入口） */
+async function archiveWork(id) {
+  const w = S.works.find((x) => x.id === id);
+  if (!w) return;
+  if (!confirm(`确定归档作品「${w.title}」吗？归档后仍可在「已归档」筛选里查看。`)) return;
+  try {
+    await ApiClient.patch("/api/v1/works/" + id, { status: "archived" });
+    await loadWorks();
+    renderWorkbench();
+    toast("已归档");
+  } catch (e) {
+    toast("归档失败：" + (e.message || "网络错误"));
+  }
 }
 
 async function newWorkFlow() {
