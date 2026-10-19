@@ -76,7 +76,7 @@ function blankData() {
 }
 
 /* ---------- 路由（含登录守卫） ---------- */
-const NEED_AUTH = ["v1", "v2", "v3", "v4", "v5", "v6"];
+const NEED_AUTH = ["v1", "v2", "v3", "v4", "v5", "v6", "v7"];
 function loggedIn() { return !!(AuthClient && AuthClient.isLoggedIn()); }
 
 function go(v) {
@@ -101,6 +101,7 @@ function onEnter(v) {
   else if (v === "v4") { renderPoster(); }
   else if (v === "v5") { renderShoot(); loadAssets(); fillNote(); }
   else if (v === "v6") { renderDeliveryTitles(); loadTimeline(); renderFinalArchive(); }
+  else if (v === "v7") { renderCopyOpt(); }
 }
 
 /* ---------- 认证 ---------- */
@@ -2332,6 +2333,7 @@ function bindTodo5() {
 
 /* ================= 事件绑定 ================= */
 function bindAll() {
+initCopyOptView(); // V3.0 D：注入文案优化器导航与视图（零 HTML 改动）
 document.querySelectorAll(".nav-item[data-v]").forEach((b) => b.addEventListener("click", () => go(b.dataset.v)));
 document.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => go(b.dataset.goto)));
 document.querySelectorAll("[data-todo]").forEach((b) => b.addEventListener("click", () => todo(b.dataset.todo)));
@@ -2472,6 +2474,418 @@ go(location.pathname === "/login" ? "v-login" : "v0");
 revealIn($("v0"));
 initShootCondForm();
 }
+
+/* V3.0 D：文案优化器样式（JS 注入，零 HTML 改动） */
+function initCopyOptCss() {
+  if (document.getElementById("copyopt_css")) return;
+  const st = document.createElement("style");
+  st.id = "copyopt_css";
+  st.textContent = `
+.copy-wrap{display:grid;grid-template-columns:290px 1fr;gap:14px;align-items:start}
+@media(max-width:960px){.copy-wrap{grid-template-columns:1fr}}
+.copy-doc-item{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px}
+.copy-doc-item.active{border-color:var(--primary);box-shadow:var(--shadow)}
+.copy-ver{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px}
+.copy-ver.is-draft{border-style:dashed}
+.copy-ver-body{margin:8px 0;padding:10px;background:#f8fafc;border-radius:8px}
+.row{display:flex;align-items:center}
+.fld{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
+.fld>span{font-size:12px;color:var(--muted)}
+.copy-opts{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+@media(max-width:640px){.copy-opts{grid-template-columns:1fr}}
+.cmp-box{border:1px solid var(--line);border-radius:8px;padding:10px;min-height:80px}
+.dl{padding:2px 6px;border-radius:4px;margin:1px 0}
+.dl.same{color:var(--muted)}
+.dl.del{background:#fde8e8;color:#B03232}
+.dl.add{background:#e6f7ee;color:#147A56}
+.copy-rw{border-top:1px dashed var(--line);margin-top:8px}`;
+  document.head.appendChild(st);
+}
+/* ================= V3.0 D：v7 文案优化器（独立视图，零 HTML 改动） ================= */
+const COPY_KINDS = [
+  ["optimize", "优化已有文案"], ["generate", "从零生成新文案"],
+  ["script", "完整视频脚本"], ["platform", "平台发布文案"], ["adapt", "平台适配调整"],
+];
+const COPY_MODES = [
+  ["natural", "自然口语化"], ["premium", "品牌高级感"], ["shandong", "山东本土表达"],
+  ["ecommerce", "电商转化表达"], ["hook", "开头吸引力优化"], ["concise", "结构精简"],
+  ["voiceover", "旁白口播优化"], ["platform_post", "发布文案优化"], ["custom", "自定义要求"],
+];
+const COPY = { docs: [], doc: null, compareId: null, busy: false, products: [], rewriteFor: null };
+
+function initCopyOptView() {
+  initCopyOptCss();
+  if (!document.querySelector('.nav-item[data-v="v7"]')) {
+    const navV6 = document.querySelector('.nav-item[data-v="v6"]');
+    const b = document.createElement("button");
+    b.className = "nav-item"; b.dataset.v = "v7";
+    b.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>文案优化';
+    b.addEventListener("click", () => go("v7"));
+    if (navV6) navV6.after(b);
+  }
+  if (!$("v7") && $("v6")) {
+    const s = document.createElement("section");
+    s.className = "view"; s.id = "v7";
+    $("v6").after(s);
+  }
+}
+
+function copyKindLabel(k) { const f = COPY_KINDS.find((x) => x[0] === k); return f ? f[1] : k; }
+function copyModeLabel(m) { const f = COPY_MODES.find((x) => x[0] === m); return f ? f[1] : m; }
+
+function copyRiskBadge(v) {
+  if (v.risk_status === "checked") {
+    const n = (v.risk_flags || []).length;
+    return `<span class="pill green" title="${esc((v.risk_flags || []).map((f) => f.text || f.reason || "").join("\n"))}">已检查${n ? "·" + n + "项提醒" : ""}</span>`;
+  }
+  if (v.risk_status === "failed") return '<span class="pill amber">风险检查未完成</span>';
+  return '<span class="pill">未检查</span>';
+}
+
+async function renderCopyOpt() {
+  const sec = $("v7");
+  if (!sec) return;
+  if (!S.org) { sec.innerHTML = '<div class="page-head"><h2>文案优化器</h2><p class="muted">请先登录并选择组织</p></div>'; return; }
+  await loadCopyDocs();
+  sec.innerHTML = `
+    <div class="page-head"><h2>文案优化器</h2>
+    <p class="muted">优化已有文案 / 从零生成 / 视频脚本 / 发布文案 / 平台适配 —— 未经你确认，不会覆盖任何已确认版本</p></div>
+    <div class="copy-wrap">
+      <div class="copy-side">
+        <div class="card"><h3>文案文档</h3><div id="copy_doc_list"></div>
+          <div class="row" style="margin-top:10px;gap:6px;flex-wrap:wrap">
+            <input id="copy_new_title" class="input" placeholder="文档标题" style="flex:2;min-width:120px">
+            <select id="copy_new_kind" class="input" style="flex:1;min-width:110px">${COPY_KINDS.map((k) => `<option value="${k[0]}">${k[1]}</option>`).join("")}</select>
+            <button class="btn primary sm" id="copy_new_btn">新建</button>
+          </div></div>
+      </div>
+      <div class="copy-main"><div id="copy_editor"></div></div>
+    </div>`;
+  $("copy_new_btn").addEventListener("click", createCopyDoc);
+  renderCopyDocList();
+  renderCopyEditor();
+}
+
+async function loadCopyDocs() {
+  try {
+    const r = V1(await ApiClient.get("/api/v1/copy/docs?org_id=" + encodeURIComponent(S.org.id)));
+    COPY.docs = (r && r.docs) || [];
+  } catch (e) { COPY.docs = []; }
+}
+
+async function createCopyDoc() {
+  const title = $("copy_new_title").value.trim() || "未命名文案";
+  const kind = $("copy_new_kind").value;
+  try {
+    const d = V1(await ApiClient.post("/api/v1/copy/docs?org_id=" + encodeURIComponent(S.org.id), { title, kind }));
+    COPY.docs.unshift({ id: d.id, title: d.title, kind: d.kind, version_count: 0, current_version_no: null });
+    await openCopyDoc(d.id);
+    toast("已创建");
+  } catch (e) { toast("创建失败：" + (e.message || e)); }
+}
+
+async function openCopyDoc(id) {
+  try {
+    COPY.doc = V1(await ApiClient.get(`/api/v1/copy/docs/${id}?org_id=` + encodeURIComponent(S.org.id)));
+    COPY.compareId = null; COPY.rewriteFor = null;
+    renderCopyDocList(); renderCopyEditor();
+  } catch (e) { toast("打开失败：" + (e.message || e)); }
+}
+
+async function deleteCopyDoc(id) {
+  if (!confirm("确定删除整个文案文档（含全部版本）？此操作不可恢复。")) return;
+  try {
+    await ApiClient.del(`/api/v1/copy/docs/${id}?org_id=` + encodeURIComponent(S.org.id));
+    COPY.docs = COPY.docs.filter((d) => d.id !== id);
+    if (COPY.doc && COPY.doc.id === id) COPY.doc = null;
+    renderCopyDocList(); renderCopyEditor(); toast("已删除");
+  } catch (e) { toast("删除失败：" + (e.message || e)); }
+}
+
+function renderCopyDocList() {
+  const el = $("copy_doc_list");
+  if (!el) return;
+  if (!COPY.docs.length) { el.innerHTML = '<p class="muted">还没有文案文档，右侧新建一个开始。</p>'; return; }
+  el.innerHTML = COPY.docs.map((d) => `
+    <div class="copy-doc-item ${COPY.doc && COPY.doc.id === d.id ? "active" : ""}" data-id="${d.id}">
+      <div><b>${esc(d.title)}</b> <span class="pill">${esc(copyKindLabel(d.kind))}</span></div>
+      <div class="muted" style="font-size:12px">${d.version_count || 0} 个版本${d.current_version_no ? " · 当前 v" + d.current_version_no : ""}</div>
+      <div class="row" style="gap:6px;margin-top:6px">
+        <button class="btn ghost sm" data-act="open">打开</button>
+        <button class="btn ghost sm" data-act="del">删除</button>
+      </div></div>`).join("");
+  el.querySelectorAll(".copy-doc-item").forEach((item) => {
+    const id = item.dataset.id;
+    item.querySelector('[data-act="open"]').addEventListener("click", () => openCopyDoc(id));
+    item.querySelector('[data-act="del"]').addEventListener("click", () => deleteCopyDoc(id));
+  });
+}
+
+function copyVersionText(v) {
+  if (v.structured && v.structured.body) return v.structured.body;
+  return v.text || "";
+}
+
+function renderCopyEditor() {
+  const el = $("copy_editor");
+  if (!el) return;
+  const doc = COPY.doc;
+  if (!doc) { el.innerHTML = '<div class="card"><p class="muted">← 从左侧选择或新建文案文档</p></div>'; return; }
+  const cur = doc.current_version;
+  const versions = (doc.versions || []).slice().reverse(); // 新在前
+  el.innerHTML = `
+    <div class="card">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h3>${esc(doc.title)} <span class="pill">${esc(copyKindLabel(doc.kind))}</span>
+        ${cur ? `<span class="pill green">当前 v${cur.version_no}</span>` : '<span class="pill">暂无确认版本</span>'}</h3>
+      </div>
+      <label class="fld"><span>原文输入（直接粘贴，或从下方导入）</span>
+        <textarea id="copy_source" class="input" rows="5" placeholder="粘贴要优化的文案…（“从零生成”类型可留空）"></textarea></label>
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0">
+        <button class="btn ghost sm" id="copy_imp_vo">从旁白导入</button>
+        <button class="btn ghost sm" id="copy_imp_script">从脚本导入</button>
+        <button class="btn ghost sm" id="copy_imp_cur">载入当前版本</button>
+      </div>
+      <div class="copy-opts">
+        <label class="fld"><span>优化模式</span><select id="copy_mode" class="input">${COPY_MODES.map((m) => `<option value="${m[0]}">${m[1]}</option>`).join("")}</select></label>
+        <label class="fld"><span>优化目标</span><input id="copy_goal" class="input" placeholder="如：让开头更抓人"></label>
+        <label class="fld"><span>风格约束</span><input id="copy_style" class="input" placeholder="如：实在、不端着"></label>
+        <label class="fld"><span>目标受众 / 平台</span><input id="copy_audience" class="input" placeholder="如：抖音"></label>
+        <label class="fld"><span>长度要求</span><input id="copy_length" class="input" placeholder="如：100字以内"></label>
+        <label class="fld"><span>关联产品（可选，带入已确认事实）</span><select id="copy_product" class="input"><option value="">不关联</option></select></label>
+      </div>
+      <label class="fld"><span>额外要求</span><input id="copy_extra" class="input" placeholder="其他补充要求"></label>
+      <label class="fld" id="copy_custom_wrap" style="display:none"><span>自定义优化要求</span><textarea id="copy_custom" class="input" rows="2"></textarea></label>
+      <div class="row" style="gap:8px;margin-top:10px">
+        <button class="btn primary" id="copy_gen_btn">生成优化版本</button>
+        <span class="muted" style="font-size:12px">生成结果先存为草稿，你确认后才生效；原文不受影响</span>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px"><h3>版本历史（${doc.versions.length}）</h3><div id="copy_versions"></div></div>
+    <div class="card" id="copy_compare_card" style="margin-top:12px;display:none"><h3>版本对比</h3><div id="copy_compare"></div></div>
+    <div class="notice" style="margin-top:12px">风险检查通过不代表广告合规得到保证。发布前请人工确认文案中的产品宣称、价格与承诺事项，本工具不保证广告合规。</div>`;
+  $("copy_mode").addEventListener("change", () => {
+    $("copy_custom_wrap").style.display = $("copy_mode").value === "custom" ? "" : "none";
+  });
+  $("copy_gen_btn").addEventListener("click", runCopyOptimize);
+  $("copy_imp_vo").addEventListener("click", () => importCopyFromWork(false));
+  $("copy_imp_script").addEventListener("click", () => importCopyFromWork(true));
+  $("copy_imp_cur").addEventListener("click", () => {
+    if (cur) $("copy_source").value = copyVersionText(cur);
+    else toast("还没有已确认版本");
+  });
+  loadCopyProducts();
+  renderCopyVersions();
+  renderCopyCompare();
+}
+
+async function loadCopyProducts() {
+  const sel = $("copy_product");
+  if (!sel) return;
+  try {
+    const r = V1(await ApiClient.get("/api/v1/products?org_id=" + encodeURIComponent(S.org.id)));
+    const list = (r && (r.items || r.products)) || r || [];
+    (Array.isArray(list) ? list : []).forEach((p) => {
+      const o = document.createElement("option");
+      o.value = p.id; o.textContent = p.name || p.code;
+      sel.appendChild(o);
+    });
+  } catch (e) { /* 产品列表加载失败不阻断 */ }
+}
+
+function importCopyFromWork(withSubtitle) {
+  const shots = ((S.data || {}).storyboard || {}).shots || [];
+  if (!shots.length) { toast("当前作品没有分镜，先去创意策划生成"); return; }
+  const parts = shots.map((s) => withSubtitle
+    ? `【镜头${s.shot_number}】${s.voiceover || ""}\n${s.subtitle || ""}`
+    : (s.voiceover || ""));
+  $("copy_source").value = parts.filter(Boolean).join("\n\n");
+  toast("已导入 " + shots.length + " 个镜头");
+}
+
+async function runCopyOptimize() {
+  if (COPY.busy) return;
+  const doc = COPY.doc;
+  const btn = $("copy_gen_btn");
+  const body = {
+    mode: $("copy_mode").value,
+    source_text: $("copy_source").value,
+    goal: $("copy_goal").value.trim(),
+    style: $("copy_style").value.trim(),
+    audience: $("copy_audience").value.trim(),
+    length_limit: $("copy_length").value.trim(),
+    extra_requirements: $("copy_extra").value.trim(),
+    custom_instruction: $("copy_custom") ? $("copy_custom").value.trim() : "",
+    product_id: $("copy_product").value || null,
+  };
+  COPY.busy = true; btn.disabled = true; btn.textContent = "生成中…";
+  aiLoading("AI 文案生成中…");
+  try {
+    const r = V1(await ApiClient.post(
+      `/api/v1/copy/docs/${doc.id}/optimize?org_id=` + encodeURIComponent(S.org.id),
+      body, { idempotencyKey: newIdempotencyKey() }));
+    await openCopyDoc(doc.id); // 刷新版本列表
+    toast("已生成草稿版本 v" + r.version.version_no + "，请对比确认");
+    if (r.review_reminder) toast(r.review_reminder, 6000);
+  } catch (e) { toast("生成失败：" + (e.message || e)); }
+  finally { COPY.busy = false; btn.disabled = false; btn.textContent = "生成优化版本"; aiLoadingDone(); }
+}
+
+function renderCopyVersions() {
+  const el = $("copy_versions");
+  if (!el || !COPY.doc) return;
+  const versions = (COPY.doc.versions || []).slice().reverse();
+  el.innerHTML = versions.map((v) => {
+    const st = v.structured || {};
+    const bodyHtml = st.body
+      ? `<div><b>${esc(st.title || "")}</b></div><div>${esc(st.body).replace(/\n/g, "<br>")}</div>
+         <div class="muted" style="font-size:12px">${esc((st.hashtags || []).join(" "))} · ${esc(st.cta || "")}</div>`
+      : `<div>${esc(v.text).replace(/\n/g, "<br>")}</div>`;
+    const isDraft = v.status === "draft";
+    return `<div class="copy-ver ${isDraft ? "is-draft" : ""}">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div><b>v${v.version_no}</b> <span class="pill">${esc(copyModeLabel(v.mode))}</span>
+          ${isDraft ? '<span class="pill amber">草稿待确认</span>' : '<span class="pill green">已确认</span>'}
+          ${copyRiskBadge(v)}
+          ${v.restored_from ? '<span class="pill">恢复版本</span>' : ""}</div>
+        <div class="row" style="gap:6px">
+          <button class="btn ghost sm" data-a="cmp" data-id="${v.id}">对比</button>
+          ${isDraft ? `<button class="btn primary sm" data-a="ok" data-id="${v.id}">确认采用</button>
+            <button class="btn ghost sm" data-a="drop" data-id="${v.id}">放弃草稿</button>` : ""}
+          ${!isDraft ? `<button class="btn ghost sm" data-a="back" data-id="${v.id}">恢复此版</button>` : ""}
+          <button class="btn ghost sm" data-a="rw" data-id="${v.id}">段落重写</button>
+          <button class="btn ghost sm" data-a="load" data-id="${v.id}">载入为原文</button>
+        </div></div>
+      <div class="copy-ver-body">${bodyHtml}</div>
+      ${v.changes_summary ? `<div class="muted" style="font-size:12px;white-space:pre-line">改动说明：\n${esc(v.changes_summary)}</div>` : ""}
+      ${v.risk_status === "checked" && (v.risk_flags || []).length ? `<div class="muted" style="font-size:12px;color:#a16207">风险提醒：${esc(v.risk_flags.map((f) => f.text || f.reason || "").filter(Boolean).join("；"))}</div>` : ""}
+      <div class="copy-rw" id="rw_${v.id}" style="display:none"></div>
+    </div>`;
+  }).join("");
+  el.querySelectorAll("button[data-a]").forEach((b) => {
+    const id = b.dataset.id, a = b.dataset.a;
+    if (a === "cmp") b.addEventListener("click", () => { COPY.compareId = id; renderCopyCompare(); });
+    else if (a === "ok") b.addEventListener("click", () => confirmCopyVersion(id));
+    else if (a === "drop") b.addEventListener("click", () => dropCopyVersion(id));
+    else if (a === "back") b.addEventListener("click", () => restoreCopyVersion(id));
+    else if (a === "rw") b.addEventListener("click", () => showRewritePanel(id));
+    else if (a === "load") b.addEventListener("click", () => {
+      const v = COPY.doc.versions.find((x) => x.id === id);
+      if (v && $("copy_source")) { $("copy_source").value = copyVersionText(v); toast("已载入编辑区"); }
+    });
+  });
+}
+
+async function confirmCopyVersion(id) {
+  try {
+    const r = V1(await ApiClient.post(
+      `/api/v1/copy/docs/${COPY.doc.id}/versions/${id}/confirm?org_id=` + encodeURIComponent(S.org.id), {}));
+    await openCopyDoc(COPY.doc.id);
+    toast("已确认为当前版本 v" + r.current_version.version_no);
+  } catch (e) { toast("确认失败：" + (e.message || e)); }
+}
+
+async function dropCopyVersion(id) {
+  if (!confirm("放弃这个草稿版本？")) return;
+  try {
+    await ApiClient.del(`/api/v1/copy/docs/${COPY.doc.id}/versions/${id}?org_id=` + encodeURIComponent(S.org.id));
+    await openCopyDoc(COPY.doc.id); toast("已放弃草稿");
+  } catch (e) { toast("操作失败：" + (e.message || e)); }
+}
+
+async function restoreCopyVersion(id) {
+  const v = COPY.doc.versions.find((x) => x.id === id);
+  if (!confirm(`确定恢复到 v${v ? v.version_no : "?"}？将新建一个已确认版本，现有版本不受影响。`)) return;
+  try {
+    const r = V1(await ApiClient.post(
+      `/api/v1/copy/docs/${COPY.doc.id}/versions/${id}/restore?org_id=` + encodeURIComponent(S.org.id), {}));
+    await openCopyDoc(COPY.doc.id);
+    toast("已恢复为 v" + r.version.version_no);
+  } catch (e) { toast("恢复失败：" + (e.message || e)); }
+}
+
+function splitParas(t) { return String(t || "").split(/\n\s*\n|\n/).map((s) => s.trim()).filter(Boolean); }
+
+function showRewritePanel(versionId) {
+  const v = COPY.doc.versions.find((x) => x.id === versionId);
+  const box = $("rw_" + versionId);
+  if (!v || !box) return;
+  const paras = splitParas(copyVersionText(v));
+  if (!paras.length) { toast("该版本没有可重写的段落"); return; }
+  box.style.display = "";
+  box.innerHTML = `
+    <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px">
+      <select id="rw_sel_${versionId}" class="input" style="flex:2;min-width:160px">
+        ${paras.map((p, i) => `<option value="${i}">第${i + 1}段：${esc(p.slice(0, 30))}${p.length > 30 ? "…" : ""}</option>`).join("")}
+      </select>
+      <input id="rw_ins_${versionId}" class="input" placeholder="重写要求（默认：自然口语化）" style="flex:2;min-width:160px">
+      <button class="btn primary sm" id="rw_go_${versionId}">只重写该段</button>
+      <button class="btn ghost sm" id="rw_x_${versionId}">取消</button>
+    </div>
+    <p class="muted" style="font-size:12px">只改所选段落，其他段落原样保留，结果存为新草稿</p>`;
+  $("rw_x_" + versionId).addEventListener("click", () => { box.style.display = "none"; });
+  $("rw_go_" + versionId).addEventListener("click", async () => {
+    const idx = parseInt($("rw_sel_" + versionId).value, 10);
+    const ins = $("rw_ins_" + versionId).value.trim();
+    aiLoading("段落重写中…");
+    try {
+      const r = V1(await ApiClient.post(
+        `/api/v1/copy/docs/${COPY.doc.id}/rewrite-paragraph?org_id=` + encodeURIComponent(S.org.id),
+        { version_id: versionId, paragraph_index: idx, instruction: ins },
+        { idempotencyKey: newIdempotencyKey() }));
+      await openCopyDoc(COPY.doc.id);
+      toast("已生成新草稿 v" + r.version.version_no);
+    } catch (e) { toast("重写失败：" + (e.message || e)); }
+    finally { aiLoadingDone(); }
+  });
+}
+
+/* 行级 diff：old→new，删除红、新增绿 */
+function copyLineDiff(oldT, newT) {
+  const A = String(oldT || "").split("\n"), B = String(newT || "").split("\n");
+  const m = A.length, n = B.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--) for (let j = n - 1; j >= 0; j--)
+    dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  let i = 0, j = 0, html = "";
+  while (i < m && j < n) {
+    if (A[i] === B[j]) { html += `<div class="dl same">${esc(A[i]) || "&nbsp;"}</div>`; i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { html += `<div class="dl del">− ${esc(A[i])}</div>`; i++; }
+    else { html += `<div class="dl add">+ ${esc(B[j])}</div>`; j++; }
+  }
+  while (i < m) { html += `<div class="dl del">− ${esc(A[i])}</div>`; i++; }
+  while (j < n) { html += `<div class="dl add">+ ${esc(B[j])}</div>`; j++; }
+  return html;
+}
+
+function renderCopyCompare() {
+  const card = $("copy_compare_card"), el = $("copy_compare");
+  if (!card || !el) return;
+  const doc = COPY.doc;
+  const v = doc && (doc.versions || []).find((x) => x.id === COPY.compareId);
+  const cur = doc && doc.current_version;
+  if (!v || !cur || v.id === cur.id) {
+    card.style.display = "none"; el.innerHTML = ""; return;
+  }
+  card.style.display = "";
+  el.innerHTML = `
+    <div class="row" style="gap:12px;align-items:flex-start">
+      <div style="flex:1"><h4>当前版本 v${cur.version_no}（已确认）</h4>
+        <div class="cmp-box">${esc(copyVersionText(cur)).replace(/\n/g, "<br>")}</div></div>
+      <div style="flex:1"><h4>对比版本 v${v.version_no}（${v.status === "draft" ? "草稿" : "已确认"}）</h4>
+        <div class="cmp-box">${esc(copyVersionText(v)).replace(/\n/g, "<br>")}</div></div>
+    </div>
+    <h4 style="margin-top:10px">差异（红删 / 绿增）</h4>
+    <div class="cmp-diff">${copyLineDiff(copyVersionText(cur), copyVersionText(v))}</div>
+    <div class="row" style="gap:8px;margin-top:10px">
+      ${v.status === "draft" ? `<button class="btn primary sm" id="cmp_ok">确认采用 v${v.version_no}</button>` : ""}
+      <button class="btn ghost sm" id="cmp_x">关闭对比</button>
+    </div>`;
+  $("cmp_x").addEventListener("click", () => { COPY.compareId = null; renderCopyCompare(); });
+  const ok = $("cmp_ok");
+  if (ok) ok.addEventListener("click", () => confirmCopyVersion(v.id));
+}
+
 
 document.addEventListener("DOMContentLoaded", init);
 })();
