@@ -115,7 +115,7 @@
   .sec h2 .u::after{content:"";position:absolute;left:0;right:0;bottom:2px;height:8px;
     background:linear-gradient(to right,rgba(212,160,90,.55),rgba(212,160,90,.15));z-index:-1;border-radius:3px}
   .sec-desc{margin-top:14px;color:var(--lp-muted);font-size:16.5px;max-width:42em}
-  .js .reveal{opacity:0;transform:translateY(26px);transition:opacity .65s ease,transform .65s ease}
+  .js .reveal{opacity:0;transform:translateY(26px);transition:opacity .5s ease,transform .5s ease}
   .js .reveal.in{opacity:1;transform:none}
 
   /* ============ C · 核心能力 ============ */
@@ -161,7 +161,7 @@
   .fstep{text-align:center;padding:0 6px;opacity:.92;transition:opacity .3s}
   .fstep .dot{width:62px;height:62px;margin:0 auto 16px;border-radius:50%;background:var(--lp-card);
     border:2px solid var(--lp-hair);display:flex;align-items:center;justify-content:center;
-    font-size:15px;font-weight:900;color:var(--lp-muted);transition:all .3s;position:relative}
+    font-size:15px;font-weight:900;color:var(--lp-muted);transition:border-color .3s,background .3s,color .3s;position:relative}
   .fstep.lit{opacity:1}
   .fstep.lit .dot{border-color:var(--lp-forest);color:#fff;background:var(--lp-forest);
     box-shadow:0 8px 20px rgba(15,81,50,.3)}
@@ -270,8 +270,8 @@
     </button>
     <div class="nav-links" id="navLinks">
       <a href="#top">首页</a>
-      <a href="#cases">产品案例</a>
       <a href="#features">核心功能</a>
+      <a href="#cases">产品案例</a>
       <a href="#flow">创作流程</a>
       <a href="#about">关于项目</a>
       <a class="btn btn-forest btn-nav" href="/login">进入工作台</a>
@@ -297,7 +297,7 @@
     <p class="sub anim d3">从真实产品资料与核心卖点出发，让 AI 创意变成能照着拍的分镜脚本。</p>
     <div class="hero-ctas anim d4">
       <a class="btn btn-paper btn-hero" href="/login">开始创作</a>
-      <a class="btn btn-outline btn-hero" href="#demo">看看工作流</a>
+      <a class="btn btn-outline btn-hero" href="#flow">看看工作流</a>
     </div>
     <p class="hero-note anim d4">面向山东特色农产品的 AI 短视频策划与拍摄工作台</p>
   </div>
@@ -369,7 +369,7 @@
           <span class="k">概念拍摄方案</span>
           <h3>烟台苹果</h3>
           <p>以枝头采摘、果皮水珠与切面特写串联画面，呈现清新、爽脆的视觉联想。</p>
-          <span class="go">进入工作台开始创作</span>
+          <span class="go">用这个思路开拍</span>
         </div>
       </a>
       <a class="case reveal" href="/login">
@@ -380,7 +380,7 @@
           <span class="k">概念拍摄方案</span>
           <h3>章丘大葱</h3>
           <p>以田间全景、挺拔葱身与葱白细节呈现形态特点，让地域印象落在看得见的画面里。</p>
-          <span class="go">进入工作台开始创作</span>
+          <span class="go">用这个思路开拍</span>
         </div>
       </a>
       <a class="case reveal" href="/login">
@@ -391,7 +391,7 @@
           <span class="k">概念拍摄方案</span>
           <h3>德州扒鸡</h3>
           <p>以整鸡陈列、轻轻撕开的近景与热气细节呈现食欲感；具体工艺与传承信息以可核实资料为准。</p>
-          <span class="go">进入工作台开始创作</span>
+          <span class="go">用这个思路开拍</span>
         </div>
       </a>
     </div>
@@ -473,7 +473,7 @@
   <div class="wrap">
     <div class="kicker reveal">功能展示</div>
     <h2 class="reveal">从创意到交付，<span class="u">看得到的工作台</span></h2>
-    <p class="sec-desc reveal">以下为开发中工作台的实际界面截图，展示产品资料、创意生成与交付管理等核心环节。可进入工作台体验当前已开放功能。</p>
+    <p class="sec-desc reveal">以下为工作台的实际界面：产品资料、创意生成、交付管理。登录后即可使用。</p>
     <div class="demo-grid">
       <div class="demo reveal">
         <div class="bar"><i></i><i></i><i></i><span>创意策划</span></div>
@@ -509,7 +509,7 @@
       <h2 class="reveal">好物自有风土，<br>表达也该<span class="hl">有章法</span>。</h2>
       <p class="reveal">选一款产品开始，把已知信息、创意构思与执行清单整理成一套能落地的拍摄方案。</p>
       <div class="btn-row reveal">
-        <a class="btn btn-paper btn-cta" href="/login">从一款产品开始</a>
+        <a class="btn btn-paper btn-cta" href="/login">开始创作</a>
       </div>
     </div>
   </div>

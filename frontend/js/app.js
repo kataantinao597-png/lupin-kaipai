@@ -113,6 +113,7 @@ function setAuthMode(mode) {
   $("tab_login").classList.toggle("active", mode === "login");
   $("tab_register").classList.toggle("active", mode === "register");
   $("row_display_name").style.display = mode === "register" ? "" : "none";
+  $("auth_title").textContent = mode === "login" ? "欢迎回来" : "创建你的工作室";
   $("btn_do_auth").textContent = mode === "login" ? "登录" : "注册并登录";
   errText("login_err", "");
 }
@@ -1350,7 +1351,7 @@ sg.addColorStop(0, "rgba(8,25,18,0)"); sg.addColorStop(1, "rgba(8,25,18,.72)");
 ctx.fillStyle = sg; ctx.fillRect(0, 0, W, H);
 }
 // 边框（与页面预览一致）
-ctx.strokeStyle = light ? "#D4A05A" : "#B23727"; ctx.lineWidth = 28;
+ctx.strokeStyle = light ? "#D4A05A" : "#C62828"; ctx.lineWidth = 28;
 ctx.strokeRect(14, 14, W - 28, H - 28);
 const ink = light && !drewImg, ty = H - (horizontal ? 330 : 620);
 ctx.fillStyle = ink ? "#252820" : "#fff"; ctx.textAlign = "center";
@@ -1427,7 +1428,7 @@ const acc = (s.acceptance_criteria || []).slice(0, 3).map((t) => `<li>${esc(t)}<
 const accRec = getAcc(k);
 const accMeta = accRec ? ACC_LABELS[accRec.status] : null;
 const assetN = (accRec && accRec.asset_ids) ? accRec.asset_ids.length : 0;
-return `<div class="shot-card" data-k="${k}" data-i="${i}" style="border-bottom:1px solid #F0F3F7">
+return `<div class="shot-card" data-k="${k}" data-i="${i}" style="border-bottom:1px solid #EFE9D8">
 <div class="check" style="cursor:pointer;border:0;padding-bottom:6px">
 <span class="box" style="${cur === "passed" ? "background:var(--ok);" : ""}"></span>
 <span class="t"><b>镜头 ${s.shot_number || i + 1} · ${esc(s.shot_purpose || s.scene_description || "")}</b><br>
@@ -2785,7 +2786,7 @@ function initCopyOptCss() {
 .copy-doc-item.active{border-color:var(--primary);box-shadow:var(--shadow)}
 .copy-ver{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px}
 .copy-ver.is-draft{border-style:dashed}
-.copy-ver-body{margin:8px 0;padding:10px;background:#f8fafc;border-radius:8px}
+.copy-ver-body{margin:8px 0;padding:10px;background:#FAF7EF;border-radius:8px}
 .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 /* 全局 input/select 是 width:100%，进 flex 行后会把按钮挤成两字一行（v8 发布中心）
    这里给行内控件弹性宽度、给按钮固定宽度 */
