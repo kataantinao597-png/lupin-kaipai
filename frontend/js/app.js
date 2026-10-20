@@ -30,6 +30,165 @@ function aiLoadingDone() { $("ai_loading").classList.remove("show"); }
 
 function errText(id, msg) { const el = $(id); if (el) el.textContent = msg || ""; }
 
+/* ---------- 通用弹窗（Phase2：替代原生 prompt/confirm/alert，复用 .modal-mask 体系） ---------- */
+function _openUiModal(html) {
+  const old = $("ui_modal");
+  if (old) old.remove();
+  const m = document.createElement("div");
+  m.className = "modal-mask"; m.id = "ui_modal";
+  m.innerHTML = `<div class="modal">${html}</div>`;
+  document.body.appendChild(m);
+  m.classList.add("show");
+  return m;
+}
+/* 确认弹窗：resolve(true)=点确定，false=取消/Esc/点遮罩 */
+function modalConfirm(opts) {
+  const o = opts || {};
+  const title = o.title || "请确认", body = o.body || "";
+  const okText = o.okText || "确定", cancelText = o.cancelText || "取消";
+  return new Promise((resolve) => {
+    const m = _openUiModal(`
+      <h3>${esc(title)}</h3>
+      ${body ? `<div style="white-space:pre-line;font-size:13.5px;color:var(--ink2);margin-bottom:18px">${esc(body)}</div>` : ""}
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn ghost" data-m="cancel">${esc(cancelText)}</button>
+        <button class="btn primary" data-m="ok">${esc(okText)}</button>
+      </div>`);
+    let settled = false;
+    const done = (v) => { if (settled) return; settled = true; document.removeEventListener("keydown", onKey, true); m.remove(); resolve(v); };
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); done(false); } };
+    m.addEventListener("click", (e) => { if (e.target === m) done(false); });
+    m.querySelector('[data-m="cancel"]').addEventListener("click", () => done(false));
+    m.querySelector('[data-m="ok"]').addEventListener("click", () => done(true));
+    document.addEventListener("keydown", onKey, true);
+    const okBtn = m.querySelector('[data-m="ok"]');
+    if (okBtn) okBtn.focus();
+  });
+}
+/* 输入弹窗：resolve(字符串)=点确定，null=取消/Esc/点遮罩（与 prompt 返回值语义一致）；required 时空值不关闭 */
+function modalInput(opts) {
+  const o = opts || {};
+  const title = o.title || "请输入", body = o.body || "";
+  const okText = o.okText || "确定", required = !!o.required;
+  const field = o.multiline
+    ? `<textarea id="ui_modal_input" rows="4" placeholder="${esc(o.placeholder || "")}">${esc(o.value || "")}</textarea>`
+    : `<input id="ui_modal_input" placeholder="${esc(o.placeholder || "")}" value="${esc(o.value || "")}">`;
+  return new Promise((resolve) => {
+    const m = _openUiModal(`
+      <h3>${esc(title)}</h3>
+      ${body ? `<div style="font-size:13px;color:var(--ink2);margin-bottom:10px">${esc(body)}</div>` : ""}
+      <div>${field}</div>
+      <div class="err-text" id="ui_modal_err" style="min-height:20px;margin-top:4px"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn ghost" data-m="cancel">取消</button>
+        <button class="btn primary" data-m="ok">${esc(okText)}</button>
+      </div>`);
+    const input = m.querySelector("#ui_modal_input");
+    let settled = false;
+    const done = (v) => { if (settled) return; settled = true; document.removeEventListener("keydown", onKey, true); m.remove(); resolve(v); };
+    const submit = () => {
+      if (required && !input.value.trim()) {
+        m.querySelector("#ui_modal_err").textContent = "此项必填";
+        input.focus();
+        return;
+      }
+      done(input.value);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.stopPropagation(); done(null); }
+      else if (e.key === "Enter" && !o.multiline && document.activeElement === input) { e.preventDefault(); submit(); }
+    };
+    m.addEventListener("click", (e) => { if (e.target === m) done(null); });
+    m.querySelector('[data-m="cancel"]').addEventListener("click", () => done(null));
+    m.querySelector('[data-m="ok"]').addEventListener("click", submit);
+    document.addEventListener("keydown", onKey, true);
+    input.focus();
+    if (!o.multiline) input.select();
+  });
+}
+/* 信息弹窗（替代 alert）：单按钮，Esc/点遮罩同样关闭 */
+function modalInfo(opts) {
+  const o = opts || {};
+  const title = o.title || "提示", body = o.body || "";
+  return new Promise((resolve) => {
+    const m = _openUiModal(`
+      <h3>${esc(title)}</h3>
+      <div style="white-space:pre-line;font-size:13.5px;color:var(--ink2);margin-bottom:18px;max-height:50vh;overflow:auto">${esc(body)}</div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn primary" data-m="ok">${esc(o.okText || "知道了")}</button>
+      </div>`);
+    let settled = false;
+    const done = () => { if (settled) return; settled = true; document.removeEventListener("keydown", onKey, true); m.remove(); resolve(); };
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); done(); } };
+    m.addEventListener("click", (e) => { if (e.target === m) done(); });
+    m.querySelector('[data-m="ok"]').addEventListener("click", done);
+    document.addEventListener("keydown", onKey, true);
+    const okBtn = m.querySelector('[data-m="ok"]');
+    if (okBtn) okBtn.focus();
+  });
+}
+/* B-2：给 div 卡片补键盘可达——Enter/Space 触发其已有 click 逻辑（不另写处理器） */
+function keyActivate(el) {
+  if (!el || el.dataset.kbBound) return;
+  el.dataset.kbBound = "1";
+  el.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && e.target === el) { e.preventDefault(); el.click(); }
+  });
+}
+
+/* ---------- I-6：顶栏全局搜索（作品/产品前端过滤，数据已在内存 S.works/S.products） ---------- */
+function initGlobalSearch() {
+  const input = $("global_search"), box = $("search_results");
+  if (!input || !box) return;
+  let items = []; // [{type:"work"|"product", id, name}]
+  let active = -1;
+  const close = () => { box.classList.remove("show"); box.innerHTML = ""; items = []; active = -1; input.setAttribute("aria-expanded", "false"); };
+  const choose = (i) => {
+    const it = items[i];
+    if (!it) return;
+    close();
+    input.value = "";
+    input.blur();
+    if (it.type === "work") openWork(it.id, "v1");
+    else { S.selectedProductId = it.id; go("v2"); } // v2 进入时按 selectedProductId 渲染选择器并筛选事实
+  };
+  const render = () => {
+    if (!items.length) {
+      box.innerHTML = '<div class="sr-empty">无匹配的作品或产品</div>';
+    } else {
+      box.innerHTML = items.map((it, i) => `
+        <button type="button" class="sr-item${i === active ? " active" : ""}" role="option" aria-selected="${i === active}" data-i="${i}">
+          <span class="pill ${it.type === "work" ? "blue" : "green"}">${it.type === "work" ? "作品" : "产品"}</span>
+          <span class="sr-name">${esc(it.name)}</span>
+        </button>`).join("");
+      box.querySelectorAll(".sr-item").forEach((el) => el.addEventListener("mousedown", (e) => { e.preventDefault(); choose(+el.dataset.i); }));
+    }
+    box.classList.add("show");
+    input.setAttribute("aria-expanded", "true");
+  };
+  const search = () => {
+    const q = input.value.trim().toLowerCase();
+    if (!q) { close(); return; }
+    const works = (S.works || []).filter((w) => (w.title || "").toLowerCase().includes(q)).slice(0, 6)
+      .map((w) => ({ type: "work", id: w.id, name: w.title || "未命名作品" }));
+    const prods = (S.products || []).filter((p) => (p.name || "").toLowerCase().includes(q)).slice(0, 6)
+      .map((p) => ({ type: "product", id: p.id, name: p.name }));
+    items = works.concat(prods);
+    active = items.length ? 0 : -1;
+    render();
+  };
+  input.addEventListener("input", search);
+  input.addEventListener("focus", () => { if (input.value.trim()) search(); });
+  input.addEventListener("keydown", (e) => {
+    if (!box.classList.contains("show")) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); if (items.length) { active = (active + 1) % items.length; render(); } }
+    else if (e.key === "ArrowUp") { e.preventDefault(); if (items.length) { active = (active - 1 + items.length) % items.length; render(); } }
+    else if (e.key === "Enter") { if (active >= 0) { e.preventDefault(); choose(active); } }
+    else if (e.key === "Escape") { close(); }
+  });
+  document.addEventListener("click", (e) => { if (!e.target.closest(".search")) close(); });
+}
+
 /* V2.1 #3：生成类按钮请求期间禁用（防双击重复扣费），完成后恢复 */
 function setBtnsDisabled(ids, disabled) {
   (ids || []).forEach((id) => { const el = $(id); if (el) el.disabled = !!disabled; });
@@ -222,7 +381,11 @@ async function saveWork() {
   } catch (e) {
     if (e && e.status === 409) {
       // V2.1：409 版本冲突不再静默丢数据——让用户二选一
-      const keep = confirm("作品在别处被修改过，本地还有未保存的内容。\n\n点「确定」= 保留我的修改并强制保存（覆盖别处的修改）\n点「取消」= 放弃我的修改，加载最新版本");
+      const keep = await modalConfirm({
+        title: "作品版本冲突",
+        body: "作品在别处被修改过，本地还有未保存的内容。\n\n点「保留我的修改」= 强制保存（覆盖别处的修改）\n点「放弃我的修改」= 加载最新版本",
+        okText: "保留我的修改", cancelText: "放弃我的修改",
+      });
       if (keep) {
         try {
           const fresh = V1(await ApiClient.get("/api/v1/works/" + S.activeWork.id));
@@ -259,7 +422,7 @@ async function openWork(id, view) {
 async function deleteWork(id) {
   const w = S.works.find((x) => x.id === id);
   if (!w) return;
-  if (!confirm(`确定删除作品「${w.title}」吗？`)) return;
+  if (!(await modalConfirm({ title: "删除作品", body: `确定删除作品「${w.title}」吗？`, okText: "删除" }))) return;
   await ApiClient.del("/api/v1/works/" + id);
   if (S.activeWork && S.activeWork.id === id) { S.activeWork = null; S.data = blankData(); }
   await loadWorks();
@@ -323,7 +486,7 @@ async function renderWorkbench() {
       const p = workProgress(d);
       const name = (d.product && d.product.product_name) || w.title;
       const done = w.status === "archived";
-      return `<div class="card work" data-id="${esc(w.id)}">
+      return `<div class="card work" data-id="${esc(w.id)}" tabindex="0" role="button" aria-label="打开作品 ${esc(name)}">
         <div class="cover" style="background:${COVERS[i % COVERS.length]}"><span class="pill ${done ? "green" : "amber"}">${done ? "已归档" : "进行中"}</span></div>
         <div class="body"><h4>${esc(name)}</h4><div class="date">${esc((w.updated_at || "").slice(0, 16).replace("T", " "))}</div>
         <div class="meta"><span>${esc(p.stage)}</span><span>${p.pct}%</span></div><div class="progress"><i style="width:${p.pct}%"></i></div>
@@ -336,6 +499,8 @@ async function renderWorkbench() {
   }
   grid.querySelectorAll(".work").forEach((card) => {
     const id = card.dataset.id;
+    card.addEventListener("click", (e) => { if (e.target === card || e.target.closest(".cover")) openWork(id); });
+    keyActivate(card);
     card.querySelector('[data-act="open"]').addEventListener("click", (e) => { e.stopPropagation(); openWork(id); });
     const archBtn = card.querySelector('[data-act="arch"]');
     if (archBtn) archBtn.addEventListener("click", (e) => { e.stopPropagation(); archiveWork(id); });
@@ -347,7 +512,7 @@ async function renderWorkbench() {
 async function archiveWork(id) {
   const w = S.works.find((x) => x.id === id);
   if (!w) return;
-  if (!confirm(`确定归档作品「${w.title}」吗？归档后仍可在「已归档」筛选里查看。`)) return;
+  if (!(await modalConfirm({ title: "归档作品", body: `确定归档作品「${w.title}」吗？归档后仍可在「已归档」筛选里查看。`, okText: "归档" }))) return;
   try {
     await ApiClient.patch("/api/v1/works/" + id, { status: "archived" });
     await loadWorks();
@@ -360,7 +525,7 @@ async function archiveWork(id) {
 
 async function newWorkFlow() {
   if (!loggedIn()) { go("v-login"); return; }
-  const name = prompt("请输入作品名称：", "作品 " + (S.works.length + 1));
+  const name = await modalInput({ title: "新建作品", placeholder: "请输入作品名称", value: "作品 " + (S.works.length + 1), okText: "创建" });
   if (name === null) return;
   try {
     await createWork(name);
@@ -490,31 +655,31 @@ async function factAction(act, id) {
     if (act === "submit" || act === "resubmit") {
       await ApiClient.post(`/api/v1/facts/${id}/transition`, { org_id: S.org.id, target_status: "pending_review", reason: "提交审核" });
     } else if (act === "confirm") {
-      const reason = prompt("确认理由（必填）：", "已核实");
+      const reason = await modalInput({ title: "确认事实", placeholder: "确认理由（必填）", value: "已核实", required: true, okText: "下一步" });
       if (reason === null) return;
       if (!reason.trim()) { toast("确认需要填写理由"); return; }
       // 后端规则：确认事实必须设置 allow_use=true（作为宣传依据）
-      if (!confirm("确认后，这条事实将被标记为「允许用于 AI 生成」。继续吗？")) return;
+      if (!(await modalConfirm({ title: "允许用于 AI 生成", body: "确认后，这条事实将被标记为「允许用于 AI 生成」。继续吗？", okText: "确认" }))) return;
       await ApiClient.post(`/api/v1/facts/${id}/transition`, { org_id: S.org.id, target_status: "confirmed", reason: reason.trim(), allow_use: true });
     } else if (act === "reject") {
-      const reason = prompt("驳回理由（必填）：");
+      const reason = await modalInput({ title: "驳回事实", placeholder: "驳回理由（必填）", required: true, okText: "驳回" });
       if (reason === null) return;
       if (!reason.trim()) { toast("驳回需要填写理由"); return; }
       await ApiClient.post(`/api/v1/facts/${id}/transition`, { org_id: S.org.id, target_status: "rejected", reason: reason.trim() });
     } else if (act === "revoke") {
-      const reason = prompt("撤销理由（必填）：");
+      const reason = await modalInput({ title: "撤销事实", placeholder: "撤销理由（必填）", required: true, okText: "撤销" });
       if (reason === null) return;
       if (!reason.trim()) { toast("撤销需要填写理由"); return; }
       await ApiClient.post(`/api/v1/facts/${id}/transition`, { org_id: S.org.id, target_status: "revoked", reason: reason.trim() });
     } else if (act === "edit") {
-      const content = prompt("编辑事实内容（将生成新版本，旧版本保留）：", f.content);
+      const content = await modalInput({ title: "编辑事实内容", body: "将生成新版本，旧版本保留", value: f.content, multiline: true, okText: "保存" });
       if (content === null || !content.trim() || content.trim() === f.content) return;
       await ApiClient.patch(`/api/v1/facts/${id}/content`, { org_id: S.org.id, expected_version: f.version, content: content.trim() });
       toast("已保存为新版本，旧版本可在变更记录查看");
     } else if (act === "history") {
       const h = V1(await ApiClient.get(`/api/v1/facts/${id}/history?org_id=` + encodeURIComponent(S.org.id))) || [];
       const txt = h.length ? h.map((x) => `${(x.created_at || "").slice(0, 16).replace("T", " ")}　${x.from_status || ""}→${x.to_status || ""}　${x.reason || ""}`).join("\n") : "暂无变更记录";
-      alert(`「${f.content.slice(0, 30)}…」的变更记录：\n\n${txt}`);
+      await modalInfo({ title: `「${f.content.slice(0, 30)}…」的变更记录`, body: txt });
       return;
     }
     await loadFacts();
@@ -815,7 +980,7 @@ function renderIdeas() {
     tabs.appendChild(b);
   });
   cards.innerHTML = ideas.map((it, i) => `
-    <div class="idea-card ${i === S.ideaSel ? "sel" : ""}" data-i="${i}">
+    <div class="idea-card ${i === S.ideaSel ? "sel" : ""}" data-i="${i}" tabindex="0" role="button">
       <b>${esc(it.name || ("方案 " + (i + 1)))}</b>
       <p>${esc(it.tagline || "")}</p>
       <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
@@ -826,14 +991,14 @@ function renderIdeas() {
       <div class="kv"><b>核心思路</b><span>${esc(it.core_idea || "—")}</span></div>
       <div class="kv"><b>受众契合</b><span>${esc(it.audience_fit || "—")}</span></div>
     </div>`).join("");
-  cards.querySelectorAll(".idea-card").forEach((c) => c.addEventListener("click", async () => {
+  cards.querySelectorAll(".idea-card").forEach((c) => { keyActivate(c); c.addEventListener("click", async () => {
     S.ideaSel = +c.dataset.i;
     const it = ideas[S.ideaSel];
     S.data.direction = (it.name || "") + "：" + (it.tagline || "");
     await saveWork();
     renderIdeas();
     toast("已选择该方向，可点击「生成分镜」");
-  }));
+  }); });
 }
 
 /* ================= V2.0 P0：拍摄条件表单 + 可行性预检 ================= */
@@ -949,13 +1114,13 @@ function pushSbVersion() {
   } catch (e) { /* 忽略 */ }
 }
 
-function restoreSbVersion() {
+async function restoreSbVersion() {
   try {
     const arr = JSON.parse(localStorage.getItem("lupin_sb_versions") || "[]");
     if (arr.length < 1) { toast("没有可恢复的版本"); return; }
     // arr[0] 是当前版，arr[1] 是上一版
     const prev = arr[1] || arr[0];
-    if (!confirm("恢复到上一版分镜？当前修改将被覆盖。")) return;
+    if (!(await modalConfirm({ title: "恢复上一版分镜", body: "恢复到上一版分镜？当前修改将被覆盖。", okText: "恢复" }))) return;
     S.data.storyboard = prev.sb;
     saveWork(); renderShots();
     toast("已恢复上一版");
@@ -974,7 +1139,7 @@ async function genStoryboard() {
   // V2.0：锁定保护 — 收集已锁定镜头
   const oldShots = (S.data.storyboard && S.data.storyboard.shots) || [];
   const locked = oldShots.filter((s) => s.locked);
-  if (oldShots.length && locked.length && !confirm(`有 ${locked.length} 个锁定镜头将保留，其余重新生成。继续？`)) return;
+  if (oldShots.length && locked.length && !(await modalConfirm({ title: "重新生成分镜", body: `有 ${locked.length} 个锁定镜头将保留，其余重新生成。继续？`, okText: "继续生成" }))) return;
   pushSbVersion();
   errText("sb_err", "");
   const sbBtnIds = ["btn_gen_storyboard", "btn_regen_all"];
@@ -1073,11 +1238,44 @@ function renderShots() {
           ${(s.voiceover || s.subtitle) ? `<div><b>旁白：</b>${esc(s.voiceover || "—")}<br><b>字幕：</b>${esc(s.subtitle || "—")}</div>` : ""}
         </div>
       </details>
+      <div class="shot-edit" data-edit="${i}" style="display:none">
+        <div class="form-stack">
+          <label class="f">画面描述<textarea class="se-scene" rows="2">${esc(s.scene_description || "")}</textarea></label>
+          <label class="f">台词/口播<input class="se-vo" value="${esc(s.voiceover || "")}"></label>
+          <label class="f">时长（秒）<input class="se-dur" type="number" step="0.5" min="0" value="${esc(String(s.duration_seconds ?? ""))}"></label>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn primary sm" data-edit-save="${i}">保存</button>
+          <button class="btn ghost sm" data-edit-cancel="${i}">取消</button>
+        </div>
+      </div>
     </div>`;
   }).join("") + `<div style="margin-top:8px"><button class="btn ghost sm" id="btn_restore_sb">↩ 恢复上一版</button></div>`;
   wrap.querySelectorAll("[data-shot]").forEach((b) => b.addEventListener("click", () => shotAction(b.dataset.shot, +b.dataset.i)));
+  wrap.querySelectorAll("[data-edit-save]").forEach((b) => b.addEventListener("click", () => saveShotEdit(+b.dataset.editSave)));
+  wrap.querySelectorAll("[data-edit-cancel]").forEach((b) => b.addEventListener("click", () => {
+    const box = wrap.querySelector(`[data-edit="${b.dataset.editCancel}"]`);
+    if (box) box.style.display = "none";
+  }));
   const rb = $("btn_restore_sb");
   if (rb) rb.addEventListener("click", restoreSbVersion);
+}
+
+/* 镜头行内编辑保存（Phase2：替代原三连 prompt，逻辑与原先一致） */
+async function saveShotEdit(i) {
+  const shots = S.data.storyboard.shots;
+  const s = shots[i];
+  const box = document.querySelector(`[data-edit="${i}"]`);
+  if (!s || !box) return;
+  const oldVo = s.voiceover || "";
+  s.scene_description = box.querySelector(".se-scene").value.trim();
+  s.voiceover = box.querySelector(".se-vo").value.trim();
+  const d = parseFloat(box.querySelector(".se-dur").value);
+  if (d > 0) s.duration_seconds = d;
+  if (s.voiceover !== oldVo) { markRiskDirty(); } // V2.1：口播文案变更 → 风险检查标脏
+  await saveWork(); renderShots();
+  updateRiskDirtyBadge();
+  toast("已更新");
 }
 
 async function shotAction(act, i) {
@@ -1088,31 +1286,20 @@ async function shotAction(act, i) {
     await saveWork(); renderShots();
     toast(s.locked ? `镜头 ${s.shot_number} 已锁定，重新生成时将保留` : `镜头 ${s.shot_number} 已解锁`);
   } else if (act === "del") {
-    if (!confirm(`删除镜头 ${s.shot_number}？删除后可点「恢复上一版」找回。`)) return;
+    if (!(await modalConfirm({ title: "删除镜头", body: `删除镜头 ${s.shot_number}？删除后可点「恢复上一版」找回。`, okText: "删除" }))) return;
     pushSbVersion();
     shots.splice(i, 1);
     shots.forEach((x, j) => { x.shot_number = j + 1; });
     await saveWork(); renderShots();
   } else if (act === "edit") {
-    const scene = prompt("画面描述：", s.scene_description || "");
-    if (scene === null) return;
-    const vo = prompt("台词/口播：", s.voiceover || "");
-    if (vo === null) return;
-    const dur = prompt("时长（秒）：", String(s.duration_seconds || ""));
-    if (dur === null) return;
-    const oldVo = s.voiceover || "";
-    s.scene_description = scene.trim();
-    s.voiceover = vo.trim();
-    const d = parseFloat(dur);
-    if (d > 0) s.duration_seconds = d;
-    if (s.voiceover !== oldVo) { markRiskDirty(); } // V2.1：口播文案变更 → 风险检查标脏
-    await saveWork(); renderShots();
-    updateRiskDirtyBadge();
-    toast("已更新");
+    // Phase2：行内展开表单（表单在 renderShots 模板内，保存走 saveShotEdit）
+    document.querySelectorAll(".shot-edit").forEach((el) => { el.style.display = "none"; });
+    const box = document.querySelector(`[data-edit="${i}"]`);
+    if (box) { box.style.display = ""; const f = box.querySelector(".se-scene"); if (f) f.focus(); }
   } else if (act === "colloquial") {
     openColloquialModal(i);
   } else if (act === "regen") {
-    const instruction = prompt(`对镜头 ${s.shot_number} 的修改要求（例如：改成俯视角度）：`);
+    const instruction = await modalInput({ title: `重生成镜头 ${s.shot_number}`, placeholder: "修改要求（例如：改成俯视角度）", required: true, okText: "重生成" });
     if (!instruction || !instruction.trim()) return;
     aiLoading(`正在重生成镜头 ${s.shot_number}…`);
     try {
@@ -1136,9 +1323,10 @@ async function shotAction(act, i) {
 async function addShot() {
   const sb = S.data.storyboard;
   if (!sb) { toast("请先生成分镜"); return; }
-  const scene = prompt("新镜头的画面描述：");
+  const scene = await modalInput({ title: "新增镜头", placeholder: "新镜头的画面描述", required: true, okText: "下一步" });
   if (!scene || !scene.trim()) return;
-  const dur = parseFloat(prompt("时长（秒）：", "5")) || 5;
+  const durStr = await modalInput({ title: "镜头时长", placeholder: "时长（秒）", value: "5", okText: "添加" });
+  const dur = parseFloat(durStr) || 5;
   sb.shots.push({ shot_number: sb.shots.length + 1, shot_type: "中景", scene_description: scene.trim(),
     shooting_action: "", camera_movement: "", voiceover: "", subtitle: "", duration_seconds: dur, props: [], required_assets: [] });
   await saveWork(); renderShots();
@@ -1429,7 +1617,7 @@ const accRec = getAcc(k);
 const accMeta = accRec ? ACC_LABELS[accRec.status] : null;
 const assetN = (accRec && accRec.asset_ids) ? accRec.asset_ids.length : 0;
 return `<div class="shot-card" data-k="${k}" data-i="${i}" style="border-bottom:1px solid #EFE9D8">
-<div class="check" style="cursor:pointer;border:0;padding-bottom:6px">
+<div class="check" tabindex="0" role="button" aria-label="切换镜头 ${s.shot_number || i + 1} 拍摄状态" style="cursor:pointer;border:0;padding-bottom:6px">
 <span class="box" style="${cur === "passed" ? "background:var(--ok);" : ""}"></span>
 <span class="t"><b>镜头 ${s.shot_number || i + 1} · ${esc(s.shot_purpose || s.scene_description || "")}</b><br>
 <span style="color:var(--muted);font-size:12.5px">${shotDur(s)} · ${esc((s.shoot_steps || [])[0] || s.shooting_action || "")}</span>
@@ -1446,13 +1634,15 @@ ${accMeta ? `<span class="pill ${accMeta[1]}" style="font-size:11px;margin-top:4
 list.querySelectorAll(".shot-card").forEach((c) => {
 const k = c.dataset.k, i = +c.dataset.i;
 const s = S.data.storyboard.shots[i];
-c.querySelector(".check").addEventListener("click", async () => {
+const chk = c.querySelector(".check");
+keyActivate(chk);
+chk.addEventListener("click", async () => {
 const cur = ((S.data.shoot_state || {})[k] || {}).status || "todo";
 const nxt = nextShootState(cur);
 // V2.1：用替代方案必须填写原因，取消则中止切换
 let note = "";
 if (nxt === "alt") {
-  const reason = prompt("请填写使用替代方案的原因：", "");
+  const reason = await modalInput({ title: "使用替代方案", placeholder: "请填写使用替代方案的原因", okText: "确定" });
   if (reason === null) return;
   note = (reason || "").trim();
 }
@@ -1460,7 +1650,7 @@ S.data.shoot_state[k] = { status: nxt, note };
 await saveWork();
 renderShoot();
 if (nxt === "reshoot" && s.reshoot_guide) {
-  alert(`【镜头 ${s.shot_number} 补拍指引】\n${s.reshoot_guide}`);
+  await modalInfo({ title: `镜头 ${s.shot_number} 补拍指引`, body: s.reshoot_guide });
 } else if (nxt === "alt") {
   toast("已记录替代方案" + (s.alt_approach ? "：" + s.alt_approach.slice(0, 40) : ""));
 }
@@ -1521,7 +1711,7 @@ if (btn) btn.disabled = false;
 async function submitAcceptance(k, shotNumber, status, btn) {
 let note = "";
 if (status === "needs_reshoot") {
-note = prompt("请简要描述问题（会出现在补拍清单里）", "");
+note = await modalInput({ title: "标记需补拍", placeholder: "请简要描述问题（会出现在补拍清单里）", okText: "提交" });
 if (note === null) return;
 }
 const cur = getAcc(k);
@@ -2149,11 +2339,11 @@ $("w6_status").className = "pill " + (d.ready? "green": "amber");
 $("delivery_results").innerHTML =
 `<p style="font-size:14px;font-weight:700;margin-bottom:12px">${d.ready? "✓ 可以交付": "⚠ 尚不能交付"}</p>` +
 (d.items || []).map((it, i) => `
-<div class="check" data-di="${i}"><span class="box"></span>
+<div class="check" data-di="${i}" tabindex="0" role="button" aria-label="确认 ${esc(it.label)}"><span class="box"></span>
 <span class="t"><b>${esc(it.label)}</b><br><span style="color:var(--muted);font-size:12.5px">${esc(it.reason || "")}</span></span>
 <span class="note pill ${pillTone[it.status] || "gray"}">${esc(labels[it.status] || it.status)}</span></div>`).join("") +
 `<p style="font-size:12px;color:var(--muted);margin-top:10px">勾选 = 人工已确认。风险提示仅为依据缺失提醒，本工具不保证广告合规，发布前请自行把关。</p>`;
-$("delivery_results").querySelectorAll(".check").forEach((c) => c.addEventListener("click", () => c.classList.toggle("done")));
+$("delivery_results").querySelectorAll(".check").forEach((c) => { keyActivate(c); c.addEventListener("click", () => c.classList.toggle("done")); });
 } catch (e) {
 errText("delivery_err", e.message || "检查失败");
 } finally {
@@ -2379,7 +2569,7 @@ async function downloadFinal(aid) {
   } catch (err) { toast(err.message || "下载失败"); }
 }
 async function deleteFinal(aid) {
-  if (!confirm("确定删除这条归档成片吗？")) return;
+  if (!(await modalConfirm({ title: "删除归档成片", body: "确定删除这条归档成片吗？", okText: "删除" }))) return;
   try {
     await ApiClient.del("/api/v1/assets/" + aid + "?org_id=" + encodeURIComponent(S.org.id));
     toast("已删除");
@@ -2643,17 +2833,18 @@ $("btn_logout").addEventListener("click", doLogout);
 
 const newWork = () => newWorkFlow();
 bindTodo5();
+initGlobalSearch();
 $("qa_new").addEventListener("click", newWork);
 $("btn_new_work").addEventListener("click", newWork);
 $("btn_new_work_top").addEventListener("click", newWork);
-document.querySelectorAll("#v1 [data-filter]").forEach((p) => p.addEventListener("click", () => {
+document.querySelectorAll("#v1 [data-filter]").forEach((p) => { keyActivate(p); p.addEventListener("click", () => {
 S.workFilter = p.dataset.filter;
 document.querySelectorAll("#v1 [data-filter]").forEach((x) => {
 const on = x === p;
 x.classList.toggle("blue", on); x.classList.toggle("gray",!on);
 });
 renderWorkbench();
-}));
+}); });
 
 $("btn_save_product").addEventListener("click", saveProduct);
 $("btn_to_v3").addEventListener("click", async () => { if (await saveProduct()) go("v3");});
@@ -2915,7 +3106,7 @@ async function openCopyDoc(id) {
 }
 
 async function deleteCopyDoc(id) {
-  if (!confirm("确定删除整个文案文档（含全部版本）？此操作不可恢复。")) return;
+  if (!(await modalConfirm({ title: "删除文案文档", body: "确定删除整个文案文档（含全部版本）？此操作不可恢复。", okText: "删除" }))) return;
   try {
     await ApiClient.del(`/api/v1/copy/docs/${id}?org_id=` + encodeURIComponent(S.org.id));
     COPY.docs = COPY.docs.filter((d) => d.id !== id);
@@ -3111,7 +3302,7 @@ async function confirmCopyVersion(id) {
 }
 
 async function dropCopyVersion(id) {
-  if (!confirm("放弃这个草稿版本？")) return;
+  if (!(await modalConfirm({ title: "放弃草稿版本", body: "确定放弃这个草稿版本吗？", okText: "放弃" }))) return;
   try {
     await ApiClient.del(`/api/v1/copy/docs/${COPY.doc.id}/versions/${id}?org_id=` + encodeURIComponent(S.org.id));
     await openCopyDoc(COPY.doc.id); toast("已放弃草稿");
@@ -3120,7 +3311,7 @@ async function dropCopyVersion(id) {
 
 async function restoreCopyVersion(id) {
   const v = COPY.doc.versions.find((x) => x.id === id);
-  if (!confirm(`确定恢复到 v${v ? v.version_no : "?"}？将新建一个已确认版本，现有版本不受影响。`)) return;
+  if (!(await modalConfirm({ title: "恢复版本", body: `确定恢复到 v${v ? v.version_no : "?"}？将新建一个已确认版本，现有版本不受影响。`, okText: "恢复" }))) return;
   try {
     const r = V1(await ApiClient.post(
       `/api/v1/copy/docs/${COPY.doc.id}/versions/${id}/restore?org_id=` + encodeURIComponent(S.org.id), {}));
@@ -3386,7 +3577,7 @@ function showPlatformEdit(pid, versionId, items) {
 async function reviewPlatform(pid, versionId, items) {
   const p = items.find((x) => x.id === pid);
   const reviewed = p && p.review_status !== "reviewed";
-  if (reviewed && !confirm("确认该平台版本已人工审核无误？")) return;
+  if (reviewed && !(await modalConfirm({ title: "人工审核确认", body: "确认该平台版本已人工审核无误？", okText: "确认" }))) return;
   try {
     await ApiClient.post(`/api/v1/platforms/${pid}/review?org_id=` + encodeURIComponent(S.org.id), { reviewed });
     toast(reviewed ? "已标记为人工审核" : "已取消审核标记");
@@ -3416,7 +3607,7 @@ async function exportPlatform(pid) {
 }
 
 async function deletePlatform(pid, versionId) {
-  if (!confirm("删除这个平台版本？不影响其他平台版本。")) return;
+  if (!(await modalConfirm({ title: "删除平台版本", body: "删除这个平台版本？不影响其他平台版本。", okText: "删除" }))) return;
   try {
     await ApiClient.del(`/api/v1/platforms/${pid}?org_id=` + encodeURIComponent(S.org.id));
     toast("已删除");
@@ -3573,7 +3764,7 @@ function renderPlanCandidates() {
   if (!cands.length) { host.innerHTML = ""; renderPlanAfter(); return; }
   host.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">` +
     cands.map((c, i) => `
-      <div class="idea-card ${i === PLAN.selectedIndex ? "sel" : ""}" data-i="${i}" style="cursor:pointer">
+      <div class="idea-card ${i === PLAN.selectedIndex ? "sel" : ""}" data-i="${i}" style="cursor:pointer" tabindex="0" role="button">
         <b>方向 ${i + 1} · ${esc(c.name || "")}</b>
         <p>${esc(c.core_expression || "")}</p>
         <div style="margin:8px 0;display:flex;gap:6px;flex-wrap:wrap">
@@ -3586,7 +3777,7 @@ function renderPlanCandidates() {
         <div class="kv"><b>建议画面</b><span>${esc(c.suggested_shots || "—")}</span></div>
         ${c.shoot_notes ? `<div class="kv"><b>执行注意</b><span>${esc(c.shoot_notes)}</span></div>` : ""}
       </div>`).join("") + `</div>`;
-  host.querySelectorAll(".idea-card").forEach((el) => el.addEventListener("click", () => planSelect(+el.dataset.i)));
+  host.querySelectorAll(".idea-card").forEach((el) => { keyActivate(el); el.addEventListener("click", () => planSelect(+el.dataset.i)); });
   renderPlanAfter();
 }
 
@@ -3797,7 +3988,7 @@ async function createPublishRecord() {
 }
 
 async function deletePublishRecord(id) {
-  if (!confirm("确定删除这条发布记录吗？（只删除记录，不删除已关联的文件）")) return;
+  if (!(await modalConfirm({ title: "删除发布记录", body: "确定删除这条发布记录吗？（只删除记录，不删除已关联的文件）", okText: "删除" }))) return;
   try {
     await pubApi(`/records/${id}`, { method: "DELETE" });
     PUB.records = PUB.records.filter((r) => r.id !== id);
@@ -4290,7 +4481,7 @@ async function showLibDetail(assetId) {
   m.classList.add("show");
   m.querySelectorAll(".lib-ref-row [data-ref]").forEach((b) => {
     b.addEventListener("click", async () => {
-      if (!confirm("解除该引用？只删引用关系，不删文件实体。")) return;
+      if (!(await modalConfirm({ title: "解除引用", body: "解除该引用？只删引用关系，不删文件实体。", okText: "解除" }))) return;
       try {
         await libApi("/refs/" + encodeURIComponent(b.dataset.ref), { method: "DELETE" });
         toast("引用已解除");

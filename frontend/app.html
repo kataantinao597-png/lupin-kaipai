@@ -24,7 +24,7 @@ body{font-family:system-ui,-apple-system,"PingFang SC","Hiragino Sans GB","Micro
 .brand-mark{width:34px;height:34px;border-radius:9px;background:#C62828;color:#fff;display:grid;place-items:center;
   font-weight:900;font-size:16px;transform:rotate(-4deg);box-shadow:inset 0 0 0 2px rgba(255,255,255,.28)}
 .brand b{font-size:16px;letter-spacing:.04em}
-.nav-item{display:flex;align-items:center;gap:11px;width:100%;border:0;background:none;text-align:left;padding:10px 12px;border-radius:10px;
+.nav-item{display:flex;align-items:center;gap:11px;width:100%;border:0;background:none;text-align:left;padding:11px 12px;border-radius:10px;
   font-size:13.5px;color:var(--ink2);cursor:pointer;transition:background .18s,color .18s;font-family:inherit}
 .nav-item svg{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8}
 .nav-item:hover{background:#F0EBDB;color:var(--ink)}
@@ -40,7 +40,14 @@ body{font-family:system-ui,-apple-system,"PingFang SC","Hiragino Sans GB","Micro
   border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
 .search{flex:1;max-width:420px;display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:8px 16px;color:var(--muted);font-size:13px}
 .search input{border:0;background:none;outline:none;flex:1;font:inherit;color:var(--ink)}
+.search{position:relative}
 .search:focus-within{border-color:var(--primary);box-shadow:0 0 0 3px rgba(15,81,50,.16)}
+.search-results{position:absolute;top:calc(100% + 8px);left:0;right:0;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:6px;display:none;z-index:60;max-height:320px;overflow:auto}
+.search-results.show{display:block}
+.sr-item{display:flex;gap:8px;align-items:center;width:100%;text-align:left;border:0;background:none;padding:9px 10px;border-radius:8px;cursor:pointer;font:inherit;font-size:13px;color:var(--ink)}
+.sr-item.active,.sr-item:hover{background:var(--primary-soft)}
+.sr-item .sr-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sr-empty{padding:10px;font-size:12.5px;color:var(--muted)}
 .top-actions{margin-left:auto;display:flex;align-items:center;gap:12px}
 .icon-btn{width:36px;height:36px;border-radius:50%;border:1px solid var(--line);background:#fff;display:grid;place-items:center;cursor:pointer;color:var(--ink2)}
 .icon-btn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8}
@@ -62,7 +69,7 @@ body{font-family:system-ui,-apple-system,"PingFang SC","Hiragino Sans GB","Micro
 .btn:focus-visible,.nav-item:focus-visible,.tab:focus-visible{outline:3px solid var(--amber);outline-offset:2px}
 .btn.ghost{background:#fff;border:1px solid var(--line);color:var(--ink)}
 .btn.ghost:hover{border-color:var(--primary);color:var(--primary)}
-.btn.sm{padding:8px 16px;font-size:13px;border-radius:8px}
+.btn.sm{padding:11px 18px;font-size:13px;border-radius:8px}
 .pill{display:inline-flex;align-items:center;font-size:11.5px;padding:3px 11px;border-radius:999px;letter-spacing:.06em;font-weight:500}
 .pill.blue{background:var(--primary-soft);color:var(--primary-deep)}
 .pill.green{background:var(--green-soft);color:#147A56}
@@ -152,6 +159,7 @@ transform:translateX(-130%) skewX(-18deg);pointer-events:none}
 .greet p{color:var(--ink2);font-size:13.5px}
 .quick{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px}
 .qa{padding:20px;display:flex;gap:14px;align-items:center;cursor:pointer;transition:transform .2s}
+button.qa{font:inherit;text-align:left;color:var(--ink);width:100%}
 .qa:hover{transform:translateY(-3px)}
 .qa .ic{width:46px;height:46px;flex:none;border-radius:13px;display:grid;place-items:center;color:#fff}
 .qa .ic svg{width:22px;height:22px;stroke:#fff;fill:none;stroke-width:2}
@@ -200,12 +208,14 @@ transform:translateX(-130%) skewX(-18deg);pointer-events:none}
 .sb-table tr:hover td{background:#FAFBFE}
 .thumb{width:64px;height:40px;border-radius:7px;flex:none}
 .op{display:flex;gap:8px}
-.op button{border:1px solid var(--line);background:#fff;border-radius:7px;font-size:12px;padding:5px 12px;cursor:pointer;color:var(--ink2);font-family:inherit}
+.op button{border:1px solid var(--line);background:#fff;border-radius:7px;font-size:12px;padding:9px 14px;cursor:pointer;color:var(--ink2);font-family:inherit}
 .op button:hover{border-color:var(--primary);color:var(--primary)}
 /* ---------- v4 海报 ---------- */
 .p4{display:grid;grid-template-columns:200px 1fr 280px;gap:18px;align-items:start}
 .tpl{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .tpl .t{aspect-ratio:3/4;border-radius:10px;cursor:pointer;border:2px solid transparent;transition:border-color .18s,box-shadow .18s;position:relative;overflow:hidden}
+.tpl button.t{padding:0;font:inherit;color:inherit}
+.tpl .t .t-name{position:absolute;left:0;right:0;bottom:0;padding:16px 6px 6px;font-size:11.5px;letter-spacing:.06em;text-align:center;color:#FFF8EC;background:linear-gradient(transparent,rgba(20,16,8,.5))}
 .tpl .t.active{border-color:var(--primary);box-shadow:0 0 0 3px rgba(15,81,50,.20)}
 .poster{border-radius:16px;overflow:hidden;color:#fff;position:relative;min-height:520px;display:flex;flex-direction:column;justify-content:flex-end;padding:30px;
   background:linear-gradient(160deg,#6E2A18 0%,#9E4423 45%,#BC6E2B 80%,#C07F33 100%)}
@@ -269,7 +279,7 @@ transform:translateX(-130%) skewX(-18deg);pointer-events:none}
   .p2,.p4{grid-template-columns:1fr 1fr}.p5,.p6{grid-template-columns:1fr}.feat-grid,.quick{grid-template-columns:1fr 1fr}.work-grid{grid-template-columns:1fr 1fr}}
 @media (max-width:760px){
   /* 侧栏改为抽屉：复用同一套导航，不另建一份 */
-  .nav-toggle{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;border:1px solid var(--line);
+  .nav-toggle{display:grid;place-items:center;width:44px;height:44px;border-radius:10px;border:1px solid var(--line);
     background:#fff;color:var(--ink2);cursor:pointer;flex:none;padding:0}
   .nav-toggle svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
   .sidebar{display:flex;position:fixed;left:0;top:0;bottom:0;width:264px;max-width:84vw;height:100vh;z-index:70;
@@ -279,7 +289,7 @@ transform:translateX(-130%) skewX(-18deg);pointer-events:none}
     opacity:0;pointer-events:none;transition:opacity .22s ease}
   body.nav-open .nav-backdrop{opacity:1;pointer-events:auto}
   body.nav-open{overflow:hidden}
-  .side-close{display:grid;place-items:center;position:absolute;top:12px;right:10px;width:32px;height:32px;
+  .side-close{display:grid;place-items:center;position:absolute;top:8px;right:8px;width:44px;height:44px;
     border:0;border-radius:9px;background:transparent;color:var(--muted);font-size:22px;line-height:1;cursor:pointer}
   .side-close:hover{background:#F0EBDB;color:var(--ink)}
   .view{padding:18px 14px 60px}.hero{padding:40px 26px}.hero h1{font-size:30px}
@@ -426,7 +436,7 @@ input[type=file]{display:none}
   <div class="main">
     <header class="topbar">
       <button class="nav-toggle" id="btn_nav" aria-label="打开导航" aria-controls="sidebar" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
-      <label class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input placeholder="搜索作品、产品、镜头…"></label>
+      <div class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input id="global_search" placeholder="搜索作品、产品…" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="search_results" aria-autocomplete="list"><div class="search-results" id="search_results" role="listbox"></div></div>
       <div class="top-actions">
         <span class="pill blue" id="top_user" style="display:none"></span>
         <button class="btn ghost sm" id="btn_logout" style="display:none">退出</button>
@@ -496,9 +506,9 @@ input[type=file]{display:none}
     <section class="view" id="v1">
       <div class="greet"><h2 id="greet_title">上午好。把山东好物，拍成值得记住的故事。</h2><p id="greet_text">正在加载工作台数据…</p></div>
       <div class="quick stagger">
-        <div class="card qa" id="qa_new"><span class="ic" style="background:linear-gradient(135deg,#0F5132,#2E7D6B)"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span><div><b>创建新作品</b><span>从产品资料开始</span></div></div>
-        <div class="card qa" id="qa_import" style="cursor:pointer"><span class="ic" style="background:linear-gradient(135deg,#2E7D6B,#8FC3B0)"><svg viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg></span><div><b>导入已有产品</b><span>上传文档抽取事实</span></div></div>
-        <div class="card qa" id="qa_cases" style="cursor:pointer"><span class="ic" style="background:linear-gradient(135deg,#C62828,#D4A05A)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 9l5 3-5 3z"/></svg></span><div><b>查看示例案例</b><span>3 个山东农产品示例</span></div></div>
+        <button type="button" class="card qa" id="qa_new"><span class="ic" style="background:linear-gradient(135deg,#0F5132,#2E7D6B)"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span><div><b>创建新作品</b><span>从产品资料开始</span></div></button>
+        <button type="button" class="card qa" id="qa_import" style="cursor:pointer"><span class="ic" style="background:linear-gradient(135deg,#2E7D6B,#8FC3B0)"><svg viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg></span><div><b>导入已有产品</b><span>上传文档抽取事实</span></div></button>
+        <button type="button" class="card qa" id="qa_cases" style="cursor:pointer"><span class="ic" style="background:linear-gradient(135deg,#C62828,#D4A05A)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 9l5 3-5 3z"/></svg></span><div><b>查看示例案例</b><span>3 个山东农产品示例</span></div></button>
       </div>
       <div class="card guide stagger">
         <div class="guide-head"><h3>使用说明 · 四步把产品拍成短视频</h3><span class="pill green">建议按顺序操作</span></div>
@@ -512,7 +522,7 @@ input[type=file]{display:none}
       </div>
       <div class="works-head" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
         <h3 style="font-size:16px">我的作品</h3>
-        <div style="display:flex;gap:8px;align-items:center"><span class="pill blue" data-filter="all" style="cursor:pointer">全部</span> <span class="pill gray" data-filter="active" style="cursor:pointer">进行中</span> <span class="pill gray" data-filter="done" style="cursor:pointer">已完成</span>
+        <div style="display:flex;gap:8px;align-items:center"><span class="pill blue" data-filter="all" style="cursor:pointer;padding:6px 13px" tabindex="0" role="button">全部</span> <span class="pill gray" data-filter="active" style="cursor:pointer;padding:6px 13px" tabindex="0" role="button">进行中</span> <span class="pill gray" data-filter="done" style="cursor:pointer;padding:6px 13px" tabindex="0" role="button">已完成</span>
         <button class="btn primary sm" id="btn_new_work" style="margin-left:8px">＋ 新建作品</button></div>
       </div>
       <div class="work-grid stagger" id="work_grid"><p style="color:var(--muted)">正在加载作品…</p></div>
@@ -629,12 +639,12 @@ input[type=file]{display:none}
       </div>
       <div class="p4">
         <div class="card panel"><h3>模板库</h3><div class="tpl" id="poster_tpls">
-          <div class="t active" data-tpl="harvest" data-name="丰收橙" style="background:linear-gradient(160deg,#7A2E1D,#E8A25C)"></div>
-          <div class="t" data-tpl="ocean" data-name="海洋蓝" style="background:linear-gradient(160deg,#1B4D6B,#5BA4CF)"></div>
-          <div class="t" data-tpl="orchard" data-name="果园绿" style="background:linear-gradient(160deg,#2C4A2E,#A3D65C)"></div>
-          <div class="t" data-tpl="grape" data-name="葡萄紫" style="background:linear-gradient(160deg,#5B2A86,#C99AF2)"></div>
-          <div class="t" data-tpl="guochao" data-name="国潮竖版" style="background:linear-gradient(160deg,#0C4229,#C62828)"></div>
-          <div class="t" data-tpl="minimal_h" data-name="简约横版" style="background:linear-gradient(160deg,#F8F4EA,#E4DCC6)"></div>
+          <button type="button" class="t active" data-tpl="harvest" data-name="丰收橙" style="background:linear-gradient(160deg,#7A2E1D,#E8A25C)"><span class="t-name">丰收橙</span></button>
+          <button type="button" class="t" data-tpl="ocean" data-name="海洋蓝" style="background:linear-gradient(160deg,#1B4D6B,#5BA4CF)"><span class="t-name">海洋蓝</span></button>
+          <button type="button" class="t" data-tpl="orchard" data-name="果园绿" style="background:linear-gradient(160deg,#2C4A2E,#A3D65C)"><span class="t-name">果园绿</span></button>
+          <button type="button" class="t" data-tpl="grape" data-name="葡萄紫" style="background:linear-gradient(160deg,#5B2A86,#C99AF2)"><span class="t-name">葡萄紫</span></button>
+          <button type="button" class="t" data-tpl="guochao" data-name="国潮竖版" style="background:linear-gradient(160deg,#0C4229,#C62828)"><span class="t-name">国潮竖版</span></button>
+          <button type="button" class="t" data-tpl="minimal_h" data-name="简约横版" style="background:linear-gradient(160deg,#F8F4EA,#E4DCC6)"><span class="t-name">简约横版</span></button>
         </div></div>
         <div class="poster" id="poster_preview"><div class="pt" id="pp_title">产品名称<br>宣传语</div><div class="ps" id="pp_promo">促 销 信 息</div><span class="pb" id="pp_btn">行动按钮 →</span></div>
         <div class="card panel"><h3>编辑内容</h3><div class="form-stack">
