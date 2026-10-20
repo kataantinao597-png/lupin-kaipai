@@ -115,22 +115,19 @@
   .sec h2 .u::after{content:"";position:absolute;left:0;right:0;bottom:2px;height:8px;
     background:linear-gradient(to right,rgba(212,160,90,.55),rgba(212,160,90,.15));z-index:-1;border-radius:3px}
   .sec-desc{margin-top:14px;color:var(--lp-muted);font-size:16.5px;max-width:42em}
-  .js .reveal{opacity:0;transform:translateY(26px);transition:opacity .5s ease,transform .5s ease}
-  .js .reveal.in{opacity:1;transform:none}
+  .js .reveal{opacity:0;transition:opacity .5s ease}
+  .js .reveal.in{opacity:1}
 
-  /* ============ C · 核心能力 ============ */
-  .feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:52px}
-  .feat{background:var(--lp-card);border:1px solid var(--lp-hair);border-radius:18px;padding:34px 30px;
-    transition:transform .18s ease,box-shadow .18s ease;position:relative;overflow:hidden}
-  .feat:hover{transform:translateY(-4px);box-shadow:0 16px 36px rgba(15,81,50,.12)}
-  .feat::after{content:"";position:absolute;left:0;right:0;top:0;height:4px;
-    background:linear-gradient(to right,var(--lp-forest),var(--lp-teal));opacity:0;transition:opacity .18s}
-  .feat:hover::after{opacity:1}
-  .feat .icon{width:58px;height:58px;border-radius:16px;background:rgba(15,81,50,.08);
-    display:flex;align-items:center;justify-content:center;margin-bottom:20px}
-  .feat .icon svg{width:30px;height:30px}
-  .feat h3{font-size:19px;font-weight:800;margin-bottom:10px}
-  .feat p{font-size:14.5px;color:var(--lp-muted)}
+  /* ============ C · 核心能力（横向条目清单） ============ */
+  .feat-list{margin-top:52px;border-top:1px solid var(--lp-hair)}
+  .feat-row{display:flex;gap:24px;align-items:flex-start;padding:26px 10px;
+    border-bottom:1px solid var(--lp-hair);transition:background .15s ease}
+  .feat-row:hover{background:rgba(15,81,50,.035)}
+  .feat-row .icon{flex:none;width:54px;height:54px;border-radius:15px;background:rgba(15,81,50,.08);
+    display:flex;align-items:center;justify-content:center}
+  .feat-row .icon svg{width:29px;height:29px}
+  .feat-row h3{font-size:17px;font-weight:800;margin-bottom:6px;line-height:1.45}
+  .feat-row p{font-size:14.5px;color:var(--lp-muted)}
 
   /* ============ D · 产品案例 ============ */
   #cases{background:rgba(255,253,246,.6);border-top:1px solid var(--lp-hair);border-bottom:1px solid var(--lp-hair)}
@@ -186,17 +183,20 @@
   .cul-photos figcaption{position:absolute;left:0;right:0;bottom:0;padding:28px 14px 12px;color:#fff;
     font-size:13.5px;font-weight:700;line-height:1.5;background:linear-gradient(to top,rgba(15,30,20,.72),transparent)}
 
-  /* ============ G · 功能展示 ============ */
-  .demo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:52px}
-  .demo{background:var(--lp-card);border:1px solid var(--lp-hair);border-radius:18px;overflow:hidden}
-  .demo .bar{display:flex;gap:7px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--lp-hair);background:rgba(15,81,50,.05)}
-  .demo .bar i{width:11px;height:11px;border-radius:50%}
-  .demo .bar i:nth-child(1){background:#D4A05A}.demo .bar i:nth-child(2){background:#2E7D6B}.demo .bar i:nth-child(3){background:#C62828}
-  .demo .bar span{margin-left:8px;font-size:12.5px;color:var(--lp-muted)}
-  .demo img{width:100%;aspect-ratio:16/10.4;object-fit:cover;object-position:top;background:var(--lp-card)}
-  .demo .tx{padding:22px 24px 24px}
-  .demo h3{font-size:17.5px;font-weight:800;margin-bottom:8px}
-  .demo p{font-size:14px;color:var(--lp-muted)}
+  /* ============ G · 功能展示（全宽交错图文） ============ */
+  .demo-alt{display:grid;gap:52px;margin-top:56px}
+  .demo-row{display:grid;grid-template-columns:1.2fr 1fr;gap:48px;align-items:center}
+  .demo-row.flip .demo-shot{order:2}
+  .demo-shot{background:var(--lp-card);border:1px solid var(--lp-hair);border-radius:18px;overflow:hidden;
+    box-shadow:0 14px 34px rgba(37,40,32,.08)}
+  .demo-shot .bar{display:flex;gap:7px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--lp-hair);background:rgba(15,81,50,.05)}
+  .demo-shot .bar i{width:11px;height:11px;border-radius:50%}
+  .demo-shot .bar i:nth-child(1){background:#D4A05A}.demo-shot .bar i:nth-child(2){background:#2E7D6B}.demo-shot .bar i:nth-child(3){background:#C62828}
+  .demo-shot .bar span{margin-left:8px;font-size:12.5px;color:var(--lp-muted)}
+  .demo-shot img{width:100%;aspect-ratio:16/10.4;object-fit:cover;object-position:top;background:var(--lp-card)}
+  .demo-tx .k{font-size:12.5px;font-weight:800;color:var(--lp-teal);letter-spacing:.22em}
+  .demo-tx h3{font-size:24px;font-weight:800;margin:12px 0 10px;line-height:1.4}
+  .demo-tx p{font-size:15px;color:var(--lp-muted)}
   .demo-note{margin-top:22px;font-size:13px;color:var(--lp-muted);text-align:center}
 
   /* ============ H · CTA（视频背景） ============ */
@@ -242,7 +242,10 @@
     .nav-links .btn-nav{margin:8px;text-align:center}
     .nav-cta-desktop{display:none}
     .sec{padding:68px 0}
-    .feat-grid,.case-grid,.demo-grid{grid-template-columns:1fr}
+    .case-grid{grid-template-columns:1fr}
+    .demo-row{grid-template-columns:1fr;gap:22px}
+    .demo-row.flip .demo-shot{order:0}
+    .feat-row{padding:22px 4px;gap:18px}
     .cul-grid{grid-template-columns:1fr;gap:32px}
     .flow-grid{grid-template-columns:repeat(2,1fr)}
     .flow-line{display:none}
@@ -319,38 +322,32 @@
      v5 拍摄执行：店播场控脚本、拍摄清单验收；v6 交付中心（七项交付检查）
      v9 素材库：跨项目素材引用复用；v4 海报制作：海报模板与导出
      ============================================================ -->
-    <div class="feat-grid">
-      <div class="feat reveal">
+    <div class="feat-list">
+      <div class="feat-row reveal">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6"/><path d="M9 16l2 2 4-4" stroke="#C62828"/></svg></div>
-        <h3>产品知识中心</h3>
-        <p>产品档案与事实库集中管理：已确认、待核实、过期信息分开存放，写文案、分镜时只引用确认过的事实。</p>
-      </div>
-      <div class="feat reveal">
+        <div class="feat-tx"><h3>产品知识中心</h3>
+        <p>产品档案与事实库集中管理：已确认、待核实、过期信息分开存放，写文案、分镜时只引用确认过的事实。</p></div>
+      </div><div class="feat-row reveal">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.8.6 1.5 1.4 1.5 2.1h4c0-.7.7-1.5 1.5-2.1A6 6 0 0 0 12 3z"/><circle cx="18.5" cy="5.5" r="1.4" fill="#C62828" stroke="none"/></svg></div>
-        <h3>内容策划</h3>
-        <p>从营销目标出发生成创意方向，并做可行性评估：条件不够的点子会如实提示，不硬凑方案。</p>
-      </div>
-      <div class="feat reveal">
+        <div class="feat-tx"><h3>内容策划</h3>
+        <p>从营销目标出发生成创意方向，并做可行性评估：条件不够的点子会如实提示，不硬凑方案。</p></div>
+      </div><div class="feat-row reveal">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="11" rx="2"/><path d="M3 9l2-4 3 2 3-2 3 2 3-2 2 4"/><circle cx="12" cy="14.5" r="2.4"/><circle cx="12" cy="14.5" r=".6" fill="#C62828" stroke="none"/></svg></div>
-        <h3>分镜与拉呱版改写</h3>
-        <p>可视化分镜逐镜编辑；口播一键改成拉呱版口语，只用已确认事实改写，不编造卖点，可撤销、可对比。</p>
-      </div>
-      <div class="feat reveal">
+        <div class="feat-tx"><h3>分镜与拉呱版改写</h3>
+        <p>可视化分镜逐镜编辑；口播一键改成拉呱版口语，只用已确认事实改写，不编造卖点，可撤销、可对比。</p></div>
+      </div><div class="feat-row reveal">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/><circle cx="18" cy="17.5" r="1.4" fill="#C62828" stroke="none"/></svg></div>
-        <h3>文案优化与多平台适配</h3>
-        <p>同一份文案多轮打磨、版本可追溯；一键生成抖音、小红书、视频号、快手四个平台的独立适配版本。</p>
-      </div>
-      <div class="feat reveal">
+        <div class="feat-tx"><h3>文案优化与多平台适配</h3>
+        <p>同一份文案多轮打磨、版本可追溯；一键生成抖音、小红书、视频号、快手四个平台的独立适配版本。</p></div>
+      </div><div class="feat-row reveal">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4" stroke="#C62828"/></svg></div>
-        <h3>发布中心与效果复盘</h3>
-        <p>发布前逐项检查风险与缺失信息，发布记录可查；发布后回填真实数据，AI 辅助复盘只给观察与推测、不下断言。</p>
-      </div>
-      <div class="feat reveal">
+        <div class="feat-tx"><h3>发布中心与效果复盘</h3>
+        <p>发布前逐项检查风险与缺失信息，发布记录可查；发布后回填真实数据，AI 辅助复盘只给观察与推测、不下断言。</p></div>
+      </div><div class="feat-row reveal">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="7" width="13" height="11" rx="2.5"/><path d="M15.5 10.5l6-3v9l-6-3z"/><circle cx="9" cy="12.5" r="2.6"/><circle cx="9" cy="12.5" r=".7" fill="#C62828" stroke="none"/></svg></div>
-        <h3>拍摄执行与交付</h3>
-        <p>店播场控脚本、拍摄清单逐项验收；七项交付检查打包导出脚本、字幕与清单；素材可跨项目引用复用。</p>
-      </div>
-    </div>
+        <div class="feat-tx"><h3>拍摄执行与交付</h3>
+        <p>店播场控脚本、拍摄清单逐项验收；七项交付检查打包导出脚本、字幕与清单；素材可跨项目引用复用。</p></div>
+      </div></div>
   </div>
 </section>
 
@@ -358,7 +355,7 @@
 <section class="sec" id="cases">
   <div class="wrap">
     <div class="kicker reveal">产品案例</div>
-    <h2 class="reveal">一方水土，<span class="u">一种拍法</span></h2>
+    <h2 class="reveal">一方水土，一种拍法</h2>
     <p class="sec-desc reveal">从烟台苹果的晶亮、章丘大葱的挺拔，到德州扒鸡的油润色泽，为不同产品寻找更贴切的镜头语言。</p>
     <div class="case-grid">
       <a class="case reveal" href="/login">
@@ -403,7 +400,7 @@
 <section class="sec" id="flow">
   <div class="wrap">
     <div class="kicker reveal">创作流程</div>
-    <h2 class="reveal">八个环节，让创意走进<span class="u">拍摄现场</span></h2>
+    <h2 class="reveal">八个环节，让创意走进拍摄现场</h2>
     <p class="sec-desc reveal">从资料整理到分镜、拍摄清单与交付复盘，每一步都有明确产出，也保留调整空间。</p>
     <div class="flow">
       <div class="flow-line" aria-hidden="true"><i id="flowFill"></i></div>
@@ -425,7 +422,7 @@
 <section class="sec" id="culture">
   <div class="wrap">
     <div class="kicker reveal">地域文化 × 产品表达</div>
-    <h2 class="reveal">让齐鲁气质，<span class="u">自然进入画面</span></h2>
+    <h2 class="reveal">让齐鲁气质，自然进入画面</h2>
     <p class="sec-desc reveal">地域元素不是贴花。让山水、田野与传统纹样克制出现，把视觉留给产品，把故事留给风土。</p>
     <div class="cul-grid">
       <div class="cul-list">
@@ -472,23 +469,41 @@
 <section class="sec" id="demo">
   <div class="wrap">
     <div class="kicker reveal">功能展示</div>
-    <h2 class="reveal">从创意到交付，<span class="u">看得到的工作台</span></h2>
+    <h2 class="reveal">从创意到交付，看得到的工作台</h2>
     <p class="sec-desc reveal">以下为工作台的实际界面：产品资料、创意生成、交付管理。登录后即可使用。</p>
-    <div class="demo-grid">
-      <div class="demo reveal">
-        <div class="bar"><i></i><i></i><i></i><span>创意策划</span></div>
-        <img src="/static/assets/landing/demo/flow-2-workbench.png" alt="AI 创意策划真实界面" loading="lazy" decoding="async">
-        <div class="tx"><h3>AI 创意策划</h3><p>输入产品信息，一次生成多条短视频创意方向，附带风险提示。</p></div>
+    <div class="demo-alt">
+      <div class="demo-row reveal">
+        <div class="demo-shot">
+          <div class="bar"><i></i><i></i><i></i><span>创意策划</span></div>
+          <img src="/static/assets/landing/demo/flow-2-workbench.png" alt="AI 创意策划真实界面" loading="lazy" decoding="async">
+        </div>
+        <div class="demo-tx">
+          <span class="k">功能展示</span>
+          <h3>AI 创意策划</h3>
+          <p>输入产品信息，一次生成多条短视频创意方向，附带风险提示。</p>
+        </div>
       </div>
-      <div class="demo reveal">
-        <div class="bar"><i></i><i></i><i></i><span>产品资料</span></div>
-        <img src="/static/assets/landing/demo/flow-3-facts.png" alt="产品资料与事实库真实界面" loading="lazy" decoding="async">
-        <div class="tx"><h3>产品资料与事实库</h3><p>产品资料结构化保存，关键事实标注状态并保留追溯线索，让创意有所依据。</p></div>
+      <div class="demo-row flip reveal">
+        <div class="demo-shot">
+          <div class="bar"><i></i><i></i><i></i><span>产品资料</span></div>
+          <img src="/static/assets/landing/demo/flow-3-facts.png" alt="产品资料与事实库真实界面" loading="lazy" decoding="async">
+        </div>
+        <div class="demo-tx">
+          <span class="k">功能展示</span>
+          <h3>产品资料与事实库</h3>
+          <p>产品资料结构化保存，关键事实标注状态并保留追溯线索，让创意有所依据。</p>
+        </div>
       </div>
-      <div class="demo reveal">
-        <div class="bar"><i></i><i></i><i></i><span>交付中心</span></div>
-        <img src="/static/assets/landing/demo/flow-6-delivery.png" alt="交付中心真实界面" loading="lazy" decoding="async">
-        <div class="tx"><h3>交付中心</h3><p>脚本、字幕、清单打包导出，七项交付检查，发布前最后把关。</p></div>
+      <div class="demo-row reveal">
+        <div class="demo-shot">
+          <div class="bar"><i></i><i></i><i></i><span>交付中心</span></div>
+          <img src="/static/assets/landing/demo/flow-6-delivery.png" alt="交付中心真实界面" loading="lazy" decoding="async">
+        </div>
+        <div class="demo-tx">
+          <span class="k">功能展示</span>
+          <h3>交付中心</h3>
+          <p>脚本、字幕、清单打包导出，七项交付检查，发布前最后把关。</p>
+        </div>
       </div>
     </div>
     <p class="demo-note reveal">页面截图来自本地开发环境，实际可用功能以当前部署版本为准。</p>

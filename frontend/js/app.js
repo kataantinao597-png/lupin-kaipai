@@ -76,7 +76,7 @@ function modalInput(opts) {
   return new Promise((resolve) => {
     const m = _openUiModal(`
       <h3>${esc(title)}</h3>
-      ${body ? `<div style="font-size:13px;color:var(--ink2);margin-bottom:10px">${esc(body)}</div>` : ""}
+      ${body ? `<div style="font-size:13.5px;color:var(--ink2);margin-bottom:10px">${esc(body)}</div>` : ""}
       <div>${field}</div>
       <div class="err-text" id="ui_modal_err" style="min-height:20px;margin-top:4px"></div>
       <div style="display:flex;gap:10px;justify-content:flex-end">
@@ -255,7 +255,8 @@ function go(v) {
 window.go = go;
 
 function onEnter(v) {
-  if (v === "v1") renderWorkbench();
+  if (v === "v0") renderOverview();
+  else if (v === "v1") renderWorkbench();
   else if (v === "v2") { fillProductForm(); loadProducts(); } // V3.0 B-3：先加载产品档案，加载完再按筛选加载事实
   else if (v === "v3") { renderStepper(); renderIdeas(); renderShots(); updateRiskDirtyBadge(); ensureGenProductSelect(); renderPlanSection(); } // V2.1：进入分镜视图刷新标脏徽章；V3.0 B-4：v3 产品选择器；V3.0 C：内容策划面板
   else if (v === "v4") { renderPoster(); }
@@ -450,6 +451,56 @@ function nextViewFor(d) {
   return "v5";
 }
 
+/* ---------- v0 项目总览（I-8：首页由营销复刻改仪表盘，与 v1 工作台分工） ---------- */
+async function renderOverview() {
+  const host = $("v0_overview");
+  if (!host) return;
+  if (!loggedIn() || !S.org) { host.innerHTML = ""; return; }
+  try { await loadWorks(); } catch (e) { /* 总览加载失败不阻断首页 */ }
+  const all = (S.works || []).slice();
+  const active = all.filter((w) => (w.status || "draft") !== "archived");
+  // 待办统计：镜头待验收（shoot_state=shot）+ 风险待确认（risk.confirmed !== true）
+  let pendingShots = 0, pendingRisks = 0;
+  active.forEach((w) => {
+    const d = w.data || {};
+    Object.values(d.shoot_state || {}).forEach((s) => { if (s && s.status === "shot") pendingShots++; });
+    (Array.isArray(d.risk) ? d.risk : []).forEach((f) => { if (f && f.confirmed !== true) pendingRisks++; });
+  });
+  // 事实待确认（组织级待审核数，取不到时不展示该项，避免假数字）
+  let pendingFacts = -1;
+  try {
+    const facts = V1(await ApiClient.get("/api/v1/facts?org_id=" + encodeURIComponent(S.org.id))) || [];
+    pendingFacts = facts.filter((f) => f.status === "pending_review").length;
+  } catch (e) { /* 静默：不展示 */ }
+  const byRecent = (a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || ""));
+  const last = active.slice().sort(byRecent)[0];
+  const lp = last ? workProgress(last.data || {}) : null;
+  const lastName = last ? (((last.data || {}).product || {}).product_name || last.title || "未命名作品") : "";
+  const todo = (n, label, view, color) =>
+    `<button class="ov-todo" data-ov-go="${view}"><b style="color:${color}">${n}</b><span>${label}</span></button>`;
+  host.innerHTML = `<div class="ov-wrap">
+    ${last ? `<div class="card ov-last">
+        <div class="ov-last-tx"><span class="pill amber">继续上次作品</span><h3>${esc(lastName)}</h3>
+        <div class="meta"><span>当前阶段：${esc(lp.stage)}</span><span>${lp.pct}%</span></div>
+        <div class="progress"><i style="width:${lp.pct}%"></i></div></div>
+        <button class="btn primary" data-ov-open="${esc(last.id)}">继续创作 →</button>
+      </div>`
+    : `<div class="card ov-last"><div class="ov-last-tx"><h3>还没有作品</h3><p>进入工作台，点「新建作品」，从一件山东好物开始。</p></div></div>`}
+    <div class="ov-todos">
+      ${todo(pendingShots, "个镜头待验收", "v5", "var(--primary)")}
+      ${todo(pendingRisks, "条风险待确认", "v3", "var(--red)")}
+      ${pendingFacts >= 0 ? todo(pendingFacts, "条事实待确认", "v2", "#A5762A") : ""}
+    </div>
+    ${all.length ? `<div class="card ov-recent"><h3 class="ov-h">最近动态</h3>${all.slice().sort(byRecent).slice(0, 4).map((w) => {
+      const d = w.data || {}; const p = workProgress(d);
+      const nm = ((d.product || {}).product_name) || w.title || "未命名作品";
+      return `<button class="ov-row" data-ov-open="${esc(w.id)}"><span class="ov-row-name">${esc(nm)}</span><span class="pill gray">${esc(p.stage)}</span><span class="ov-row-date">${esc((w.updated_at || "").slice(0, 16).replace("T", " "))}</span></button>`;
+    }).join("")}</div>` : ""}
+  </div>`;
+  host.querySelectorAll("[data-ov-open]").forEach((b) => b.addEventListener("click", () => openWork(b.dataset.ovOpen)));
+  host.querySelectorAll("[data-ov-go]").forEach((b) => b.addEventListener("click", () => go(b.dataset.ovGo)));
+}
+
 /* ---------- v1 工作台 ---------- */
 const COVERS = [
   "linear-gradient(135deg,#C62828,#D4A05A)", "linear-gradient(135deg,#0F5132,#2E7D6B)",
@@ -486,8 +537,10 @@ async function renderWorkbench() {
       const p = workProgress(d);
       const name = (d.product && d.product.product_name) || w.title;
       const done = w.status === "archived";
+      // I-9：封面优先真实图（海报 AI 图 → 素材首图懒加载），无图回退 COVERS 渐变
+      const aiImg = ((d.poster || {}).ai_image || "").trim();
       return `<div class="card work" data-id="${esc(w.id)}" tabindex="0" role="button" aria-label="打开作品 ${esc(name)}">
-        <div class="cover" style="background:${COVERS[i % COVERS.length]}"><span class="pill ${done ? "green" : "amber"}">${done ? "已归档" : "进行中"}</span></div>
+        <div class="cover"${aiImg ? "" : ` data-cover-need="${esc(w.id)}"`} style="background:${COVERS[i % COVERS.length]}">${aiImg ? `<img class="cover-img" alt="" src="${esc(aiImg)}">` : ""}<span class="pill ${done ? "green" : "amber"}">${done ? "已归档" : "进行中"}</span></div>
         <div class="body"><h4>${esc(name)}</h4><div class="date">${esc((w.updated_at || "").slice(0, 16).replace("T", " "))}</div>
         <div class="meta"><span>${esc(p.stage)}</span><span>${p.pct}%</span></div><div class="progress"><i style="width:${p.pct}%"></i></div>
         <div style="display:flex;gap:8px;margin-top:10px">
@@ -506,6 +559,29 @@ async function renderWorkbench() {
     if (archBtn) archBtn.addEventListener("click", (e) => { e.stopPropagation(); archiveWork(id); });
     card.querySelector('[data-act="del"]').addEventListener("click", (e) => { e.stopPropagation(); deleteWork(id); });
   });
+  hydrateWorkCovers(grid);
+}
+
+/* I-9：无海报图的作品封面，用该作品素材库首张图懒加载填充；取不到则保持渐变 */
+async function hydrateWorkCovers(grid) {
+  if (!grid || !S.org) return;
+  const token = (typeof AuthClient === "object" && AuthClient.getAccessToken) ? AuthClient.getAccessToken() : "";
+  const jobs = Array.from(grid.querySelectorAll(".cover[data-cover-need]")).map(async (el) => {
+    const wid = el.dataset.coverNeed;
+    el.removeAttribute("data-cover-need");
+    try {
+      const list = V1(await ApiClient.get(`/api/v1/assets?org_id=${encodeURIComponent(S.org.id)}&work_id=${encodeURIComponent(wid)}`)) || [];
+      const first = list.find((a) => (a.mime || "").startsWith("image/"));
+      if (!first) return;
+      const r = await fetch(`/api/v1/assets/${first.id}/raw`, { headers: { Authorization: "Bearer " + token } });
+      if (!r.ok) return;
+      const url = URL.createObjectURL(await r.blob());
+      const im = document.createElement("img");
+      im.className = "cover-img"; im.alt = ""; im.src = url;
+      el.prepend(im);
+    } catch (e) { /* 保持渐变回退 */ }
+  });
+  await Promise.allSettled(jobs);
 }
 
 /* V2.1：归档作品（后端 PATCH 已支持 status=archived，前端只加入口） */
@@ -784,16 +860,16 @@ async function ensureGenProductSelect() {
   const keep = (S.genProductId && S.products.some((p) => p.id === S.genProductId)) ? S.genProductId : "";
   S.genProductId = keep;
   if (!S.products.length) {
-    host.innerHTML = `<span style="font-size:12px;color:var(--muted)">暂无产品档案（可在「产品资料」页新建），不影响生成。</span>`;
+    host.innerHTML = `<span style="font-size:12.5px;color:var(--muted)">暂无产品档案（可在「产品资料」页新建），不影响生成。</span>`;
     return;
   }
-  host.innerHTML = `<label style="font-size:13px;color:var(--muted)">关联产品档案（可选）
+  host.innerHTML = `<label style="font-size:13.5px;color:var(--muted)">关联产品档案（可选）
       <select id="gen_product_select" class="input sm" style="min-width:210px;margin-left:6px">
         <option value="">不关联（只用表单产品信息）</option>` +
     S.products.map((p) =>
       `<option value="${esc(p.id)}"${p.id === keep ? " selected" : ""}>${esc(p.name)}（${esc(p.code)}）·v${p.version || 1}</option>`).join("") +
     `</select></label>
-    <span style="font-size:12px;color:var(--muted)">关联后自动带入该产品的已确认事实；未确认事实不会被当真</span>`;
+    <span style="font-size:12.5px;color:var(--muted)">关联后自动带入该产品的已确认事实；未确认事实不会被当真</span>`;
   $("gen_product_select").addEventListener("change", (e) => { S.genProductId = e.target.value; });
 }
 
@@ -967,7 +1043,7 @@ function renderIdeas() {
   const tabs = $("ideas_tabs"), cards = $("ideas_cards");
   if (!ideas.length) {
     tabs.style.display = "none";
-    cards.innerHTML = '<p style="font-size:13px;color:var(--muted);grid-column:1/-1">先在「产品资料」页填写产品信息并保存，然后点击「生成创意方案」。AI 生成约需半分钟。</p>';
+    cards.innerHTML = '<p style="font-size:13.5px;color:var(--muted);grid-column:1/-1">先在「产品资料」页填写产品信息并保存，然后点击「生成创意方案」。AI 生成约需半分钟。</p>';
     return;
   }
   tabs.style.display = "";
@@ -1027,26 +1103,26 @@ function initShootCondForm() {
   const c = getShootCond();
   wrap.innerHTML = `
     <details ${c.video_purpose ? "" : "open"}>
-      <summary style="cursor:pointer;font-weight:600;font-size:15px">📋 拍摄条件 <span style="font-size:12px;color:var(--muted);font-weight:400">（生成分镜前确认，决定方案是否可行）</span></summary>
+      <summary style="cursor:pointer;font-weight:600;font-size:14px"><span class="cond-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9.5 4.5a2.5 2.5 0 015 0"/><path d="M9.5 12.5l1.8 1.8 3.2-3.2"/></svg></span>拍摄条件 <span style="font-size:12.5px;color:var(--muted);font-weight:400">（生成分镜前确认，决定方案是否可行）</span></summary>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
-        <label style="font-size:13px">视频用途<br>
+        <label style="font-size:13.5px">视频用途<br>
           <select id="sc_purpose" style="width:100%;margin-top:4px;padding:8px;border-radius:8px;border:1px solid var(--line)">
             ${VIDEO_PURPOSES.map(([v, t]) => `<option value="${v}" ${c.video_purpose === v ? "selected" : ""}>${t}</option>`).join("")}
           </select></label>
-        <label style="font-size:13px">拍摄熟练度<br>
+        <label style="font-size:13.5px">拍摄熟练度<br>
           <select id="sc_skill" style="width:100%;margin-top:4px;padding:8px;border-radius:8px;border:1px solid var(--line)">
             ${SKILL_LEVELS.map(([v, t]) => `<option value="${v}" ${c.skill_level === v ? "selected" : ""}>${t}</option>`).join("")}
           </select></label>
       </div>
-      <div style="margin-top:12px;font-size:13px">可用道具（多选）
+      <div style="margin-top:12px;font-size:13.5px">可用道具（多选）
         <div id="sc_res" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
           ${RESOURCES.map((r) => `<button type="button" data-res="${r}" class="pill ${c.available_resources.includes(r) ? "blue" : "gray"}" style="cursor:pointer;border:1px solid var(--line)">${r}</button>`).join("")}
         </div></div>
-      <label style="display:block;margin-top:12px;font-size:13px">没有的场景（逗号分隔，如：没有果园，没有支架）
+      <label style="display:block;margin-top:12px;font-size:13.5px">没有的场景（逗号分隔，如：没有果园，没有支架）
         <input id="sc_unavail" style="width:100%;margin-top:4px;padding:8px;border-radius:8px;border:1px solid var(--line)" placeholder="例如：没有果园" value="${esc(c.unavailable_scenes)}"></label>
       <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <button class="btn ghost sm" id="btn_check_feas2">检查可行性</button>
-        <span id="sc_feas_result" style="font-size:13px"></span>
+        <span id="sc_feas_result" style="font-size:13.5px"></span>
       </div>
       <div class="err-text" id="sc_err"></div>
     </details>`;
@@ -1212,7 +1288,7 @@ function renderShots() {
     return `<div class="card" style="margin-bottom:12px;padding:14px;${s.locked ? "border:2px solid var(--accent);" : ""}">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <b>镜头 ${s.shot_number || i + 1}</b>
-        ${s.locked ? '<span class="pill blue">🔒 已锁定</span>' : ""}
+        ${s.locked ? '<span class="pill blue"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:3px"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>已锁定</span>' : ""}
         <span style="font-size:12.5px;color:var(--muted)">${esc(s.shot_type || "")} · ${shotDur(s)}</span>
         <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn ghost sm" data-shot="lock" data-i="${i}">${s.locked ? "解锁" : "锁定"}</button>
@@ -1223,9 +1299,9 @@ function renderShots() {
         </span>
       </div>
       ${s.shot_purpose ? `<p style="margin:8px 0;font-size:13.5px"><b>目的：</b>${esc(s.shot_purpose)}</p>` : ""}
-      ${steps ? `<div style="font-size:13px"><b>拍摄步骤：</b><ol style="margin:4px 0;padding-left:20px">${steps}</ol></div>`
-              : (s.shooting_action ? `<p style="font-size:13px"><b>动作：</b>${esc(s.shooting_action)}</p>` : "")}
-      ${acc ? `<div style="font-size:13px"><b>验收标准：</b><ul style="margin:4px 0;padding-left:20px;color:var(--ok)">${acc}</ul></div>` : ""}
+      ${steps ? `<div style="font-size:13.5px"><b>拍摄步骤：</b><ol style="margin:4px 0;padding-left:20px">${steps}</ol></div>`
+              : (s.shooting_action ? `<p style="font-size:13.5px"><b>动作：</b>${esc(s.shooting_action)}</p>` : "")}
+      ${acc ? `<div style="font-size:13.5px"><b>验收标准：</b><ul style="margin:4px 0;padding-left:20px;color:var(--ok)">${acc}</ul></div>` : ""}
       <details style="margin-top:8px;font-size:12.5px;color:var(--muted)">
         <summary style="cursor:pointer">机位 / 运镜 / 失败处理 / 旁白字幕</summary>
         <div style="margin-top:6px;display:grid;gap:6px">
@@ -1365,9 +1441,9 @@ async function runRisk() {
       // V2.0：文案从后端统一接口取，不再硬编码
       try {
         const t = RAW(await ApiClient.get("/api/v2/risk-text"));
-        $("risk_results").innerHTML = `<p style="font-size:13px;color:var(--muted)">${esc(t.no_risk_found_text || "")}</p>`;
+        $("risk_results").innerHTML = `<p style="font-size:13.5px;color:var(--muted)">${esc(t.no_risk_found_text || "")}</p>`;
       } catch (e) {
-        $("risk_results").innerHTML = '<p style="font-size:13px;color:var(--muted)">本脚本未发现需要标注的风险断言，发布前请人工确认待确认事项。本工具不保证广告合规。</p>';
+        $("risk_results").innerHTML = '<p style="font-size:13.5px;color:var(--muted)">本脚本未发现需要标注的风险断言，发布前请人工确认待确认事项。本工具不保证广告合规。</p>';
       }
     }
   } catch (e) {
@@ -1425,7 +1501,7 @@ function renderFeas(d) {
   const counts = {};
   results.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
   $("feas_results").innerHTML =
-    `<p style="font-size:13px;color:var(--muted);margin-bottom:12px">共 ${results.length} 镜头：` +
+    `<p style="font-size:13.5px;color:var(--muted);margin-bottom:12px">共 ${results.length} 镜头：` +
     ["可执行", "建议调整", "不可执行", "需要人工确认"].map((s) => `${s} ${counts[s] || 0}`).join(" · ") + `</p>` +
     `<p style="font-size:12.5px;color:var(--muted)">本检查为拍摄可行性提示，不构成绝对保证；最终以实际拍摄条件为准。</p>` +
     results.map((r) => `
@@ -1433,7 +1509,7 @@ function renderFeas(d) {
       <div style="flex:1"><div><b>镜头 ${r.shot_number}</b> <span class="pill ${r.status === "可执行" ? "green" : r.status === "不可执行" ? "red" : "amber"}">${esc(r.status)}</span>
       <span class="pill gray">${esc(r.source || "")}判断</span></div>
       <div style="font-size:12.5px;color:var(--ink2);margin-top:4px">${esc(r.reason || "")}</div>
-      ${(r.constraints_involved || []).length ? `<div style="font-size:12px;color:var(--muted)">涉及约束：${esc(r.constraints_involved.join("、"))}</div>` : ""}
+      ${(r.constraints_involved || []).length ? `<div style="font-size:12.5px;color:var(--muted)">涉及约束：${esc(r.constraints_involved.join("、"))}</div>` : ""}
       ${r.alternative ? `<div style="font-size:12.5px;margin-top:6px;background:var(--bg);border-radius:8px;padding:10px">
         <b>替代方案：</b>${esc(r.alternative.shooting_method || "")}　${esc(r.alternative.device_usage || "")}　${esc(r.alternative.camera_position || "")}</div>` : ""}
       </div></div>`).join("");
@@ -1598,7 +1674,7 @@ function renderShoot() {
 const sb = S.data.storyboard;
 const list = $("shoot_list");
 if (!sb ||!(sb.shots || []).length) {
-list.innerHTML = '<p style="font-size:13px;color:var(--muted)">暂无分镜，请先在「创意策划」页生成分镜。</p>';
+list.innerHTML = '<p style="font-size:13.5px;color:var(--muted)">暂无分镜，请先在「创意策划」页生成分镜。</p>';
 $("shoot_progress").textContent = "拍摄进度";
 $("shoot_bar").style.width = "0%"; $("shoot_pct").textContent = "0%";
 return;
@@ -1621,14 +1697,14 @@ return `<div class="shot-card" data-k="${k}" data-i="${i}" style="border-bottom:
 <span class="box" style="${cur === "passed" ? "background:var(--ok);" : ""}"></span>
 <span class="t"><b>镜头 ${s.shot_number || i + 1} · ${esc(s.shot_purpose || s.scene_description || "")}</b><br>
 <span style="color:var(--muted);font-size:12.5px">${shotDur(s)} · ${esc((s.shoot_steps || [])[0] || s.shooting_action || "")}</span>
-${acc ? `<ul style="margin:4px 0;padding-left:18px;font-size:12px;color:var(--ok)">✓验收：${acc}</ul>` : ""}
-${accMeta ? `<span class="pill ${accMeta[1]}" style="font-size:11px;margin-top:4px;display:inline-block">验收：${accMeta[0]}</span>` : ""}</span>
+${acc ? `<ul style="margin:4px 0;padding-left:18px;font-size:12.5px;color:var(--ok)">✓验收：${acc}</ul>` : ""}
+${accMeta ? `<span class="pill ${accMeta[1]}" style="font-size:11.5px;margin-top:4px;display:inline-block">验收：${accMeta[0]}</span>` : ""}</span>
 <span class="note pill ${meta[2]}">${meta[1]}</span></div>
 <div class="acc-bar" style="display:flex;gap:8px;align-items:center;padding:0 6px 12px 38px;flex-wrap:wrap">
-<button class="btn ghost sm" data-acc="accepted" style="font-size:12px;padding:5px 12px">验收通过</button>
-<button class="btn ghost sm" data-acc="needs_reshoot" style="font-size:12px;padding:5px 12px">需补拍</button>
-<button class="btn ghost sm" data-acc="pending" style="font-size:12px;padding:5px 12px">待定</button>
-<button class="btn ghost sm" data-asset="1" style="font-size:12px;padding:5px 12px">关联素材（${assetN}）</button>
+<button class="btn ghost sm" data-acc="accepted" style="font-size:12.5px;padding:5px 12px">验收通过</button>
+<button class="btn ghost sm" data-acc="needs_reshoot" style="font-size:12.5px;padding:5px 12px">需补拍</button>
+<button class="btn ghost sm" data-acc="pending" style="font-size:12.5px;padding:5px 12px">待定</button>
+<button class="btn ghost sm" data-asset="1" style="font-size:12.5px;padding:5px 12px">关联素材（${assetN}）</button>
 </div></div>`;
 }).join("");
 list.querySelectorAll(".shot-card").forEach((c) => {
@@ -1783,7 +1859,7 @@ async function showReshootList() {
 if (!S.activeWork) { toast("请先创建作品"); return; }
 ensureReshootModal();
 const body = $("reshoot_body");
-body.innerHTML = '<p style="font-size:13px;color:var(--muted)">加载中…</p>';
+body.innerHTML = '<p style="font-size:13.5px;color:var(--muted)">加载中…</p>';
 $("reshoot_modal").classList.add("show");
 try {
 const d = RAW(await ApiClient.get(`/api/v2/shoot/works/${S.activeWork.id}/reshoot-list`)) || {};
@@ -1796,9 +1872,9 @@ body.innerHTML = '<p style="font-size:14px;color:var(--muted);padding:18px 4px">
 body.innerHTML = items.map((it) => `
 <div style="border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px">
 <b style="font-size:13.5px">镜头 ${esc(it.shot_number)} · ${esc(it.shot_purpose || "")}</b>
-${it.note ? `<p style="font-size:12.5px;margin:6px 0"><span class="pill red" style="font-size:11px">问题</span> ${esc(it.note)}</p>` : ""}
+${it.note ? `<p style="font-size:12.5px;margin:6px 0"><span class="pill red" style="font-size:11.5px">问题</span> ${esc(it.note)}</p>` : ""}
 ${it.reshoot_guide ? `<p style="font-size:12.5px;margin:6px 0;color:var(--ink2)">补拍指引：${esc(it.reshoot_guide)}</p>` : ""}
-${(it.failure_modes || []).length ? `<ul style="font-size:12px;color:var(--muted);margin:6px 0;padding-left:18px">${it.failure_modes.map((f) => `<li>${esc(f.symptom || "")} → ${esc(f.fix || "")}</li>`).join("")}</ul>` : ""}
+${(it.failure_modes || []).length ? `<ul style="font-size:12.5px;color:var(--muted);margin:6px 0;padding-left:18px">${it.failure_modes.map((f) => `<li>${esc(f.symptom || "")} → ${esc(f.fix || "")}</li>`).join("")}</ul>` : ""}
 </div>`).join("");
 }
 } catch (e) {
@@ -1896,7 +1972,7 @@ function renderLivestream() {
     $("live_status").className = "pill gray";
     $("btn_export_live").style.display = "none";
     // 必须清空：切换到一个没有脚本的作品时，否则会残留上一个作品的话术
-    box.innerHTML = '<p style="font-size:13px;color:var(--muted)">选择品类与时长，AI 按"开场留人 → 讲品·互动·逼单循环 → 福袋 → 返场收尾"的真实店播节奏生成全场话术。</p>';
+    box.innerHTML = '<p style="font-size:13.5px;color:var(--muted)">选择品类与时长，AI 按"开场留人 → 讲品·互动·逼单循环 → 福袋 → 返场收尾"的真实店播节奏生成全场话术。</p>';
     return;
   }
   $("live_status").textContent = "已生成";
@@ -1905,7 +1981,7 @@ function renderLivestream() {
   const segs = (sc.segments || []).map((s, i) => `
     <div class="live-seg" data-seg="${i}">
       <span class="live-phase">${esc(s.phase || "")}</span><span class="live-time">${esc(String(s.start_minute ?? ""))}–${esc(String(s.end_minute ?? ""))} 分钟</span>
-      ${s.locked ? `<span class="pill amber" style="font-size:11px">已锁定</span>` : ""}
+      ${s.locked ? `<span class="pill amber" style="font-size:11.5px">已锁定</span>` : ""}
       <span class="live-seg-ops" style="margin-left:auto;display:flex;gap:6px">
         <button class="btn ghost sm" data-op="edit" ${s.locked ? "disabled" : ""}>编辑</button>
         <button class="btn ghost sm" data-op="regen" ${s.locked ? "disabled" : ""}>重生成</button>
@@ -1935,7 +2011,7 @@ function renderLivestream() {
     ${closing ? `<div class="live-block"><h4>转款逼单话术</h4><ul class="live-script">${closing}</ul></div>` : ""}
     ${rescue ? `<div class="live-block"><h4>冷场救场话术</h4><ul class="live-script">${rescue}</ul></div>` : ""}
     ${prep ? `<div class="live-block"><h4>开播前准备</h4><ul class="live-script">${prep}</ul></div>` : ""}
-    ${pc ? `<div class="live-block"><h4>⚠ 待确认清单</h4><ul class="live-script">${pc}</ul><p style="font-size:12px;color:var(--muted)">以上信息脚本中为占位符，开播前请与商家确认后替换</p></div>` : ""}${meta}`;
+    ${pc ? `<div class="live-block"><h4>⚠ 待确认清单</h4><ul class="live-script">${pc}</ul><p style="font-size:12.5px;color:var(--muted)">以上信息脚本中为占位符，开播前请与商家确认后替换</p></div>` : ""}${meta}`;
   box.querySelectorAll(".live-seg").forEach((el) => {
     const i = +el.dataset.seg;
     el.querySelectorAll("[data-op]").forEach((b) => b.addEventListener("click", () => liveSegOp(i, b.dataset.op)));
@@ -1972,9 +2048,9 @@ function liveSegEdit(i) {
   if (!box || box.style.display !== "none") return;
   box.style.display = "";
   box.innerHTML = `
-    <div style="margin-top:8px"><div style="font-size:12px;color:var(--muted);margin-bottom:4px">主播话术（每行一句）</div>
+    <div style="margin-top:8px"><div style="font-size:12.5px;color:var(--muted);margin-bottom:4px">主播话术（每行一句）</div>
     <textarea rows="5" style="width:100%" id="live_edit_script_${i}">${esc((s.script || []).join("\n"))}</textarea></div>
-    <div style="margin-top:8px"><div style="font-size:12px;color:var(--muted);margin-bottom:4px">场控提示（每行一条）</div>
+    <div style="margin-top:8px"><div style="font-size:12.5px;color:var(--muted);margin-bottom:4px">场控提示（每行一条）</div>
     <textarea rows="3" style="width:100%" id="live_edit_tips_${i}">${esc((s.tips || []).join("\n"))}</textarea></div>
     <div style="display:flex;gap:8px;margin-top:8px">
       <button class="btn primary sm" id="live_edit_save_${i}">保存本段</button>
@@ -2276,7 +2352,7 @@ return;
 grid.innerHTML = list.map((a) => {
 const isImg = (a.mime || "").startsWith("image/");
 return `<div class="mat" data-aid="${esc(a.id)}" data-img="${isImg? 1: 0}" title="${esc(a.filename)}"
-style="background:linear-gradient(135deg,#5B6B7A,#A8B8C8);display:grid;place-items:center;color:#fff;font-size:11px;overflow:hidden">
+style="background:linear-gradient(135deg,#5B6B7A,#A8B8C8);display:grid;place-items:center;color:#fff;font-size:11.5px;overflow:hidden">
 ${isImg? `<img alt="" style="width:100%;height:100%;object-fit:cover">`: `<span style="padding:6px">${esc((a.filename || "").slice(0, 12))}</span>`}
 <span class="st pill gray">${esc((a.mime || "").split("/")[0] || "文件")}</span></div>`;
 }).join("");
@@ -2342,7 +2418,7 @@ $("delivery_results").innerHTML =
 <div class="check" data-di="${i}" tabindex="0" role="button" aria-label="确认 ${esc(it.label)}"><span class="box"></span>
 <span class="t"><b>${esc(it.label)}</b><br><span style="color:var(--muted);font-size:12.5px">${esc(it.reason || "")}</span></span>
 <span class="note pill ${pillTone[it.status] || "gray"}">${esc(labels[it.status] || it.status)}</span></div>`).join("") +
-`<p style="font-size:12px;color:var(--muted);margin-top:10px">勾选 = 人工已确认。风险提示仅为依据缺失提醒，本工具不保证广告合规，发布前请自行把关。</p>`;
+`<p style="font-size:12.5px;color:var(--muted);margin-top:10px">勾选 = 人工已确认。风险提示仅为依据缺失提醒，本工具不保证广告合规，发布前请自行把关。</p>`;
 $("delivery_results").querySelectorAll(".check").forEach((c) => { keyActivate(c); c.addEventListener("click", () => c.classList.toggle("done")); });
 } catch (e) {
 errText("delivery_err", e.message || "检查失败");
@@ -2353,15 +2429,15 @@ aiLoadingDone();
 
 async function loadTimeline() {
 const panel = $("timeline_panel");
-if (!S.activeWork) { panel.innerHTML = '<p style="font-size:13px;color:var(--muted)">请先创建作品。</p>'; return;}
+if (!S.activeWork) { panel.innerHTML = '<p style="font-size:13.5px;color:var(--muted)">请先创建作品。</p>'; return;}
 try {
 const t = V1(await ApiClient.get(`/api/v1/works/${S.activeWork.id}/timeline`));
 if (!t ||!(t.shots || []).length) {
-panel.innerHTML = '<p style="font-size:13px;color:var(--muted)">暂无分镜时间轴，请先生成分镜。</p>';
+panel.innerHTML = '<p style="font-size:13.5px;color:var(--muted)">暂无分镜时间轴，请先生成分镜。</p>';
 return;
 }
 panel.innerHTML =
-`<p style="font-size:13px;margin-bottom:8px">目标 ${t.target_duration_seconds}s · 实际 ${Math.round(t.total_duration_seconds)}s · ` +
+`<p style="font-size:13.5px;margin-bottom:8px">目标 ${t.target_duration_seconds}s · 实际 ${Math.round(t.total_duration_seconds)}s · ` +
 `<span class="pill ${t.within_tolerance? "green": "amber"}">${t.within_tolerance? "时长达标": (t.diff_seconds > 0? `超时 ${Math.round(t.diff_seconds)}s`: `不足 ${Math.round(-t.diff_seconds)}s`)}</span></p>` +
 (() => { let c = 0;
 return t.shots.map((s) => {
@@ -2370,7 +2446,7 @@ const st = c; c += d;
 return `<div class="tl-item"><span class="tl-time">${Math.round(st)}s – ${Math.round(c)}s</span><span>镜头 ${s.shot_no} · ${Math.round(d)}s</span></div>`;
 }).join(""); })();
 } catch (e) {
-panel.innerHTML = `<p style="font-size:13px;color:var(--muted)">时间轴加载失败：${esc(e.message || "")}</p>`;
+panel.innerHTML = `<p style="font-size:13.5px;color:var(--muted)">时间轴加载失败：${esc(e.message || "")}</p>`;
 }
 }
 
@@ -2503,7 +2579,7 @@ async function onImportDocFile(e) {
       '<input type="checkbox" data-i="' + i + '" checked style="width:auto;margin-top:4px">' +
       '<span style="flex:1"><span style="font-size:13.5px">' + esc(c.content) + '</span><br>' +
       '<span class="pill gray" style="margin-top:4px;display:inline-block">' + esc(c.category) + '</span>' +
-      '<span style="font-size:11px;color:var(--muted);margin-left:6px">' + (c.source === "ai" ? "AI" : "规则") + '</span></span></label>'
+      '<span style="font-size:11.5px;color:var(--muted);margin-left:6px">' + (c.source === "ai" ? "AI" : "规则") + '</span></span></label>'
     ).join("");
     $("import_modal").classList.add("show");
   } catch (err) { errText("product_err", err.message || "导入失败"); }
@@ -2590,7 +2666,7 @@ async function renderFinalArchive() {
     box.innerHTML = videos.map((v) =>
       '<div class="dl-row" data-aid="' + esc(v.id) + '">' +
       '<span class="dl-ic" style="background:#0F5132">MP4</span>' +
-      '<div style="flex:1;min-width:0"><b style="font-size:13px">' + esc(v.filename) + '</b>' +
+      '<div style="flex:1;min-width:0"><b style="font-size:13.5px">' + esc(v.filename) + '</b>' +
       '<div style="font-size:11.5px;color:var(--muted);white-space:nowrap">' + (v.size / 1048576).toFixed(1) + ' MB · ' + esc((v.created_at || "").slice(0, 10)) + '</div></div>' +
       '<button class="btn ghost sm" data-act="preview">预览</button>' +
       '<button class="btn ghost sm" data-act="dl">下载</button>' +
@@ -2666,7 +2742,7 @@ function renderCasesGrid() {
   $("cases_grid").innerHTML = SAMPLE_CASES.map((c, i) =>
     '<div class="card" style="padding:0;overflow:hidden">' +
     '<img src="' + c.img + '" alt="' + esc(c.name) + '" style="width:100%;aspect-ratio:16/10;object-fit:cover">' +
-    '<div style="padding:14px"><b style="font-size:15px">' + esc(c.name) + '</b>' +
+    '<div style="padding:14px"><b style="font-size:14px">' + esc(c.name) + '</b>' +
     '<p style="font-size:12.5px;color:var(--ink2);margin:8px 0;line-height:1.7">' + esc(c.desc) + '</p>' +
     '<button class="btn primary sm" style="width:100%;justify-content:center" data-case="' + i + '">一键套用</button></div></div>'
   ).join("");
@@ -2985,7 +3061,7 @@ function initCopyOptCss() {
 .row>.btn,.row>button.btn{flex:0 0 auto;white-space:nowrap}
 .row>.fld{flex:1 1 180px;min-width:0}
 .fld{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
-.fld>span{font-size:12px;color:var(--muted)}
+.fld>span{font-size:12.5px;color:var(--muted)}
 .copy-opts{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
 @media(max-width:640px){.copy-opts{grid-template-columns:1fr}}
 .cmp-box{border:1px solid var(--line);border-radius:8px;padding:10px;min-height:80px}
@@ -3122,7 +3198,7 @@ function renderCopyDocList() {
   el.innerHTML = COPY.docs.map((d) => `
     <div class="copy-doc-item ${COPY.doc && COPY.doc.id === d.id ? "active" : ""}" data-id="${d.id}">
       <div><b>${esc(d.title)}</b> <span class="pill">${esc(copyKindLabel(d.kind))}</span></div>
-      <div class="muted" style="font-size:12px">${d.version_count || 0} 个版本${d.current_version_no ? " · 当前 v" + d.current_version_no : ""}</div>
+      <div class="muted" style="font-size:12.5px">${d.version_count || 0} 个版本${d.current_version_no ? " · 当前 v" + d.current_version_no : ""}</div>
       <div class="row" style="gap:6px;margin-top:6px">
         <button class="btn ghost sm" data-act="open">打开</button>
         <button class="btn ghost sm" data-act="del">删除</button>
@@ -3171,7 +3247,7 @@ function renderCopyEditor() {
       <label class="fld" id="copy_custom_wrap" style="display:none"><span>自定义优化要求</span><textarea id="copy_custom" class="input" rows="2"></textarea></label>
       <div class="row" style="gap:8px;margin-top:10px">
         <button class="btn primary" id="copy_gen_btn">生成优化版本</button>
-        <span class="muted" style="font-size:12px">生成结果先存为草稿，你确认后才生效；原文不受影响</span>
+        <span class="muted" style="font-size:12.5px">生成结果先存为草稿，你确认后才生效；原文不受影响</span>
       </div>
     </div>
     <div class="card" style="margin-top:12px"><h3>版本历史（${doc.versions.length}）</h3><div id="copy_versions"></div></div>
@@ -3252,7 +3328,7 @@ function renderCopyVersions() {
     const st = v.structured || {};
     const bodyHtml = st.body
       ? `<div><b>${esc(st.title || "")}</b></div><div>${esc(st.body).replace(/\n/g, "<br>")}</div>
-         <div class="muted" style="font-size:12px">${esc((st.hashtags || []).join(" "))} · ${esc(st.cta || "")}</div>`
+         <div class="muted" style="font-size:12.5px">${esc((st.hashtags || []).join(" "))} · ${esc(st.cta || "")}</div>`
       : `<div>${esc(v.text).replace(/\n/g, "<br>")}</div>`;
     const isDraft = v.status === "draft";
     return `<div class="copy-ver ${isDraft ? "is-draft" : ""}">
@@ -3271,8 +3347,8 @@ function renderCopyVersions() {
           <button class="btn ghost sm" data-a="load" data-id="${v.id}">载入为原文</button>
         </div></div>
       <div class="copy-ver-body">${bodyHtml}</div>
-      ${v.changes_summary ? `<div class="muted" style="font-size:12px;white-space:pre-line">改动说明：\n${esc(v.changes_summary)}</div>` : ""}
-      ${v.risk_status === "checked" && (v.risk_flags || []).length ? `<div class="muted" style="font-size:12px;color:#a16207">风险提醒：${esc(v.risk_flags.map((f) => f.text || f.reason || "").filter(Boolean).join("；"))}</div>` : ""}
+      ${v.changes_summary ? `<div class="muted" style="font-size:12.5px;white-space:pre-line">改动说明：\n${esc(v.changes_summary)}</div>` : ""}
+      ${v.risk_status === "checked" && (v.risk_flags || []).length ? `<div class="muted" style="font-size:12.5px;color:#a16207">风险提醒：${esc(v.risk_flags.map((f) => f.text || f.reason || "").filter(Boolean).join("；"))}</div>` : ""}
       <div class="copy-rw" id="rw_${v.id}" style="display:none"></div>
       <div class="copy-plat" id="plat_${v.id}" style="display:none"></div>
     </div>`;
@@ -3338,7 +3414,7 @@ function showRewritePanel(versionId) {
       <button class="btn primary sm" id="rw_go_${versionId}">只重写该段</button>
       <button class="btn ghost sm" id="rw_x_${versionId}">取消</button>
     </div>
-    <p class="muted" style="font-size:12px">只改所选段落，其他段落原样保留，结果存为新草稿</p>`;
+    <p class="muted" style="font-size:12.5px">只改所选段落，其他段落原样保留，结果存为新草稿</p>`;
   $("rw_x_" + versionId).addEventListener("click", () => { box.style.display = "none"; });
   $("rw_go_" + versionId).addEventListener("click", async () => {
     const idx = parseInt($("rw_sel_" + versionId).value, 10);
@@ -3419,7 +3495,7 @@ async function showPlatformPanel(versionId) {
   box.innerHTML = `
     <div class="card" style="margin-top:10px;background:#fafaf9">
       <h4>平台版本 <span class="muted" style="font-weight:normal">（源自 v${v.version_no}，各平台版本独立保存）</span></h4>
-      <p class="muted" style="font-size:12px">${esc(PLATFORM_DISCLAIMER)}</p>
+      <p class="muted" style="font-size:12.5px">${esc(PLATFORM_DISCLAIMER)}</p>
       <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0">
         <select id="plat_sel_${versionId}" class="input" style="min-width:120px">
           ${PLATFORM_IDS.map((p) => `<option value="${p[0]}">${p[1]}</option>`).join("")}
@@ -3448,7 +3524,7 @@ async function loadPlatformList(versionId) {
         <div class="row" style="justify-content:space-between;align-items:center">
           <div><b>${esc(platName(p.platform))}</b> <span class="pill">修订 ${p.revision_no}</span>
             ${p.review_status === "reviewed" ? '<span class="pill green">已人工审核</span>' : '<span class="pill amber">未审核</span>'}
-            <span class="muted" style="font-size:12px">源 v${p.source_version_no}</span></div>
+            <span class="muted" style="font-size:12.5px">源 v${p.source_version_no}</span></div>
           <div class="row" style="gap:6px;flex-wrap:wrap">
             <button class="btn ghost sm" data-pa="view" data-pid="${p.id}" data-vid="${versionId}">查看</button>
             <button class="btn ghost sm" data-pa="edit" data-pid="${p.id}" data-vid="${versionId}">编辑</button>
@@ -3482,9 +3558,9 @@ function togglePlatformView(pid, items) {
     body.innerHTML = `
       <div><b>${esc(p.title)}</b></div>
       <div style="white-space:pre-line">${esc(p.body)}</div>
-      <div class="muted" style="font-size:12px">${esc((p.hashtags || []).map((t) => "#" + t).join(" "))}</div>
-      <div class="muted" style="font-size:12px">封面：${esc(p.cover_text || "—")} · 置顶：${esc(p.pinned_comment || "—")} · 行动引导：${esc(p.cta || "—")}</div>
-      ${p.changes_summary ? `<div class="muted" style="font-size:12px;white-space:pre-line">调整说明：\n${esc(p.changes_summary)}</div>` : ""}`;
+      <div class="muted" style="font-size:12.5px">${esc((p.hashtags || []).map((t) => "#" + t).join(" "))}</div>
+      <div class="muted" style="font-size:12.5px">封面：${esc(p.cover_text || "—")} · 置顶：${esc(p.pinned_comment || "—")} · 行动引导：${esc(p.cta || "—")}</div>
+      ${p.changes_summary ? `<div class="muted" style="font-size:12.5px;white-space:pre-line">调整说明：\n${esc(p.changes_summary)}</div>` : ""}`;
   } else body.style.display = "none";
 }
 
@@ -3506,7 +3582,7 @@ function showPlatformForm(versionId, useAi, preset) {
         <button class="btn primary sm" id="pf_save_${versionId}">${useAi ? "开始生成" : "保存版本"}</button>
         <button class="btn ghost sm" id="pf_cancel_${versionId}">取消</button>
       </div>
-      ${useAi ? '<p class="muted" style="font-size:12px">AI 只调整表达与结构，不添加新事实主张；结果保存后仍需你人工审核</p>' : ""}
+      ${useAi ? '<p class="muted" style="font-size:12.5px">AI 只调整表达与结构，不添加新事实主张；结果保存后仍需你人工审核</p>' : ""}
     </div>`;
   $("pf_cancel_" + versionId).addEventListener("click", () => { form.innerHTML = ""; });
   $("pf_save_" + versionId).addEventListener("click", () => genPlatformVersion(versionId, useAi));
@@ -3640,14 +3716,14 @@ function initPlanSection() {
 function renderPlanSection() {
   const host = $("plan_panel");
   if (!host) return;
-  if (!S.org) { host.innerHTML = "<h3>内容策划</h3><p style='font-size:13px;color:var(--muted)'>请先登录并选择组织</p>"; return; }
+  if (!S.org) { host.innerHTML = "<h3>内容策划</h3><p style='font-size:13.5px;color:var(--muted)'>请先登录并选择组织</p>"; return; }
   const t = PLAN.task || {};
   const goal = t.content_goal || PLAN._goal || "brand";
   const prods = S.products || [];
   const pid = t.product_id || "";
   host.innerHTML = `
     <h3>内容策划 <span class="pill gray">${PLAN.taskId ? "任务：" + esc(t.title || "") : "从营销目标到创意方向"}</span></h3>
-    <p style="font-size:12px;color:var(--muted);margin:6px 0 12px">先定目标、受众和实拍条件 → 生成 3-5 个候选创意 → 选中后关联拍摄项目，继续走分镜/实拍流程（不重复生成执行单）</p>
+    <p style="font-size:12.5px;color:var(--muted);margin:6px 0 12px">先定目标、受众和实拍条件 → 生成 3-5 个候选创意 → 选中后关联拍摄项目，继续走分镜/实拍流程（不重复生成执行单）</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
       ${PLAN_GOALS.map((g) => `<button class="pill ${g[0] === goal ? "blue" : ""}" data-plan-goal="${g[0]}" style="cursor:pointer">${g[1]}</button>`).join("")}
     </div>
@@ -3809,22 +3885,22 @@ function renderPlanAfter() {
   if (!host) return;
   if (PLAN.selectedIndex == null) { host.innerHTML = ""; return; }
   const f = PLAN.feas;
-  let feasHtml = "<p style='font-size:12px;color:var(--muted)'>正在检查实拍可行性…</p>";
+  let feasHtml = "<p style='font-size:12.5px;color:var(--muted)'>正在检查实拍可行性…</p>";
   if (f) {
     if (f.status === "error") {
-      feasHtml = `<p style="font-size:12px;color:var(--danger)">可行性检查失败：${esc(f.message || "")}</p>`;
+      feasHtml = `<p style="font-size:12.5px;color:var(--danger)">可行性检查失败：${esc(f.message || "")}</p>`;
     } else {
       const pill = f.status === "ready" ? "green" : "amber";
       const label = f.status === "ready" ? "可执行" : (f.status === "need_confirm" ? "需确认" : "建议调整");
       feasHtml = `<div style="margin:8px 0"><span class="pill ${pill}">可行性：${label}</span>
-        <span style="font-size:12px;color:var(--muted)">（纯规则检查，不消耗 AI 配额）</span></div>` +
-        (f.checks || []).map((c) => `<div style="font-size:12px;margin:4px 0">· ${esc(c.item || "")}：${esc(c.message || "")}${c.alternative ? `<br><span style="color:var(--muted)">替代方案：${esc(c.alternative)}</span>` : ""}</div>`).join("");
+        <span style="font-size:12.5px;color:var(--muted)">（纯规则检查，不消耗 AI 配额）</span></div>` +
+        (f.checks || []).map((c) => `<div style="font-size:12.5px;margin:4px 0">· ${esc(c.item || "")}：${esc(c.message || "")}${c.alternative ? `<br><span style="color:var(--muted)">替代方案：${esc(c.alternative)}</span>` : ""}</div>`).join("");
     }
   }
   const works = (S.works || []).filter((w) => w.status !== "archived");
   host.innerHTML = `
     <div class="card" style="padding:12px;background:var(--bg-soft)">
-      <b style="font-size:13px">已选方向 ${PLAN.selectedIndex + 1} · 下一步</b>
+      <b style="font-size:13.5px">已选方向 ${PLAN.selectedIndex + 1} · 下一步</b>
       ${feasHtml}
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
         <select id="plan_work_select" class="input sm" style="min-width:200px">
@@ -3833,7 +3909,7 @@ function renderPlanAfter() {
         </select>
         <button class="btn primary sm" id="plan_link_btn">关联拍摄项目</button>
         <button class="btn ghost sm" id="plan_new_work_btn">新建拍摄项目</button>
-        <span style="font-size:12px;color:var(--muted)">关联后继续走分镜/实拍流程，不重复生成执行单</span>
+        <span style="font-size:12.5px;color:var(--muted)">关联后继续走分镜/实拍流程，不重复生成执行单</span>
       </div>
       <div class="err-text" id="plan_link_err"></div>
     </div>`;
@@ -4392,6 +4468,20 @@ async function doLibSearch(silent) {
   });
 }
 
+/* I-10：素材类型图标（1.8px 描边 SVG，替代 emoji） */
+const LIB_ICONS = {
+  image: '<svg class="lib-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>',
+  video: '<svg class="lib-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="7" width="13" height="11" rx="2.5"/><path d="M15.5 10.5l6-3v9l-6-3z"/></svg>',
+  audio: '<svg class="lib-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v11"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="15" r="2.5"/></svg>',
+  other: '<svg class="lib-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>',
+};
+function libIcon(mime) {
+  if (mime && mime.startsWith("image/")) return LIB_ICONS.image;
+  if (mime && mime.startsWith("video/")) return LIB_ICONS.video;
+  if (mime && mime.startsWith("audio/")) return LIB_ICONS.audio;
+  return LIB_ICONS.other;
+}
+
 function renderLibView() {
   const sec = $("v9");
   if (!sec) return;
@@ -4403,8 +4493,8 @@ function renderLibView() {
     `<option value="${m}"${LIB.mime === m ? " selected" : ""}>${m === "" ? "全部类型" : libMimeLabel(m)}</option>`).join("");
   const cards = LIB.items.map((a) => `
     <div class="card lib-card" data-id="${esc(a.id)}">
-      ${a.mime && a.mime.startsWith("image/") ? `<div class="lib-thumb" data-aid="${esc(a.id)}"><span class="lib-ic">🖼</span></div>`
-        : `<div class="lib-thumb lib-ic">${a.mime && a.mime.startsWith("video/") ? "🎬" : a.mime && a.mime.startsWith("audio/") ? "🎵" : "📄"}</div>`}
+      ${a.mime && a.mime.startsWith("image/") ? `<div class="lib-thumb" data-aid="${esc(a.id)}">${LIB_ICONS.image}</div>`
+        : `<div class="lib-thumb">${libIcon(a.mime)}</div>`}
       <div class="lib-body">
         <strong class="lib-name" title="${esc(a.filename)}">${esc(a.filename)}</strong>
         <div class="muted small">${libMimeLabel(a.mime)} · ${libFmtSize(a.size)} · ${esc((a.created_at || "").slice(0, 16).replace("T", " "))}</div>
