@@ -15,18 +15,21 @@ const RAW = (r) => (r ? r.data : null);
 let toastTimer = null;
 
 /* ---------- Phase4 非遗深化：团花线稿（复用 v0 剪纸团花 #pf 的几何路径） ---------- */
-const FLOWER_SVG = `<svg viewBox="0 0 100 100" fill="none" aria-hidden="true"><circle cx="50" cy="50" r="45" stroke="#D4A05A" stroke-width="2.5" stroke-dasharray="7 6"/><g stroke="#C62828" stroke-width="2.5"><ellipse cx="50" cy="25" rx="11" ry="24"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(45 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(90 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(135 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(180 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(225 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(270 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(315 50 50)"/><circle cx="50" cy="50" r="9"/><circle cx="50" cy="50" r="3" fill="#C62828" stroke="none"/></g></svg>`;
+const FLOWER_SVG = `<svg viewBox="0 0 100 100" fill="none" aria-hidden="true"><circle cx="50" cy="50" r="45" stroke="#C29C5F" stroke-width="2.5" stroke-dasharray="7 6"/><g stroke="#C62828" stroke-width="2.5"><ellipse cx="50" cy="25" rx="11" ry="24"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(45 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(90 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(135 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(180 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(225 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(270 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(315 50 50)"/><circle cx="50" cy="50" r="9"/><circle cx="50" cy="50" r="3" fill="#C62828" stroke="none"/></g></svg>`;
+
+/* 落地批点缀（Luna gpt-6-luna 生成、自筛后采用）：空相框 + 两叶芽线稿，素材为空时用它替代团花——语义是「空框待收」 */
+const FRAME_SVG = `<svg viewBox="0 0 120 90" fill="none" aria-hidden="true"><g fill="none" stroke="#2E7D6B" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M24 18 L91 15 L94 67 L27 70 Z"/><path d="M32 25 L84 23"/><path d="M77 66 C77 61 78 56 81 51"/><path d="M79 58 C73 57 71 53 71 50 C76 50 79 53 79 58 Z"/><path d="M80 55 C82 49 86 47 89 48 C88 53 85 56 80 55 Z"/><path d="M11 76 L33 76"/></g></svg>`;
 
 /* 空状态渲染助手：团花线稿 + 引导文字 + 可选 CTA（I-7）；报错态不走这里（保持现有 err 样式）
    action:{label, fn} —— fn 注册进 EMPTY_ACTS，靠全局委托触发（各视图 innerHTML 重渲染后依然有效） */
 const EMPTY_ACTS = [];
-function emptyState(text, hint, compact, action) {
+function emptyState(text, hint, compact, action, art) {
   let actHtml = "";
   if (action && action.label && typeof action.fn === "function") {
     const idx = EMPTY_ACTS.push(action.fn) - 1;
     actHtml = `<div class="empty-act"><button type="button" class="btn primary sm" data-empty-act="${idx}">${esc(action.label)}</button></div>`;
   }
-  return `<div class="empty-state${compact ? " compact" : ""}" role="status">${FLOWER_SVG}<div class="empty-tx"><p class="empty-text">${esc(text)}</p>${hint ? `<p class="empty-hint">${esc(hint)}</p>` : ""}${actHtml}</div></div>`;
+  return `<div class="empty-state${compact ? " compact" : ""}${art ? " has-art" : ""}" role="status">${art || FLOWER_SVG}<div class="empty-tx"><p class="empty-text">${esc(text)}</p>${hint ? `<p class="empty-hint">${esc(hint)}</p>` : ""}${actHtml}</div></div>`;
 }
 document.addEventListener("click", (e) => {
   const b = e.target.closest("[data-empty-act]");
@@ -581,8 +584,8 @@ async function renderOverview() {
 
 /* ---------- v1 工作台 ---------- */
 const COVERS = [
-  "linear-gradient(135deg,#C62828,#D4A05A)", "linear-gradient(135deg,#0F5132,#2E7D6B)",
-  "linear-gradient(135deg,#2E7D6B,#8FC3B0)", "linear-gradient(135deg,#8A5A2B,#D4A05A)",
+  "linear-gradient(135deg,#C62828,#C29C5F)", "linear-gradient(135deg,#0F5132,#2E7D6B)",
+  "linear-gradient(135deg,#2E7D6B,#7FB5A3)", "linear-gradient(135deg,#8A5A2B,#C29C5F)",
 ];
 async function renderWorkbench() {
   if (!S.org) return;
@@ -2446,7 +2449,7 @@ try {
 const list = V1(await ApiClient.get(`/api/v1/assets?org_id=${encodeURIComponent(S.org.id)}&work_id=${encodeURIComponent(S.activeWork.id)}`)) || [];
 $("asset_count").textContent = list.length? `${list.length} 条`: "";
 if (!list.length) {
-grid.innerHTML = '<div style="grid-column:1/-1">' + emptyState("暂无素材", "点下方按钮，上传图片或视频素材。", true, { label: "上传素材", fn: () => { const f = $("file_asset"); if (f) f.click(); } }) + '</div>';
+grid.innerHTML = '<div style="grid-column:1/-1">' + emptyState("暂无素材", "点下方按钮，上传图片或视频素材。", true, { label: "上传素材", fn: () => { const f = $("file_asset"); if (f) f.click(); } }, FRAME_SVG) + '</div>';
 return;
 }
 grid.innerHTML = list.map((a) => {
@@ -4654,7 +4657,7 @@ function renderLibView() {
       <select id="lib-dest" class="input" style="flex:1 1 240px">${destOpts}</select>
       <span class="muted small" style="flex:none">默认为当前打开的项目</span>
     </div>
-    <div class="lib-grid">${LIB.busy ? '<div class="card" style="padding:18px;text-align:center"><p class="muted">检索中…</p></div>' : (cards || '<div class="card">' + emptyState("暂无素材", "在「拍摄执行」上传的素材会自动归档到这里。", true, { label: "去上传素材", fn: () => go("v5") }) + '</div>')}</div>`;
+    <div class="lib-grid">${LIB.busy ? '<div class="card" style="padding:18px;text-align:center"><p class="muted">检索中…</p></div>' : (cards || '<div class="card">' + emptyState("暂无素材", "在「拍摄执行」上传的素材会自动归档到这里。", true, { label: "去上传素材", fn: () => go("v5") }, FRAME_SVG) + '</div>')}</div>`;
   $("lib-q").addEventListener("input", (e) => { LIB.q = e.target.value; });
   $("lib-q").addEventListener("keydown", (e) => { if (e.key === "Enter") doLibSearch(); });
   $("lib-mime").addEventListener("change", (e) => { LIB.mime = e.target.value; doLibSearch(); });

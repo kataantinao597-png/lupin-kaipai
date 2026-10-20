@@ -129,6 +129,9 @@
   .feat-row h3{font-size:16px;font-weight:800;margin-bottom:6px;line-height:1.45}
   .feat-row p{font-size:15px;color:var(--lp-muted)}
   .feat-sub{font-size:12.5px;color:var(--lp-forest);font-weight:700;letter-spacing:.04em;margin-top:7px}
+  /* 落地批点缀（Luna 生成、自筛采用）：麦穗章节分隔纹，细线低饱和，仅此一处 */
+  .wheat-div{max-width:1180px;margin:-28px auto;padding:0 28px;text-align:center}
+  .wheat-div svg{width:240px;max-width:60vw;height:auto;opacity:.85}
 
   /* ============ D · 产品案例 ============ */
   #cases{background:rgba(255,255,255,.6);border-top:1px solid var(--lp-hair);border-bottom:1px solid var(--lp-hair)}
@@ -206,7 +209,7 @@
   .cta{position:relative;overflow:hidden;color:#F4EEDC}
   .cta-border{height:64px;background:url("/static/assets/landing/heritage/landscape-border.jpg") repeat-x center/auto 64px;opacity:.95}
   .cta-video-wrap{position:relative;overflow:hidden;min-height:600px;display:flex;align-items:center;
-    background:linear-gradient(135deg,#8E1B1B 0%,#C62828 55%,#D84B35 100%)}
+    background:linear-gradient(135deg,#8E1B1B 0%,#C62828 55%,#9E2B1E 100%)}
   .cta-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
   .cta-shade{position:absolute;inset:0;background:
     linear-gradient(to bottom, rgba(24,10,7,.60) 0%, rgba(24,10,7,.38) 48%, rgba(24,10,7,.66) 100%)}
@@ -216,7 +219,7 @@
     box-shadow:inset 0 0 0 3px rgba(255,255,255,.28),0 12px 30px rgba(0,0,0,.3)}
   .cta-inner h2{font-size:clamp(28px,4vw,46px);font-weight:900;line-height:1.4;max-width:20em;margin:0 auto}
   .cta-inner h2 .hl{color:#F2DDA8}
-  .cta-inner p{color:#D9CFB4;margin-top:16px;font-size:16px}
+  .cta-inner p{color:#E8E0C8;margin-top:16px;font-size:16px}
   .cta-inner .btn-row{margin-top:36px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
   .btn-cta{font-size:18px;padding:17px 46px}
 
@@ -353,6 +356,7 @@
       </div></div>
   </div>
 </section>
+<div class="wheat-div" aria-hidden="true"><svg viewBox="0 0 240 24" fill="none"><g fill="none" stroke="#B3892E" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12 H87 C91 12 92 9 89 7 C87 6 85 7 85 9"/><path d="M153 12 H232 C236 12 237 9 234 7 C232 6 230 7 230 9"/><path d="M120 21 C120 17 120 12 120 4"/><path d="M119 17 C115 16 112 14 111 11 C115 11 118 13 119 17 Z"/><path d="M121 17 C125 16 128 14 129 11 C125 11 122 13 121 17 Z"/><path d="M119 12 C115 11 113 9 112 6 C116 7 118 9 119 12 Z"/><path d="M121 12 C125 11 127 9 128 6 C124 7 122 9 121 12 Z"/><path d="M119 7 C116 6 115 4 114 2 C117 3 119 4 119 7 Z"/><path d="M121 7 C124 6 125 4 126 2 C123 3 121 4 121 7 Z"/></g></svg></div>
 
 <!-- D · 山东特色产品案例 -->
 <section class="sec" id="cases">
