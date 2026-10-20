@@ -1,23 +1,19 @@
-"""阶段 0.3：DOCX 导出优化验证。生成后回读检查：
-表头跨页重复(tblHeader)、行不跨页断开(cantSplit)、内容完整、中文正常。"""
+"""DOCX 导出验证（拍摄执行单）。
+
+契约已随导出器 V2.0 变更：分镜不再是单张大表，而是"五章 + 每镜头独立小节"。
+原阶段 0.3 脚本版断言的是旧表格格式（doc.tables[0]），已于 2026-10-20 同步审阅包时
+改写为 pytest 版并按现行格式断言；产品代码未动。
+"""
 import json
 import os
 import sys
+
+import pytest
 from docx import Document
-from docx.oxml.ns import qn
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
-
-
-def _skip(msg):
-    print(f"[跳过] {msg}")
-    if "pytest" in sys.modules:
-        import pytest
-        pytest.skip(msg, allow_module_level=True)
-    sys.exit(0)
-
 
 EXP = os.path.join(
     os.path.dirname(ROOT), "goals",
@@ -28,60 +24,45 @@ EXP = os.path.join(
 if not os.path.isdir(EXP) and os.path.isdir(
         "/home/hatch/workspace/goals/shandong-ai-model-innovation-contest-registration/experiments/exp-2026-10-16"):
     EXP = "/home/hatch/workspace/goals/shandong-ai-model-innovation-contest-registration/experiments/exp-2026-10-16"
-if not os.path.isdir(EXP):
-    _skip(f"缺少实验数据目录，无法运行导出验证：{EXP}")
 
-from backend.exporter import export_docx
-
-OUT = "/tmp/test_shooting_plan.docx"
-results = []
+pytestmark = pytest.mark.skipif(
+    not os.path.isdir(EXP), reason=f"缺少实验数据目录：{EXP}")
 
 
-def check(name, cond, detail=""):
-    results.append((name, bool(cond), detail))
-    print(f"[{'通过' if cond else '未通过'}] {name} {detail}")
+@pytest.fixture(scope="module")
+def exported(tmp_path_factory):
+    from backend.exporter import export_docx
+    sb = json.load(open(os.path.join(EXP, "sb_caseA_attempt1.json"), encoding="utf-8"))
+    out = str(tmp_path_factory.mktemp("export") / "shooting_plan.docx")
+    export_docx(sb, out)
+    return sb, Document(out)
 
 
-sb = json.load(open(f"{EXP}/sb_caseA_attempt1.json", encoding="utf-8"))
-export_docx(sb, OUT)
+def _headings(doc, level):
+    return [p.text for p in doc.paragraphs if p.style.name == f"Heading {level}"]
 
-doc = Document(OUT)
-check("文档可正常打开", True, f"{len(doc.paragraphs)}段落/{len(doc.tables)}表格")
 
-table = doc.tables[0]
-n_shots = len(sb["shots"])
-check("分镜表行数=表头+镜头数", len(table.rows) == n_shots + 1,
-      f"rows={len(table.rows)}, shots={n_shots}")
-check("表头6列完整", len(table.rows[0].cells) == 6)
+def test_doc_opens_and_has_five_chapters(exported):
+    _, doc = exported
+    h1 = _headings(doc, 1)
+    for chapter in ("一、任务概要", "二、分镜表", "三、素材准备清单",
+                    "四、宣传事实风险提示", "五、用户待确认事项"):
+        assert chapter in h1, f"缺章节：{chapter}"
 
-# tblHeader 检查
-hdr_tcPr = table.rows[0].cells[0]._tc.get_or_add_tcPr()
-has_tblHeader = hdr_tcPr.find(qn("w:tblHeader")) is not None
-check("表头行跨页重复(tblHeader)", has_tblHeader)
 
-# cantSplit 检查（抽查所有行）
-def row_cantsplit(row):
-    trPr = row._tr.find(qn("w:trPr"))
-    if trPr is None:
-        return False
-    el = trPr.find(qn("w:cantSplit"))
-    return el is not None and el.get(qn("w:val"), "true") == "true"
+def test_one_section_per_shot(exported):
+    sb, doc = exported
+    shot_heads = [t for t in _headings(doc, 2) if t.startswith("镜头 ")]
+    assert len(shot_heads) == len(sb["shots"])
 
-all_rows = all(row_cantsplit(r) for r in table.rows)
-check("所有行不跨页断开(cantSplit)", all_rows)
 
-# 内容完整性
-full = "\n".join(p.text for p in doc.paragraphs)
-check("含产品信息", sb["product_summary"][:8] in full)
-check("含创意方向", sb["creative_direction"][:6] in full)
-check("含素材清单", all(m[:6] in full for m in sb["materials_checklist"][:3]))
-check("含风险提示", any(r["text"][:6] in full for r in sb["risk_flags"]))
-check("含待确认事项", all(c[:6] in full for c in sb["pending_confirmations"][:2]))
-check("中文标题正常", "短视频拍摄执行单" in full)
-check("总时长行存在", "总拍摄时长" in full)
-
-print("\n==== 汇总 ====")
-failed = [n for n, ok, _ in results if not ok]
-print(f"共 {len(results)} 项，通过 {len(results)-len(failed)} 项")
-if __name__ == "__main__":
-    sys.exit(1 if failed else 0)
+def test_content_completeness(exported):
+    sb, doc = exported
+    full = "\n".join(p.text for p in doc.paragraphs)
+    assert sb["product_summary"][:8] in full
+    assert sb["creative_direction"][:6] in full
+    assert all(m[:6] in full for m in sb["materials_checklist"][:3])
+    assert any(r["text"][:6] in full for r in sb["risk_flags"])
+    assert all(c[:6] in full for c in sb["pending_confirmations"][:2])
+    assert "短视频拍摄执行单" in full
+    assert "成片目标时长" in full
