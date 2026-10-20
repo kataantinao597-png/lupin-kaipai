@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="theme-color" content="#0F5132">
+<meta name="theme-color" content="#C62828">
 <title>鲁品开拍｜把山东好物，拍成值得记住的故事</title>
 <meta name="description" content="面向山东特色农产品的 AI 营销与短视频创作工作台。从产品资料、创意策划到分镜脚本、拍摄清单与成果交付，让创意更清晰地落到拍摄现场。">
 <link rel="canonical" href="https://lupin-kaipai.app.workbuddy.host/">
@@ -21,15 +21,15 @@
 <meta name="twitter:image" content="https://lupin-kaipai.app.workbuddy.host/static/assets/landing/hero/hero-poster-brand.webp">
 <style>
   :root{
-    --lp-forest:#0F5132;
-    --lp-paper:#F8F4EA;
+    --lp-forest:#3E6B4F;
+    --lp-paper:#FAFAF7;
     --lp-vermilion:#C62828;
-    --lp-wheat:#D4A05A;
-    --lp-teal:#2E7D6B;
-    --lp-ink:#252820;
-    --lp-muted:#5B5F52;
-    --lp-card:#FFFDF6;
-    --lp-hair:#E4DCC6;
+    --lp-wheat:#B3892E;
+    --lp-teal:#3E6B4F;
+    --lp-ink:#25231E;
+    --lp-muted:#5B584E;
+    --lp-card:#FFFFFF;
+    --lp-hair:#E6E2D6;
     --font:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
   }
   *{margin:0;padding:0;box-sizing:border-box}
@@ -38,7 +38,7 @@
     background-color:var(--lp-paper);
     background-image:url("/static/assets/landing/textures/cream-paper-soft.jpg");
     background-size:520px auto;background-blend-mode:multiply}
-  body::before{content:"";position:fixed;inset:0;background:rgba(248,244,234,.80);pointer-events:none;z-index:0}
+  body::before{content:"";position:fixed;inset:0;background:rgba(250,250,247,.85);pointer-events:none;z-index:0}
   body>*{position:relative;z-index:1}
   img{max-width:100%;display:block}
   a{color:inherit}
@@ -48,8 +48,8 @@
 
   /* ============ A · 顶部导航 ============ */
   .nav{position:fixed;top:0;left:0;right:0;z-index:60;transition:background .25s ease,box-shadow .25s ease;
-    background:rgba(248,244,234,.72);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
-  .nav.scrolled{background:rgba(248,244,234,.94);box-shadow:0 6px 24px rgba(37,40,32,.10)}
+    background:rgba(250,250,247,.75);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+  .nav.scrolled{background:rgba(250,250,247,.95);box-shadow:0 6px 24px rgba(37,35,30,.10)}
   .nav-inner{max-width:1180px;margin:0 auto;padding:0 28px;height:68px;display:flex;align-items:center;gap:30px}
   .brand{display:flex;align-items:center;gap:11px;text-decoration:none;font-weight:800;font-size:18px;letter-spacing:.06em;margin-right:auto}
   .seal-logo{width:36px;height:36px;flex:none;background:var(--lp-vermilion);color:#fff;border-radius:7px;
@@ -64,25 +64,25 @@
   .btn:hover{transform:translateY(-1px)}
   .btn:active{transform:translateY(0)}
   .btn:focus-visible{outline:3px solid var(--lp-wheat);outline-offset:2px}
-  .btn-forest{background:var(--lp-forest);color:#fff}
-  .btn-forest:hover{background:#0C4229;box-shadow:0 8px 20px rgba(15,81,50,.28)}
+  .btn-forest{background:var(--lp-vermilion);color:#fff}
+  .btn-forest:hover{background:#A31F1F;box-shadow:0 8px 20px rgba(198,40,40,.30)}
   .btn-nav{font-size:14.5px;padding:10px 24px}
   .burger{display:none;background:none;border:none;cursor:pointer;padding:8px;margin-left:auto}
   .burger span{display:block;width:24px;height:2.5px;background:var(--lp-ink);border-radius:2px;margin:5px 0;transition:transform .2s,opacity .2s}
 
   /* ============ B · Hero ============ */
-  .hero{position:relative;min-height:96svh;display:flex;align-items:center;overflow:hidden;background:#0E2E1E}
+  .hero{position:relative;min-height:96svh;display:flex;align-items:center;overflow:hidden;background:#221310}
   .hero-media{position:absolute;inset:0}
   .hero-media .hero-poster,.hero-media .hero-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 38%}
   .hero-media.noimg{display:none}
-  .hero-fallback{position:absolute;inset:0;background:linear-gradient(135deg,#0F5132 0%,#1B6B45 60%,#2E7D6B 100%);display:none}
+  .hero-fallback{position:absolute;inset:0;background:linear-gradient(135deg,#221310 0%,#5A1D16 58%,#8E1B1B 100%);display:none}
   .hero.noimg .hero-fallback{display:block}
   .hero-shade{position:absolute;inset:0;background:
-    linear-gradient(to right, rgba(10,32,20,.78) 0%, rgba(10,32,20,.52) 42%, rgba(10,32,20,.08) 75%),
-    linear-gradient(to top, rgba(10,32,20,.55) 0%, transparent 34%)}
-  .hero-inner{position:relative;z-index:2;width:100%;max-width:1180px;margin:0 auto;padding:120px 28px 90px;color:#FBF8EE}
+    linear-gradient(to right, rgba(24,10,7,.80) 0%, rgba(24,10,7,.52) 42%, rgba(24,10,7,.08) 75%),
+    linear-gradient(to top, rgba(24,10,7,.55) 0%, transparent 34%)}
+  .hero-inner{position:relative;z-index:2;width:100%;max-width:1180px;margin:0 auto;padding:120px 28px 90px;color:#FBF6EC}
   .hero-badge{display:inline-flex;align-items:center;gap:9px;font-size:13.5px;letter-spacing:.14em;color:#F2DDA8;
-    border:1px solid rgba(212,160,90,.6);border-radius:999px;padding:8px 18px;margin-bottom:26px;font-weight:600}
+    border:1px solid rgba(179,137,46,.65);border-radius:999px;padding:8px 18px;margin-bottom:26px;font-weight:600}
   .hero-badge i{width:7px;height:7px;border-radius:50%;background:var(--lp-wheat);font-style:normal}
   .hero h1{font-size:clamp(44px,6.8vw,88px);line-height:1.22;font-weight:900;letter-spacing:.02em;max-width:12em}
   .hero h1 .mark{color:#F2DDA8}
@@ -113,7 +113,7 @@
   .sec h2{font-size:clamp(30px,4vw,46px);font-weight:900;line-height:1.35;letter-spacing:.01em}
   .sec h2 .u{position:relative;white-space:nowrap}
   .sec h2 .u::after{content:"";position:absolute;left:0;right:0;bottom:2px;height:8px;
-    background:linear-gradient(to right,rgba(212,160,90,.55),rgba(212,160,90,.15));z-index:-1;border-radius:3px}
+    background:linear-gradient(to right,rgba(179,137,46,.5),rgba(179,137,46,.14));z-index:-1;border-radius:3px}
   .sec-desc{margin-top:14px;color:var(--lp-muted);font-size:16.5px;max-width:42em}
   .js .reveal{opacity:0;transition:opacity .5s ease}
   .js .reveal.in{opacity:1}
@@ -122,26 +122,26 @@
   .feat-list{margin-top:52px;border-top:1px solid var(--lp-hair)}
   .feat-row{display:flex;gap:24px;align-items:flex-start;padding:26px 10px;
     border-bottom:1px solid var(--lp-hair);transition:background .15s ease}
-  .feat-row:hover{background:rgba(15,81,50,.035)}
-  .feat-row .icon{flex:none;width:54px;height:54px;border-radius:15px;background:rgba(15,81,50,.08);
+  .feat-row:hover{background:rgba(62,107,79,.05)}
+  .feat-row .icon{flex:none;width:54px;height:54px;border-radius:15px;background:rgba(62,107,79,.09);
     display:flex;align-items:center;justify-content:center}
   .feat-row .icon svg{width:29px;height:29px}
   .feat-row h3{font-size:17px;font-weight:800;margin-bottom:6px;line-height:1.45}
   .feat-row p{font-size:14.5px;color:var(--lp-muted)}
 
   /* ============ D · 产品案例 ============ */
-  #cases{background:rgba(255,253,246,.6);border-top:1px solid var(--lp-hair);border-bottom:1px solid var(--lp-hair)}
+  #cases{background:rgba(255,255,255,.6);border-top:1px solid var(--lp-hair);border-bottom:1px solid var(--lp-hair)}
   .case-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:52px}
   .case{background:var(--lp-card);border:1px solid var(--lp-hair);border-radius:18px;overflow:hidden;
     transition:transform .18s ease,box-shadow .18s ease;text-decoration:none;display:block}
-  .case:hover{transform:translateY(-4px);box-shadow:0 16px 36px rgba(37,40,32,.12)}
+  .case:hover{transform:translateY(-4px);box-shadow:0 16px 36px rgba(37,35,30,.12)}
   .case:focus-visible{outline:3px solid var(--lp-wheat);outline-offset:3px}
-  .case .ph{aspect-ratio:16/9.2;overflow:hidden;background:#EDE6D2;position:relative}
+  .case .ph{aspect-ratio:16/9.2;overflow:hidden;background:#F0EBE0;position:relative}
   .case .ph img{width:100%;height:100%;object-fit:cover;transition:transform .5s ease}
   .case:hover .ph img{transform:scale(1.045)}
   .case .tx{padding:26px 26px 28px}
   .case .tx .k{font-size:12.5px;font-weight:800;color:var(--lp-teal);letter-spacing:.22em}
-  .region-tag{display:inline-flex;align-items:center;border:1.5px solid #C62828;color:#B02A20;background:#FBF5E6;
+  .region-tag{display:inline-flex;align-items:center;border:1.5px solid #C62828;color:#A31F1F;background:#FBF3E4;
   border-radius:3px;padding:0 7px;font-size:11.5px;font-weight:700;letter-spacing:.24em;line-height:1.7;white-space:nowrap;margin-left:8px;vertical-align:1px}
   .case h3{font-size:21px;font-weight:800;margin:10px 0 8px}
   .case p{font-size:14.5px;color:var(--lp-muted)}
@@ -149,7 +149,7 @@
   .case .go::after{content:"→";transition:transform .15s}
   .case:hover .go::after{transform:translateX(4px)}
   .disclaimer{margin-top:26px;font-size:13px;color:var(--lp-muted);border:1px dashed var(--lp-hair);
-    border-radius:12px;padding:14px 18px;background:rgba(212,160,90,.07)}
+    border-radius:12px;padding:14px 18px;background:rgba(179,137,46,.07)}
 
   /* ============ E · 创作流程 ============ */
   .flow{margin-top:56px;position:relative}
@@ -163,12 +163,12 @@
     font-size:15px;font-weight:900;color:var(--lp-muted);transition:border-color .3s,background .3s,color .3s;position:relative}
   .fstep.lit{opacity:1}
   .fstep.lit .dot{border-color:var(--lp-forest);color:#fff;background:var(--lp-forest);
-    box-shadow:0 8px 20px rgba(15,81,50,.3)}
+    box-shadow:0 8px 20px rgba(62,107,79,.3)}
   .fstep h3{font-size:16.5px;font-weight:800;margin-bottom:8px}
   .fstep p{font-size:13.5px;color:var(--lp-muted);line-height:1.65}
 
   /* ============ F · 地域文化 × 产品表达 ============ */
-  #culture{background:rgba(15,81,50,.045);border-top:1px solid var(--lp-hair);border-bottom:1px solid var(--lp-hair)}
+  #culture{background:rgba(62,107,79,.045);border-top:1px solid var(--lp-hair);border-bottom:1px solid var(--lp-hair)}
   .cul-grid{display:grid;grid-template-columns:1fr 1fr;gap:56px;margin-top:52px;align-items:start}
   .cul-list{display:grid;gap:18px}
   .cul-item{display:flex;gap:18px;background:var(--lp-card);border:1px solid var(--lp-hair);
@@ -180,20 +180,20 @@
   .cul-item p{font-size:14px;color:var(--lp-muted)}
   .cul-photos{display:grid;grid-template-columns:1fr 1fr;gap:16px}
   .cul-photos figure{border-radius:14px;overflow:hidden;border:1px solid var(--lp-hair);
-    box-shadow:0 10px 26px rgba(37,40,32,.10);position:relative}
+    box-shadow:0 10px 26px rgba(37,35,30,.10);position:relative}
   .cul-photos img{width:100%;height:100%;object-fit:cover;aspect-ratio:4/3.1}
   .cul-photos figcaption{position:absolute;left:0;right:0;bottom:0;padding:28px 14px 12px;color:#fff;
-    font-size:13.5px;font-weight:700;line-height:1.5;background:linear-gradient(to top,rgba(15,30,20,.72),transparent)}
+    font-size:13.5px;font-weight:700;line-height:1.5;background:linear-gradient(to top,rgba(24,20,14,.72),transparent)}
 
   /* ============ G · 功能展示（全宽交错图文） ============ */
   .demo-alt{display:grid;gap:52px;margin-top:56px}
   .demo-row{display:grid;grid-template-columns:1.2fr 1fr;gap:48px;align-items:center}
   .demo-row.flip .demo-shot{order:2}
   .demo-shot{background:var(--lp-card);border:1px solid var(--lp-hair);border-radius:18px;overflow:hidden;
-    box-shadow:0 14px 34px rgba(37,40,32,.08)}
-  .demo-shot .bar{display:flex;gap:7px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--lp-hair);background:rgba(15,81,50,.05)}
+    box-shadow:0 14px 34px rgba(37,35,30,.08)}
+  .demo-shot .bar{display:flex;gap:7px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--lp-hair);background:rgba(62,107,79,.05)}
   .demo-shot .bar i{width:11px;height:11px;border-radius:50%}
-  .demo-shot .bar i:nth-child(1){background:#D4A05A}.demo-shot .bar i:nth-child(2){background:#2E7D6B}.demo-shot .bar i:nth-child(3){background:#C62828}
+  .demo-shot .bar i:nth-child(1){background:#B3892E}.demo-shot .bar i:nth-child(2){background:#3E6B4F}.demo-shot .bar i:nth-child(3){background:#C62828}
   .demo-shot .bar span{margin-left:8px;font-size:12.5px;color:var(--lp-muted)}
   .demo-shot img{width:100%;aspect-ratio:16/10.4;object-fit:cover;object-position:top;background:var(--lp-card)}
   .demo-tx .k{font-size:12.5px;font-weight:800;color:var(--lp-teal);letter-spacing:.22em}
@@ -205,10 +205,10 @@
   .cta{position:relative;overflow:hidden;color:#F4EEDC}
   .cta-border{height:64px;background:url("/static/assets/landing/heritage/landscape-border.jpg") repeat-x center/auto 64px;opacity:.95}
   .cta-video-wrap{position:relative;overflow:hidden;min-height:600px;display:flex;align-items:center;
-    background:linear-gradient(135deg,#0C4229 0%,#0F5132 55%,#14603C 100%)}
+    background:linear-gradient(135deg,#8E1B1B 0%,#C62828 55%,#D84B35 100%)}
   .cta-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
   .cta-shade{position:absolute;inset:0;background:
-    linear-gradient(to bottom, rgba(10,32,20,.60) 0%, rgba(10,32,20,.38) 48%, rgba(10,32,20,.66) 100%)}
+    linear-gradient(to bottom, rgba(24,10,7,.60) 0%, rgba(24,10,7,.38) 48%, rgba(24,10,7,.66) 100%)}
   .cta-inner{position:relative;z-index:2;width:100%;max-width:1180px;margin:0 auto;padding:96px 28px;text-align:center;color:#F4EEDC}
   .cta-inner .seal-big{width:64px;height:64px;margin:0 auto 26px;background:var(--lp-vermilion);color:#fff;border-radius:12px;
     display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:900;transform:rotate(-4deg);
@@ -219,7 +219,7 @@
   .cta-inner .btn-row{margin-top:36px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
   .btn-cta{font-size:17px;padding:17px 46px}
 
-  footer{background:#1E2A22;color:#CFC8B2;padding:56px 0 40px;font-size:14px}
+  footer{background:#23201B;color:#CFC8B4;padding:56px 0 40px;font-size:14px}
   footer .wrap{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:40px}
   footer h3{color:#F4EEDC;font-size:15px;font-weight:800;margin-bottom:16px;letter-spacing:.08em}
   footer p{font-size:13.5px;line-height:1.8}
@@ -236,11 +236,11 @@
   @media (max-width: 960px){
     .burger{display:block}
     .nav-links{position:fixed;top:68px;left:12px;right:12px;background:var(--lp-paper);border:1px solid var(--lp-hair);
-      border-radius:16px;box-shadow:0 18px 44px rgba(37,40,32,.16);flex-direction:column;align-items:stretch;
+      border-radius:16px;box-shadow:0 18px 44px rgba(37,35,30,.16);flex-direction:column;align-items:stretch;
       padding:10px;display:none;gap:0}
     .nav-links.open{display:flex}
     .nav-links a{padding:14px 18px;border-radius:10px;font-size:16px}
-    .nav-links a:hover{background:rgba(15,81,50,.07)}
+    .nav-links a:hover{background:rgba(62,107,79,.07)}
     .nav-links .btn-nav{margin:8px;text-align:center}
     .nav-cta-desktop{display:none}
     .sec{padding:68px 0}
@@ -253,7 +253,7 @@
     .flow-line{display:none}
     .hero{min-height:88svh}
     .hero-shade{background:
-      linear-gradient(to top, rgba(10,32,20,.82) 0%, rgba(10,32,20,.42) 46%, rgba(10,32,20,.12) 78%)}
+      linear-gradient(to top, rgba(24,10,7,.82) 0%, rgba(24,10,7,.42) 46%, rgba(24,10,7,.12) 78%)}
     footer .wrap{grid-template-columns:1fr;gap:28px}
   }
   @media (prefers-reduced-motion: reduce){
@@ -326,27 +326,27 @@
      ============================================================ -->
     <div class="feat-list">
       <div class="feat-row reveal">
-        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6"/><path d="M9 16l2 2 4-4" stroke="#C62828"/></svg></div>
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#3E6B4F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6"/><path d="M9 16l2 2 4-4" stroke="#C62828"/></svg></div>
         <div class="feat-tx"><h3>产品知识中心</h3>
         <p>产品档案与事实库集中管理：已确认、待核实、过期信息分开存放，写文案、分镜时只引用确认过的事实。</p></div>
       </div><div class="feat-row reveal">
-        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.8.6 1.5 1.4 1.5 2.1h4c0-.7.7-1.5 1.5-2.1A6 6 0 0 0 12 3z"/><circle cx="18.5" cy="5.5" r="1.4" fill="#C62828" stroke="none"/></svg></div>
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#3E6B4F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.8.6 1.5 1.4 1.5 2.1h4c0-.7.7-1.5 1.5-2.1A6 6 0 0 0 12 3z"/><circle cx="18.5" cy="5.5" r="1.4" fill="#C62828" stroke="none"/></svg></div>
         <div class="feat-tx"><h3>内容策划</h3>
         <p>从营销目标出发生成创意方向，并做可行性评估：条件不够的点子会如实提示，不硬凑方案。</p></div>
       </div><div class="feat-row reveal">
-        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="11" rx="2"/><path d="M3 9l2-4 3 2 3-2 3 2 3-2 2 4"/><circle cx="12" cy="14.5" r="2.4"/><circle cx="12" cy="14.5" r=".6" fill="#C62828" stroke="none"/></svg></div>
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#3E6B4F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="11" rx="2"/><path d="M3 9l2-4 3 2 3-2 3 2 3-2 2 4"/><circle cx="12" cy="14.5" r="2.4"/><circle cx="12" cy="14.5" r=".6" fill="#C62828" stroke="none"/></svg></div>
         <div class="feat-tx"><h3>分镜与拉呱版改写</h3>
         <p>可视化分镜逐镜编辑；口播一键改成拉呱版口语，只用已确认事实改写，不编造卖点，可撤销、可对比。</p></div>
       </div><div class="feat-row reveal">
-        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/><circle cx="18" cy="17.5" r="1.4" fill="#C62828" stroke="none"/></svg></div>
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#3E6B4F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/><circle cx="18" cy="17.5" r="1.4" fill="#C62828" stroke="none"/></svg></div>
         <div class="feat-tx"><h3>文案优化与多平台适配</h3>
         <p>同一份文案多轮打磨、版本可追溯；一键生成抖音、小红书、视频号、快手四个平台的独立适配版本。</p></div>
       </div><div class="feat-row reveal">
-        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4" stroke="#C62828"/></svg></div>
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#3E6B4F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4" stroke="#C62828"/></svg></div>
         <div class="feat-tx"><h3>发布中心与效果复盘</h3>
         <p>发布前逐项检查风险与缺失信息，发布记录可查；发布后回填真实数据，AI 辅助复盘只给观察与推测、不下断言。</p></div>
       </div><div class="feat-row reveal">
-        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#0F5132" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="7" width="13" height="11" rx="2.5"/><path d="M15.5 10.5l6-3v9l-6-3z"/><circle cx="9" cy="12.5" r="2.6"/><circle cx="9" cy="12.5" r=".7" fill="#C62828" stroke="none"/></svg></div>
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#3E6B4F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="7" width="13" height="11" rx="2.5"/><path d="M15.5 10.5l6-3v9l-6-3z"/><circle cx="9" cy="12.5" r="2.6"/><circle cx="9" cy="12.5" r=".7" fill="#C62828" stroke="none"/></svg></div>
         <div class="feat-tx"><h3>拍摄执行与交付</h3>
         <p>店播场控脚本、拍摄清单逐项验收；七项交付检查打包导出脚本、字幕与清单；素材可跨项目引用复用。</p></div>
       </div></div>

@@ -7,11 +7,12 @@
 <!-- 注：曾用 Google Fonts (Noto Sans SC)，因国内访问不稳定且违反 CSP，已改用系统字体栈 -->
 <style>
 :root{
-  --bg:#F8F4EA; --card:#FFFDF6; --ink:#252820; --ink2:#5B5F52; --muted:#6E6755;
-  --line:#E4DCC6; --primary:#0F5132; --primary-deep:#0C4229; --primary-soft:#E8F0E9;
-  --green:#2E7D6B; --green-soft:#E4EFE9; --amber:#D4A05A; --amber-soft:#FAF1DE;
-  --red:#C62828; --red-soft:#FBEDEB; --teal:#2E7D6B; --accent:#C62828; --ok:#2E7D6B;
-  --shadow:0 1px 2px rgba(60,50,30,.06),0 10px 30px -14px rgba(60,50,30,.16);
+  --bg:#FAF8F2; --card:#FFFFFF; --ink:#242823; --ink2:#585C52; --muted:#6E7166;
+  --line:#E4E0D2; --primary:#0F5132; --primary-deep:#0C4229; --primary-soft:#E9F1EA;
+  --green:#2E7D6B; --green-soft:#E4EFE9; --amber:#C29C5F; --amber-soft:#F7F1E1;
+  --red:#C62828; --red-soft:#FAEDEA; --teal:#2E7D6B; --accent:#C62828; --ok:#2E7D6B;
+  --danger:#C62828; --amber-deep:#8F641F;
+  --shadow:0 1px 2px rgba(48,50,42,.06),0 10px 30px -14px rgba(48,50,42,.15);
   --r:14px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -21,13 +22,13 @@ body{font-family:system-ui,-apple-system,"PingFang SC","Hiragino Sans GB","Micro
 .sidebar{width:216px;flex:none;background:var(--card);border-right:1px solid var(--line);position:sticky;top:0;height:100vh;
   padding:20px 14px;display:flex;flex-direction:column;gap:2px}
 .brand{display:flex;align-items:center;gap:10px;padding:4px 10px 18px}
-.brand-mark{width:34px;height:34px;border-radius:9px;background:#C62828;color:#fff;display:grid;place-items:center;
+.brand-mark{width:34px;height:34px;border-radius:9px;background:var(--red);color:#fff;display:grid;place-items:center;
   font-weight:900;font-size:16px;transform:rotate(-4deg);box-shadow:inset 0 0 0 2px rgba(255,255,255,.28)}
 .brand b{font-size:16px;letter-spacing:.04em}
 .nav-item{display:flex;align-items:center;gap:11px;width:100%;border:0;background:none;text-align:left;padding:11px 12px;border-radius:10px;
   font-size:13.5px;color:var(--ink2);cursor:pointer;transition:background .18s,color .18s;font-family:inherit}
 .nav-item svg{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8}
-.nav-item:hover{background:#F0EBDB;color:var(--ink)}
+.nav-item:hover{background:#F2EFE4;color:var(--ink)}
 .nav-item.active{background:var(--primary-soft);color:var(--primary-deep);font-weight:700}
 .nav-cap{font-size:11.5px;color:var(--muted);letter-spacing:.2em;padding:14px 12px 6px}
 .side-foot{margin-top:auto;padding:12px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);display:flex;align-items:center;gap:10px}
@@ -61,11 +62,11 @@ body{font-family:system-ui,-apple-system,"PingFang SC","Hiragino Sans GB","Micro
 .btn{display:inline-flex;align-items:center;gap:8px;border:0;border-radius:10px;padding:11px 24px;font-size:14px;cursor:pointer;letter-spacing:.04em;transition:background .2s,box-shadow .2s,transform .2s,color .2s;font-family:inherit;font-weight:500}
 .btn.primary{background:var(--primary);color:#fff;box-shadow:0 10px 24px -12px rgba(15,81,50,.30)}
 .btn.primary:hover{background:var(--primary-deep);transform:translateY(-1px)}
-.btn.dark{background:#252820;color:#fff}
+.btn.dark{background:var(--ink);color:#fff}
 .btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
 .icon-btn:hover{background:var(--primary-soft)}
 .tab:hover{border-color:var(--primary)}
-.btn.dark:hover{background:#3A3E33}
+.btn.dark:hover{background:#383C34}
 .btn:focus-visible,.nav-item:focus-visible,.tab:focus-visible{outline:3px solid var(--amber);outline-offset:2px}
 .btn.ghost{background:#fff;border:1px solid var(--line);color:var(--ink)}
 .btn.ghost:hover{border-color:var(--primary);color:var(--primary)}
@@ -75,7 +76,7 @@ body{font-family:system-ui,-apple-system,"PingFang SC","Hiragino Sans GB","Micro
 .pill.green{background:var(--green-soft);color:#147A56}
 .pill.amber{background:var(--amber-soft);color:#8F5A1A}
 .pill.red{background:var(--red-soft);color:#B03232}
-.pill.gray{background:#F0EBDB;color:var(--ink2)}
+.pill.gray{background:#F2EFE4;color:var(--ink2)}
 .progress{height:6px;border-radius:99px;background:#EDF0F5;overflow:hidden}
 .progress i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--primary),var(--teal))}
 input,textarea,select{font:inherit;font-size:13.5px;padding:10px 13px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);width:100%;transition:border .2s,box-shadow .2s}
@@ -102,15 +103,15 @@ label.f .req{color:var(--red)}
 .hero-inner>*:nth-child(3){animation-delay:.34s}.hero-inner>*:nth-child(4){animation-delay:.48s}
 .hero-deco{position:absolute;pointer-events:none;color:rgba(255,255,255,.16);z-index:0}
 .hero-deco svg{width:100%;height:100%}
-.seal{position:absolute;top:30px;right:38px;width:88px;height:88px;border-radius:14px;background:#C62828;color:#FFF3E2;
+.seal{position:absolute;top:30px;right:38px;width:88px;height:88px;border-radius:14px;background:var(--red);color:#FFF3E2;
 display:grid;place-content:center;text-align:center;font-weight:900;font-size:22px;line-height:1.45;letter-spacing:.14em;
 transform:rotate(-8deg);box-shadow:0 12px 28px -8px rgba(0,0,0,.55),inset 0 0 0 3px rgba(255,243,226,.55);
 animation:sealIn .7s cubic-bezier(.2,.9,.3,1.25) .6s both;z-index:2}
-.meander{height:12px;margin:24px 2px 6px;opacity:.85;
-background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='12' viewBox='0 0 28 12'%3E%3Cpath d='M1 11 V2 H27 V9 H8 V5 H18' fill='none' stroke='%23C62828' stroke-width='1.6'/%3E%3C/svg%3E") repeat-x left center;background-size:28px 12px}
+.meander{height:12px;margin:24px 2px 6px;opacity:.55;
+background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='12' viewBox='0 0 28 12'%3E%3Cpath d='M1 11 V2 H27 V9 H8 V5 H18' fill='none' stroke='%23C29C5F' stroke-width='1.2'/%3E%3C/svg%3E") repeat-x left center;background-size:28px 12px}
 /* ---------- Phase4 非遗深化：回纹页眉/空状态剪纸/印章徽章/落印/骨架屏/签条 ---------- */
-.page-meander{height:9px;margin:10px 2px 20px;opacity:.5;
-background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='12' viewBox='0 0 28 12'%3E%3Cpath d='M1 11 V2 H27 V9 H8 V5 H18' fill='none' stroke='%23C62828' stroke-width='1.6'/%3E%3C/svg%3E") repeat-x left center;background-size:24px 10px}
+.page-meander{height:9px;margin:10px 2px 20px;opacity:.45;
+background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='12' viewBox='0 0 28 12'%3E%3Cpath d='M1 11 V2 H27 V9 H8 V5 H18' fill='none' stroke='%232E7D6B' stroke-width='1.2'/%3E%3C/svg%3E") repeat-x left center;background-size:24px 10px}
 .empty-state{text-align:center;padding:28px 16px;color:var(--muted)}
 .empty-state>svg{width:56px;height:56px;opacity:.55}
 .empty-state .empty-text{font-size:13.5px;margin-top:10px;color:var(--ink2)}
@@ -119,12 +120,12 @@ background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' wid
 .empty-state.compact>svg{width:27px;height:27px;flex:none}
 .empty-state.compact .empty-text{margin-top:0;font-size:13px}
 .empty-state.compact .empty-hint{margin-top:1px;font-size:12px}
-.stamp-badge{display:inline-flex;align-items:center;background:#C62828;color:#FFF3E2;border-radius:4px 5px 4px 6px;
+.stamp-badge{display:inline-flex;align-items:center;background:var(--red);color:#FFF3E2;border-radius:4px 5px 4px 6px;
 padding:3px 8px;font-size:11.5px;font-weight:800;letter-spacing:.16em;line-height:1.5;flex:none;
 box-shadow:inset 0 0 0 1.5px rgba(255,243,226,.5),0 1px 3px rgba(198,40,40,.28);transform:rotate(-2deg)}
 .work .cover .stamp-badge{position:absolute;top:10px;right:10px}
 .fact-row .stamp-badge{margin-left:auto}
-.stamp-pop{position:absolute;top:-9px;right:16px;z-index:6;background:#C62828;color:#FFF3E2;border-radius:5px 6px 5px 7px;
+.stamp-pop{position:absolute;top:-9px;right:16px;z-index:6;background:var(--red);color:#FFF3E2;border-radius:5px 6px 5px 7px;
 padding:4px 10px;font-size:12.5px;font-weight:900;letter-spacing:.22em;pointer-events:none;white-space:nowrap;
 box-shadow:inset 0 0 0 2px rgba(255,243,226,.55),0 8px 18px -6px rgba(198,40,40,.5);animation:sealIn .6s cubic-bezier(.2,.9,.3,1.25) both}
 .stamp-pop.fixed{position:fixed;top:auto;bottom:92px;right:24px;z-index:400}
@@ -209,7 +210,7 @@ transform:translateX(-130%) skewX(-18deg);pointer-events:none}
 .feat h2{font-size:14px;margin-bottom:6px}
 .feat p{font-size:12.5px;color:var(--muted)}
 /* ---------- v1 工作台 ---------- */
-.greet{background:linear-gradient(120deg,#EDF2E9,#F8F4EA);border:1px solid #E4DCC6;border-radius:18px;padding:26px 30px;margin-bottom:22px;position:relative;overflow:hidden}
+.greet{background:linear-gradient(120deg,#EAF1E8,#FAF8F2);border:1px solid var(--line);border-radius:18px;padding:26px 30px;margin-bottom:22px;position:relative;overflow:hidden}
 .greet h2{font-size:22px;font-weight:900;margin-bottom:4px;line-height:1.35}
 .greet p{color:var(--ink2);font-size:13.5px}
 .quick{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px}
@@ -347,7 +348,7 @@ button.qa{font:inherit;text-align:left;color:var(--ink);width:100%}
   body.nav-open{overflow:hidden}
   .side-close{display:grid;place-items:center;position:absolute;top:8px;right:8px;width:44px;height:44px;
     border:0;border-radius:9px;background:transparent;color:var(--muted);font-size:22px;line-height:1;cursor:pointer}
-  .side-close:hover{background:#F0EBDB;color:var(--ink)}
+  .side-close:hover{background:#F2EFE4;color:var(--ink)}
   .view{padding:18px 14px 60px}.hero{padding:40px 26px}.hero h1{font-size:30px}
   .hero-photo{object-position:64% 50%}
   .hero::before{background:linear-gradient(180deg,rgba(7,22,17,.93) 0%,rgba(7,22,17,.72) 52%,rgba(7,22,17,.90) 100%)}
@@ -371,7 +372,7 @@ button.qa{font:inherit;text-align:left;color:var(--ink);width:100%}
 .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 
 /* ===== 真机适配追加 ===== */
-#toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(20px);background:#252820;color:#fff;
+#toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;
 padding:12px 22px;border-radius:12px;font-size:13.5px;opacity:0;pointer-events:none;transition:opacity .3s,transform .3s;z-index:999;max-width:80vw;box-shadow:0 12px 32px -10px rgba(0,0,0,.4)}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 /* 视图首屏骨架屏：数据到达前先给出加载态，避免内容区空白 */
@@ -437,13 +438,13 @@ padding:12px 22px;border-radius:12px;font-size:13.5px;opacity:0;pointer-events:n
 .guide-step b{font-size:13.5px;display:block;margin-bottom:3px}
 .guide-step p{font-size:12.5px;color:var(--ink2);line-height:1.6;margin:0 0 7px}
 .guide-foot{margin-top:12px;border-top:1px dashed var(--line);padding-top:10px}
-#ai_loading{position:fixed;inset:0;background:rgba(10,32,20,.45);backdrop-filter:blur(3px);z-index:998;display:none;place-items:center}
+#ai_loading{position:fixed;inset:0;background:rgba(36,38,32,.45);backdrop-filter:blur(3px);z-index:998;display:none;place-items:center}
 #ai_loading.show{display:grid}
 .load-box{background:#fff;border-radius:18px;padding:34px 44px;text-align:center;box-shadow:0 24px 60px -20px rgba(0,0,0,.4)}
 .spinner{width:44px;height:44px;margin:0 auto 16px;border-radius:50%;border:4px solid var(--line);border-top-color:var(--primary);animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .load-box p{font-size:14px;color:var(--ink)}.load-box span{font-size:12.5px;color:var(--muted)}
-.modal-mask{position:fixed;inset:0;background:rgba(10,32,20,.45);z-index:997;display:none;place-items:center;padding:20px}
+.modal-mask{position:fixed;inset:0;background:rgba(36,38,32,.45);z-index:997;display:none;place-items:center;padding:20px}
 .modal-mask.show{display:grid}
 .modal{background:#fff;border-radius:18px;padding:28px;width:440px;max-width:94vw;box-shadow:0 24px 60px -20px rgba(0,0,0,.4)}
 .modal h3{font-size:16px;font-weight:900;margin-bottom:6px}
@@ -461,7 +462,7 @@ padding:12px 22px;border-radius:12px;font-size:13.5px;opacity:0;pointer-events:n
 .tl-item{display:flex;gap:12px;padding:10px 4px;border-bottom:1px solid #EFE9D8;font-size:13.5px}
 .tl-item:last-child{border:0}
 .tl-time{flex:none;width:86px;color:var(--muted);font-size:12.5px}
-.login-seal{position:absolute;top:16px;right:16px;width:62px;height:62px;border-radius:12px;background:#C62828;color:#FFF3E2;
+.login-seal{position:absolute;top:16px;right:16px;width:62px;height:62px;border-radius:12px;background:var(--red);color:#FFF3E2;
 display:grid;place-content:center;text-align:center;font-weight:900;font-size:14px;line-height:1.4;letter-spacing:.12em;
 transform:rotate(-8deg);box-shadow:inset 0 0 0 2px rgba(255,243,226,.55)}
 .err-text{color:var(--red);font-size:13.5px;min-height:22px;margin-top:10px}
@@ -557,8 +558,8 @@ input[type=file]{display:none}
       <div class="page-meander" aria-hidden="true"></div>
       <div class="quick stagger">
         <button type="button" class="card qa" id="qa_new"><span class="ic" style="background:linear-gradient(135deg,#0F5132,#2E7D6B)"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span><div><b>创建新作品</b><span>从产品资料开始</span></div></button>
-        <button type="button" class="card qa" id="qa_import" style="cursor:pointer"><span class="ic" style="background:linear-gradient(135deg,#2E7D6B,#8FC3B0)"><svg viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg></span><div><b>导入已有产品</b><span>上传文档抽取事实</span></div></button>
-        <button type="button" class="card qa" id="qa_cases" style="cursor:pointer"><span class="ic" style="background:linear-gradient(135deg,#C62828,#D4A05A)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 9l5 3-5 3z"/></svg></span><div><b>查看示例案例</b><span>3 个山东农产品示例</span></div></button>
+        <button type="button" class="card qa" id="qa_import" style="cursor:pointer"><span class="ic" style="background:linear-gradient(135deg,#2E7D6B,#7FB5A3)"><svg viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg></span><div><b>导入已有产品</b><span>上传文档抽取事实</span></div></button>
+        <button type="button" class="card qa" id="qa_cases" style="cursor:pointer"><span class="ic" style="background:linear-gradient(135deg,#C62828,#C29C5F)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 9l5 3-5 3z"/></svg></span><div><b>查看示例案例</b><span>3 个山东农产品示例</span></div></button>
       </div>
       <div class="card guide stagger">
         <div class="guide-head"><h3>使用说明 · 四步把产品拍成短视频</h3><span class="pill green">建议按顺序操作</span></div>
