@@ -351,15 +351,20 @@ def on_call_end(ctx: dict, *, success: bool,
                 usage: Optional[dict] = None,
                 error: str = "",
                 task_id: Optional[str] = None,
+                org_id: Optional[str] = None,
                 cached: bool = False) -> None:
-    """调用后钩子：熔断状态更新 + 后台记录 + 缓存写入由调用方完成。"""
+    """调用后钩子：熔断状态更新 + 后台记录 + 缓存写入由调用方完成。
+
+    org_id：本次调用归属的组织（同步调用没有 task_id，只能靠它归属租户）。
+    """
     model = ctx["model"]
     sem = ctx.get("semaphore")
     try:
         if cached:
             # 缓存命中：记一条 cached 记录（不计 token/费用）
             record_call_async({
-                "task_id": task_id, "task_type": ctx["task_type"],
+                "task_id": task_id, "org_id": org_id,
+                "task_type": ctx["task_type"],
                 "model": model, "prompt_tokens": 0, "completion_tokens": 0,
                 "total_tokens": 0, "cost_cents": 0, "status": "cached",
                 "error": None, "latency_ms": 0, "cached": True,
@@ -377,7 +382,8 @@ def on_call_end(ctx: dict, *, success: bool,
         cost_cents, _ = estimate_cost_cents(model, pt, ct)
         latency_ms = int((time.time() - ctx["start_ts"]) * 1000)
         record_call_async({
-            "task_id": task_id, "task_type": ctx["task_type"],
+            "task_id": task_id, "org_id": org_id,
+            "task_type": ctx["task_type"],
             "model": model, "prompt_tokens": pt, "completion_tokens": ct,
             "total_tokens": tt, "cost_cents": cost_cents,
             "status": "success" if success else "failed",
@@ -393,7 +399,8 @@ def on_call_end(ctx: dict, *, success: bool,
 def run_observed(*, task_type: str, model: str, payload: dict,
                  do_call: Callable[[], tuple],
                  cacheable: bool = True,
-                 task_id: Optional[str] = None):
+                 task_id: Optional[str] = None,
+                 org_id: Optional[str] = None):
     """AIService.chat 的统一包装：缓存 → 熔断 → 并发 → 调用 → 记录。
 
     do_call() -> (content, usage)。返回 (content, usage)；缓存命中时
@@ -402,15 +409,17 @@ def run_observed(*, task_type: str, model: str, payload: dict,
     ctx = on_call_start(task_type=task_type, model=model,
                         input_payload=payload, cacheable=cacheable)
     if ctx["cached_result"] is not None:
-        on_call_end(ctx, success=True, cached=True, task_id=task_id)
+        on_call_end(ctx, success=True, cached=True, task_id=task_id,
+                    org_id=org_id)
         return ctx["cached_result"]
     try:
         content, usage = do_call()
     except Exception as e:
-        on_call_end(ctx, success=False, error=str(e), task_id=task_id)
+        on_call_end(ctx, success=False, error=str(e), task_id=task_id,
+                    org_id=org_id)
         raise
     # 成功：写缓存（调用方传入的 payload 已做敏感检查）
     if ctx["cache_key"]:
         cache_put(ctx["cache_key"], (content, usage))
-    on_call_end(ctx, success=True, usage=usage, task_id=task_id)
+    on_call_end(ctx, success=True, usage=usage, task_id=task_id, org_id=org_id)
     return content, usage

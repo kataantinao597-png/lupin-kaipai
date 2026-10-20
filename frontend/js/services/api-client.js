@@ -70,29 +70,109 @@
     return headers;
   }
 
+  // V3.1 P0 修正：原实现直接读 app.js 里的 `S`，但 app.js 与 api-client.js
+  // 各自包在独立 IIFE 内，`typeof S` 恒为 "undefined" —— X-Org-Id 与 ?org_id=
+  // 两条兜底从未生效过，组织预算与事实 grounding 静默失效。
+  // 改为本文件自持一份组织注册表：app.js 登录/切换组织后调用 ApiClient.setOrg(id)，
+  // 同时落 localStorage，刷新页面在 ensureOrg() 跑完之前也能带上。
+  var ORG_STORE_KEY = "lupin_org_id";
+  var _orgId = "";
+  function setOrg(orgId) {
+    _orgId = orgId ? String(orgId) : "";
+    try {
+      if (_orgId) localStorage.setItem(ORG_STORE_KEY, _orgId);
+      else localStorage.removeItem(ORG_STORE_KEY);
+    } catch (e) { /* 隐私模式下 localStorage 可能抛错，忽略 */ }
+  }
+  function currentOrgId() {
+    if (_orgId) return _orgId;
+    try {
+      var v = localStorage.getItem(ORG_STORE_KEY);
+      if (v) { _orgId = v; return v; }
+    } catch (e) { /* 忽略 */ }
+    // 兜底：若 app.js 将来把 S 挂到 window 上，仍能取到
+    try {
+      if (typeof S === "object" && S && S.org && S.org.id) return S.org.id;
+    } catch (e) { /* 忽略 */ }
+    return "";
+  }
+
   // V3.1 P0：AI 网关经 X-Org-Id 头取组织做预算；登录后自动带上
   function orgHeaders(headers) {
-    try {
-      if (typeof S === "object" && S && S.org && S.org.id) headers["X-Org-Id"] = S.org.id;
-    } catch (e) { /* 忽略，降级为无组织头 */ }
+    var oid = currentOrgId();
+    if (oid) headers["X-Org-Id"] = oid;
     return headers;
+  }
+
+  // V3.1 P0 修正：幂等键必须"同一次用户意图复用同一个 key"，否则服务端
+  // 的 (route,key) 去重永远命中不了——原实现每次请求都生成新 UUID，
+  // 双击照样建两个任务、扣两次费。
+  // 这里传 idempotencyKey:"auto" 即按 请求方法+路径+请求体 做 2 秒窗口内的
+  // 复用：双击/重试落在同一窗口 → 同一个 key；真正的新一次操作（改了参数，
+  // 或过了窗口）→ 新 key，不会被误判成重复。
+  var IDEM_REUSE_MS = 2000;
+  var _recentIdem = [];
+  function autoIdempotencyKey(method, path, body) {
+    var sig;
+    try { sig = method + "\n" + path + "\n" + JSON.stringify(body === undefined ? null : body); }
+    catch (e) { sig = method + "\n" + path + "\n" + String(body); }
+    var now = Date.now();
+    _recentIdem = _recentIdem.filter(function (x) { return now - x.at < IDEM_REUSE_MS; });
+    for (var i = 0; i < _recentIdem.length; i++) {
+      if (_recentIdem[i].sig === sig) return _recentIdem[i].key;
+    }
+    var key;
+    try {
+      key = (typeof crypto !== "undefined" && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : "idem-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+    } catch (e) {
+      key = "idem-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+    }
+    _recentIdem.push({ sig: sig, key: key, at: now });
+    if (_recentIdem.length > 20) _recentIdem.shift();
+    return key;
+  }
+
+  // 生产网关会剥离自定义请求头（X-Org-Id 到不了服务端），预算/事实 grounding
+  // 就会静默失效。这里给同步 AI 接口额外带一份 ?org_id=，服务端两者取其一。
+  var ORG_QUERY_PATHS = [
+    "/api/ideas", "/api/storyboard", "/api/regenerate-shot", "/api/risk-check",
+    "/api/feasibility-check", "/api/v2/feasibility-check",
+    "/api/colloquial-rewrite", "/api/delivery-check"
+  ];
+  function withOrgQuery(path) {
+    try {
+      if (!path || path.indexOf("org_id=") >= 0) return path;
+      var bare = String(path).split("?")[0];
+      if (ORG_QUERY_PATHS.indexOf(bare) < 0) return path;
+      var oid = currentOrgId();
+      if (!oid) return path;
+      return path + (String(path).indexOf("?") >= 0 ? "&" : "?") +
+        "org_id=" + encodeURIComponent(oid);
+    } catch (e) { return path; }
   }
 
   async function doFetch(method, path, body, opts) {
     opts = opts || {};
+    var reqPath = withOrgQuery(path);
     var requestId = opts.requestId || genRequestId();
     var headers = { "Content-Type": "application/json", "X-Request-ID": requestId };
-    if (opts.idempotencyKey) headers["Idempotency-Key"] = opts.idempotencyKey;
-    authHeaders(orgHeaders(userKeyHeaders(headers)));
+    if (opts.idempotencyKey) {
+      headers["Idempotency-Key"] = (opts.idempotencyKey === "auto")
+        ? autoIdempotencyKey(method, reqPath, body)
+        : opts.idempotencyKey;
+    }
+    headers = authHeaders(orgHeaders(userKeyHeaders(headers)));
 
     var controller = null, timer = null;
     if (typeof AbortController !== "undefined") {
       controller = new AbortController();
       timer = setTimeout(function () { controller.abort(); },
-        opts.timeoutMs || timeoutFor(path));
+        opts.timeoutMs || timeoutFor(reqPath));
     }
     try {
-      var r = await fetch(path, {
+      var r = await fetch(reqPath, {
         method: method,
         headers: headers,
         credentials: "include", // refresh token 在 httpOnly Cookie 里
@@ -152,5 +232,8 @@
     genRequestId: genRequestId,
     DEFAULT_TIMEOUT_MS: DEFAULT_TIMEOUT_MS,
     AI_TIMEOUT_MS: AI_TIMEOUT_MS,
+    // app.js 登录成功 / 切换组织后必须调用一次；登出传 null 清空
+    setOrg: setOrg,
+    getOrg: currentOrgId,
   };
 })();

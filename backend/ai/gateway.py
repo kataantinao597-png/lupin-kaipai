@@ -90,6 +90,16 @@ class AIGateway:
         self._task_calls = 0
         self._task_tokens = 0
 
+    def bind_org(self, org_id: Optional[str]) -> None:
+        """把本次调用绑定到已校验的组织（P0 修复用）。
+
+        `get_ai_gateway` 只从 `X-Org-Id` 头与 `?org_id=` 取组织；当 org_id 只出现在
+        请求体里时，路由层校验通过后用它把两边对齐，避免「校验的是 A 组织、
+        记账记到无组织」这种口径分裂。
+        """
+        if org_id:
+            self._org_id = org_id
+
     # ---------- 内部 ----------
 
     def _model_config(self, requested_model: Optional[str]) -> ModelConfig:
@@ -183,7 +193,8 @@ class AIGateway:
             from ..ai_observability import record_call_async
             from ..ai_observability import _utcnow
             record_call_async({
-                "task_id": self._task_id, "task_type": task_type,
+                "task_id": self._task_id, "org_id": self._org_id,
+                "task_type": task_type,
                 "model": fallback, "prompt_tokens": 0, "completion_tokens": 0,
                 "total_tokens": 0, "cost_cents": 0, "status": "failover",
                 "error": f"主模型 {primary} 失败后切换: {error[:300]}",
@@ -282,7 +293,7 @@ class AIGateway:
         if obs_ctx["cached_result"] is not None:
             content, usage = obs_ctx["cached_result"]
             on_call_end(obs_ctx, success=True, cached=True,
-                        task_id=self._task_id)
+                        task_id=self._task_id, org_id=self._org_id)
             self._task_calls += 1
             return content, usage
         try:
@@ -301,7 +312,7 @@ class AIGateway:
             if obs_ctx["cache_key"]:
                 cache_put(obs_ctx["cache_key"], (content, usage))
             on_call_end(obs_ctx, success=True, usage=usage,
-                        task_id=self._task_id)
+                        task_id=self._task_id, org_id=self._org_id)
             duration_ms = int((time.time() - start) * 1000)
             self._record_config(cfg, task_type, executor.attempts, tokens,
                                 duration_ms, True, prompt_version=prompt_version)
@@ -309,7 +320,7 @@ class AIGateway:
             return content, usage
         except Exception as e:
             on_call_end(obs_ctx, success=False, error=str(e),
-                        task_id=self._task_id)
+                        task_id=self._task_id, org_id=self._org_id)
             duration_ms = int((time.time() - start) * 1000)
             self._record_config(cfg, task_type, executor.attempts, tokens,
                                 duration_ms, False, error=str(e),

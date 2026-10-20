@@ -70,7 +70,9 @@ def rewrite_colloquial(
     confirmed + allow_use + 未过期的事实注入 prompt；绝不信任前端
     传入的确认标志。无组织头时 facts 为空，改写仅基于原文。
     """
-    header_org = (request.headers.get("X-Org-Id") or "").strip() or None
+    header_org = ((request.headers.get("X-Org-Id") or "").strip()
+                  or (request.query_params.get("org_id") or "").strip()
+                  or None)
     if header_org and get_membership(db, user.id, header_org) is None:
         raise HTTPException(status_code=404, detail="组织不存在")
     _model = get_request_model(request)

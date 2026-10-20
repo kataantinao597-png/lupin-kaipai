@@ -35,10 +35,10 @@ function setBtnsDisabled(ids, disabled) {
   (ids || []).forEach((id) => { const el = $(id); if (el) el.disabled = !!disabled; });
 }
 function newIdempotencyKey() {
-  try {
-    if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
-  } catch (e) { /* 降级 */ }
-  return "idem-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+  /* V3.1 修正：不再在这里生成一次性 UUID——每次点都换 key，服务端 (route,key)
+     去重永远命中不了，双击照样建两个任务。
+     改由 api-client 在 "auto" 模式下按「方法+路径+请求体」做 2 秒窗口复用。 */
+  return "auto";
 }
 
 /* 用户自带 Key（只存 sessionStorage，关闭标签页清除）——ApiClient 会自动读取 */
@@ -147,14 +147,22 @@ async function doAuth() {
 
 async function ensureOrg() {
   const orgs = V1(await ApiClient.get("/api/v1/orgs")) || [];
-  if (orgs.length) { S.org = orgs[0]; return; }
+  if (orgs.length) { setActiveOrg(orgs[0]); return; }
   const name = (S.user && (S.user.display_name || S.user.email.split("@")[0]) || "我") + "的工作室";
-  S.org = V1(await ApiClient.post("/api/v1/orgs", { name }));
+  setActiveOrg(V1(await ApiClient.post("/api/v1/orgs", { name })));
+}
+
+/* 组织是 ApiClient 的隐式参数（X-Org-Id / ?org_id=），而 ApiClient 在独立 IIFE 里
+   看不到本文件的 S —— 必须显式注册，否则预算与事实 grounding 静默失效。 */
+function setActiveOrg(org) {
+  S.org = org || null;
+  try { ApiClient.setOrg(S.org ? S.org.id : ""); } catch (e) { /* 忽略 */ }
 }
 
 async function doLogout() {
   await AuthClient.logout();
-  S.user = null; S.org = null; S.works = []; S.activeWork = null; S.data = blankData(); S.facts = [];
+  S.user = null; S.works = []; S.activeWork = null; S.data = blankData(); S.facts = [];
+  setActiveOrg(null); // 必须清空，否则换账号后仍带上一账号的 org_id
   renderUser();
   // 登出后回到公开展示页（三层架构）
   location.href = "/";
@@ -291,19 +299,15 @@ async function renderWorkbench() {
     $("greet_text").textContent = "加载失败：" + (e.message || "网络错误");
     return;
   }
-  // 问候语：真实数字
+  // 问候语：真实数字（不用全平台用量口径，避免"像写死的数字"）
   const activeCount = S.works.filter((w) => (w.status || "draft") !== "archived").length;
-  let aiCalls = null;
-  try {
-    const sum = RAW(await ApiClient.get("/api/v1/ai/usage/summary?days=1"));
-    aiCalls = sum && sum.today ? sum.today.calls : null;
-  } catch (e) { /* 用量接口失败不阻塞 */ }
+  const doneCount = S.works.filter((w) => w.status === "archived").length;
   const hour = new Date().getHours();
   const hi = hour < 12 ? "上午好" : hour < 18 ? "下午好" : "晚上好";
-  $("greet_title").textContent = `${hi}，让山东好产品，被更多人看见！`;
-  $("greet_text").innerHTML =
-    `你有 <b>${activeCount}</b> 个作品正在推进中` +
-    (aiCalls === null ? `。` : `，今日已生成 <b>${aiCalls}</b> 次 AI 方案。`);
+  $("greet_title").textContent = `${hi}。把山东好物，拍成值得记住的故事。`;
+  $("greet_text").innerHTML = S.works.length === 0
+    ? `还没有作品，点右上角「新建作品」，从一件山东好物开始。`
+    : `你有 <b>${activeCount}</b> 个作品正在推进` + (doneCount ? `，<b>${doneCount}</b> 个已交付` : ``) + `。`;
 
   // 作品卡片
   const grid = $("work_grid");
@@ -773,7 +777,7 @@ async function genIdeas() {
     const ideasBody = { product: p, facts: usableFacts() };
     if (genPid) { ideasBody.product_id = genPid; ideasBody.org_id = S.org.id; }
     const d = RAW(await ApiClient.post("/api/ideas", ideasBody,
-      { idempotencyKey: newIdempotencyKey() }));
+      { idempotencyKey: "auto" }));
     S.data.ideas = d.ideas || [];
     S.data.ideasFactsHash = factsHash();
     trackProductGenRef(d); // V3.0 B-4/B-5：记录生成时的产品引用版本
@@ -985,7 +989,7 @@ async function genStoryboard() {
       available_resources: cond.available_resources,
     };
     if (genPid) { sbBody.product_id = genPid; sbBody.org_id = S.org.id; }
-    const d = RAW(await ApiClient.post("/api/storyboard", sbBody, { idempotencyKey: newIdempotencyKey() }));
+    const d = RAW(await ApiClient.post("/api/storyboard", sbBody, { idempotencyKey: "auto" }));
     let shots = d.storyboard.shots || [];
     // V2.0：恢复锁定镜头（按 shot_number 对位）
     if (locked.length) {
@@ -1700,6 +1704,8 @@ function renderLivestream() {
     $("live_status").textContent = "未生成";
     $("live_status").className = "pill gray";
     $("btn_export_live").style.display = "none";
+    // 必须清空：切换到一个没有脚本的作品时，否则会残留上一个作品的话术
+    box.innerHTML = '<p style="font-size:13px;color:var(--muted)">选择品类与时长，AI 按"开场留人 → 讲品·互动·逼单循环 → 福袋 → 返场收尾"的真实店播节奏生成全场话术。</p>';
     return;
   }
   $("live_status").textContent = "已生成";
@@ -1815,7 +1821,7 @@ async function regenLivestreamSegment(i) {
         segment: { phase: s.phase, start_minute: s.start_minute,
                    end_minute: s.end_minute, goal: s.goal || "" },
       },
-    }, { idempotencyKey: newIdempotencyKey() }));
+    }, { idempotencyKey: "auto" }));
     const result = await pollAiTask(t.id, "该段话术");
     const newSeg = result.segment;
     if (!newSeg) throw new Error("AI 返回的段结构异常，请重试");
@@ -1892,7 +1898,7 @@ async function genLivestreamScript() {
         duration_minutes: duration,
         extra: liveExtra(), // V3.1：直播平台/目标/风格/促销（可选）
       },
-    }, { idempotencyKey: newIdempotencyKey() })); // V3.1 P0：同 key 只建一个任务
+    }, { idempotencyKey: "auto" })); // V3.1 P0：同 key 只建一个任务
     saveLiveTaskId(t.id); // V3.1 P1-4：刷新页面可恢复轮询
     const result = await pollAiTask(t.id, "场控脚本");
     if (!result.livestream_script || !(result.livestream_script.segments || []).length) {
@@ -1986,7 +1992,7 @@ async function openColloquialModal(i) {
       product_name: (S.data.product || {}).product_name || "",
       work_id: (S.activeWork || {}).id || null, // V3.1 §4.1：服务端取已确认事实
       product_id: S.selectedProductId || null,
-    }, { idempotencyKey: newIdempotencyKey() }));
+    }, { idempotencyKey: "auto" }));
     $("colloq_new").textContent = d.rewritten || "—";
     $("colloq_changes").innerHTML =
       (d.changes || []).map((c) => `<li>${esc(c)}</li>`).join("");
@@ -2591,7 +2597,34 @@ function bindTodo5() {
 }
 
 /* ================= 事件绑定 ================= */
+/* 移动端导航抽屉：复用同一套 .sidebar，不另建一份导航
+   注意 V3 会在 bindAll 里动态注入 v7/v8/v9 导航项，所以用事件委托而不是逐个绑定 */
+function bindMobileNav() {
+  const btn = $("btn_nav"), side = $("sidebar"), bd = $("nav_backdrop"), close = $("btn_nav_close");
+  if (!btn || !side) return;
+  const isOpen = () => document.body.classList.contains("nav-open");
+  const setOpen = (open) => {
+    document.body.classList.toggle("nav-open", open);
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    btn.setAttribute("aria-label", open ? "关闭导航" : "打开导航");
+    if (open && close) close.focus({ preventScroll: true });
+  };
+  btn.addEventListener("click", () => setOpen(!isOpen()));
+  if (close) close.addEventListener("click", () => setOpen(false));
+  if (bd) bd.addEventListener("click", () => setOpen(false));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && isOpen()) setOpen(false);
+  });
+  side.addEventListener("click", (e) => {
+    if (isOpen() && e.target.closest(".nav-item")) setOpen(false);
+  });
+  window.addEventListener("resize", () => {
+    if (window.innerWidth > 760 && isOpen()) setOpen(false);
+  });
+}
+
 function bindAll() {
+bindMobileNav(); // 移动端抽屉导航：必须在注入 v7/v8/v9 之前挂好容器
 initCopyOptView(); // V3.0 D：注入文案优化器导航与视图（零 HTML 改动）
 initPlanSection(); // V3.0 C：注入内容策划面板（零 HTML 改动）
 initPublishView(); // V3.0 F：注入发布中心导航与视图（零 HTML 改动）
@@ -2753,7 +2786,12 @@ function initCopyOptCss() {
 .copy-ver{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px}
 .copy-ver.is-draft{border-style:dashed}
 .copy-ver-body{margin:8px 0;padding:10px;background:#f8fafc;border-radius:8px}
-.row{display:flex;align-items:center}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+/* 全局 input/select 是 width:100%，进 flex 行后会把按钮挤成两字一行（v8 发布中心）
+   这里给行内控件弹性宽度、给按钮固定宽度 */
+.row>.input,.row>input,.row>select{flex:1 1 160px;min-width:0;width:auto}
+.row>.btn,.row>button.btn{flex:0 0 auto;white-space:nowrap}
+.row>.fld{flex:1 1 180px;min-width:0}
 .fld{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
 .fld>span{font-size:12px;color:var(--muted)}
 .copy-opts{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
@@ -2813,10 +2851,20 @@ function copyRiskBadge(v) {
   return '<span class="pill">未检查</span>';
 }
 
+/* 视图首屏骨架屏：进入视图时先渲染加载态，数据到了再替换成真实内容 */
+function viewSkeleton(headTitle, headSub) {
+  return `<div class="page-head"><div class="skel skel-head" aria-hidden="true"></div>
+    ${headSub ? `<div class="skel skel-sub" aria-hidden="true"></div>` : ""}</div>
+    <div role="status" aria-label="加载中">
+    <div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div>
+    </div>`;
+}
+
 async function renderCopyOpt() {
   const sec = $("v7");
   if (!sec) return;
   if (!S.org) { sec.innerHTML = '<div class="page-head"><h2>文案优化器</h2><p class="muted">请先登录并选择组织</p></div>'; return; }
+  sec.innerHTML = viewSkeleton(); // 先给加载态：线上网关延迟下不能留白
   await loadCopyDocs();
   sec.innerHTML = `
     <div class="page-head"><h2>文案优化器</h2>
@@ -2824,10 +2872,12 @@ async function renderCopyOpt() {
     <div class="copy-wrap">
       <div class="copy-side">
         <div class="card"><h3>文案文档</h3><div id="copy_doc_list"></div>
-          <div class="row" style="margin-top:10px;gap:6px;flex-wrap:wrap">
-            <input id="copy_new_title" class="input" placeholder="文档标题" style="flex:2;min-width:120px">
-            <select id="copy_new_kind" class="input" style="flex:1;min-width:110px">${COPY_KINDS.map((k) => `<option value="${k[0]}">${k[1]}</option>`).join("")}</select>
-            <button class="btn primary sm" id="copy_new_btn">新建</button>
+          <div class="copy-new">
+            <input id="copy_new_title" class="input" placeholder="文档标题，如：章丘大葱 · 抖音口播">
+            <div class="row">
+              <select id="copy_new_kind" class="input">${COPY_KINDS.map((k) => `<option value="${k[0]}">${k[1]}</option>`).join("")}</select>
+              <button class="btn primary sm" id="copy_new_btn">＋ 新建</button>
+            </div>
           </div></div>
       </div>
       <div class="copy-main"><div id="copy_editor"></div></div>
@@ -2994,7 +3044,7 @@ async function runCopyOptimize() {
   try {
     const r = V1(await ApiClient.post(
       `/api/v1/copy/docs/${doc.id}/optimize?org_id=` + encodeURIComponent(S.org.id),
-      body, { idempotencyKey: newIdempotencyKey() }));
+      body, { idempotencyKey: "auto" }));
     await openCopyDoc(doc.id); // 刷新版本列表
     toast("已生成草稿版本 v" + r.version.version_no + "，请对比确认");
     if (r.review_reminder) toast(r.review_reminder, 6000);
@@ -3106,7 +3156,7 @@ function showRewritePanel(versionId) {
       const r = V1(await ApiClient.post(
         `/api/v1/copy/docs/${COPY.doc.id}/rewrite-paragraph?org_id=` + encodeURIComponent(S.org.id),
         { version_id: versionId, paragraph_index: idx, instruction: ins },
-        { idempotencyKey: newIdempotencyKey() }));
+        { idempotencyKey: "auto" }));
       await openCopyDoc(COPY.doc.id);
       toast("已生成新草稿 v" + r.version.version_no);
     } catch (e) { toast("重写失败：" + (e.message || e)); }
@@ -3287,7 +3337,7 @@ async function genPlatformVersion(versionId, useAi) {
   try {
     const r = V1(await ApiClient.post(
       `/api/v1/platforms/copy/docs/${COPY.doc.id}/platforms?org_id=` + encodeURIComponent(S.org.id),
-      body, { idempotencyKey: crypto.randomUUID() }));
+      body, { idempotencyKey: "auto" }));
     $("plat_form_" + versionId).innerHTML = "";
     await loadPlatformList(versionId);
     toast(`${platName(platform)}版本已保存（修订 ${r.platform_version.revision_no}），请人工审核`);
@@ -3494,7 +3544,7 @@ async function planGenerate() {
     }
     const d = V1(await ApiClient.post(
       "/api/v1/plan/tasks/" + taskId + "/generate?org_id=" + encodeURIComponent(S.org.id),
-      {}, { idempotencyKey: newIdempotencyKey() }));
+      {}, { idempotencyKey: "auto" }));
     PLAN.taskId = taskId; PLAN.task = d; PLAN.candidates = d.candidates || [];
     PLAN.selectedIndex = d.selected_index; PLAN.feas = null; PLAN._err = null;
     if (d.product_facts_used) toast("已带入 " + d.product_facts_used.length + " 条已确认产品事实");
@@ -3687,6 +3737,7 @@ async function renderPublishCenter() {
   if (!sec) return;
   if (!S.org) { sec.innerHTML = '<div class="page-head"><h2>发布中心</h2><p class="muted">请先登录并选择组织</p></div>'; return; }
   initPublishView();
+  sec.innerHTML = viewSkeleton(); // 先给加载态：线上网关延迟下不能留白
   await loadPublishRecords();
   renderPublishList();
 }
@@ -3708,17 +3759,20 @@ function renderPublishList() {
   sec.innerHTML = `
     <div class="page-head"><h2>发布中心</h2>
     <p class="muted">为每次发布建立独立记录：发布前检查 → 手动状态流转 → 记录发布时间与链接。本工具仅支持人工复制发布。</p></div>
-    <div class="row">
-      <select id="pub_filter" class="input">${opts}</select>
-      <input id="pub_new_title" class="input" placeholder="新建发布记录标题" style="flex:1;min-width:160px">
-      <select id="pub_new_platform" class="input">
+    <div class="toolbar">
+      <span class="tl-label">状态筛选</span>
+      <select id="pub_filter" class="input" style="flex:0 1 150px">${opts}</select>
+      <span class="sep"></span>
+      <span class="tl-label">新建发布记录</span>
+      <input id="pub_new_title" class="input" placeholder="标题，如：章丘大葱 · 抖音品牌短片" style="flex:2 1 220px">
+      <select id="pub_new_platform" class="input" style="flex:0 1 130px">
         <option value="douyin">抖音</option><option value="kuaishou">快手</option>
         <option value="xiaohongshu">小红书</option><option value="shipinhao">视频号</option>
       </select>
-      <button class="btn primary" id="pub_new_btn">新建</button>
+      <button class="btn primary" id="pub_new_btn">＋ 新建</button>
     </div>
     <div id="pub_detail"></div>
-    <div class="pub-list">${cards || '<p class="muted">暂无发布记录</p>'}</div>`;
+    <div class="pub-list">${cards || '<div class="card" style="padding:18px;text-align:center"><p class="muted">暂无发布记录。在上方填写标题、选平台后点「新建」开始。</p></div>'}</div>`;
   $("pub_filter").addEventListener("change", async (e) => { PUB.filter = e.target.value; await loadPublishRecords(); renderPublishList(); });
   $("pub_new_btn").addEventListener("click", createPublishRecord);
   sec.querySelectorAll(".pub-card").forEach((c) => {
@@ -4112,10 +4166,13 @@ async function renderAssetLibrary() {
   if (!sec) return;
   if (!S.org) { sec.innerHTML = '<div class="page-head"><h2>素材库</h2><p class="muted">请先登录并选择组织</p></div>'; return; }
   initLibView();
-  try { LIB.works = V1(await ApiClient.get("/api/v1/works?org_id=" + encodeURIComponent(S.org.id))) || []; }
-  catch (e) { LIB.works = []; }
+  sec.innerHTML = viewSkeleton(); // 先给加载态：线上网关延迟下不能留白
+  // 作品列表与素材检索互不依赖：并行请求（原为串行，线上高延迟下白屏时间翻倍）
   if (!LIB.destWorkId && S.activeWork && S.activeWork.id) LIB.destWorkId = S.activeWork.id;
-  await doLibSearch(true);
+  const worksP = ApiClient.get("/api/v1/works?org_id=" + encodeURIComponent(S.org.id))
+    .then((r) => { LIB.works = V1(r) || []; })
+    .catch(() => { LIB.works = []; });
+  await Promise.all([worksP, doLibSearch(true)]);
   renderLibView();
 }
 
@@ -4171,17 +4228,16 @@ function renderLibView() {
     <div class="page-head"><h2>素材库</h2>
       <p class="muted">跨项目检索与复用。引用只记关系、不复制文件；删引用 ≠ 删实体——仍被引用的文件不许删除。</p></div>
     <div class="toolbar">
-      <input id="lib-q" class="input" placeholder="按素材名称搜索…" value="${esc(LIB.q)}" />
-      <select id="lib-mime" class="input">${mimeOpts}</select>
-      <select id="lib-work" class="input">${workOpts}</select>
-      <button class="btn" id="lib-search">搜索</button>
+      <input id="lib-q" class="input" style="flex:2 1 220px" placeholder="按素材名称搜索…" value="${esc(LIB.q)}" />
+      <select id="lib-mime" class="input" style="flex:1 1 130px">${mimeOpts}</select>
+      <select id="lib-work" class="input" style="flex:1 1 150px">${workOpts}</select>
+      <button class="btn primary" id="lib-search">搜索</button>
+      <span class="sep"></span>
+      <span class="tl-label">引用到</span>
+      <select id="lib-dest" class="input" style="flex:1 1 240px">${destOpts}</select>
+      <span class="muted small" style="flex:none">默认为当前打开的项目</span>
     </div>
-    <div class="toolbar">
-      <span class="muted small">引用到：</span>
-      <select id="lib-dest" class="input">${destOpts}</select>
-      <span class="muted small">（默认为当前打开的项目）</span>
-    </div>
-    <div class="lib-grid">${LIB.busy ? '<p class="muted">检索中…</p>' : (cards || '<p class="muted">暂无素材。可在「拍摄执行」视图上传。</p>')}</div>`;
+    <div class="lib-grid">${LIB.busy ? '<div class="card" style="padding:18px;text-align:center"><p class="muted">检索中…</p></div>' : (cards || '<div class="card" style="padding:18px;text-align:center"><p class="muted">暂无素材。可在「拍摄执行」视图上传。</p></div>')}</div>`;
   $("lib-q").addEventListener("input", (e) => { LIB.q = e.target.value; });
   $("lib-q").addEventListener("keydown", (e) => { if (e.key === "Enter") doLibSearch(); });
   $("lib-mime").addEventListener("change", (e) => { LIB.mime = e.target.value; doLibSearch(); });

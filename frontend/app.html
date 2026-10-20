@@ -31,6 +31,8 @@ body{font-family:system-ui,-apple-system,"PingFang SC","Hiragino Sans GB","Micro
 .nav-item.active{background:var(--primary-soft);color:var(--primary-deep);font-weight:700}
 .nav-cap{font-size:11px;color:var(--muted);letter-spacing:.2em;padding:14px 12px 6px}
 .side-foot{margin-top:auto;padding:12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line);display:flex;align-items:center;gap:10px}
+/* 移动端抽屉：桌面端隐藏 */
+.nav-toggle,.nav-backdrop,.side-close{display:none}
 .avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#F5B73F,#F07B3F);color:#4A2E05;display:grid;place-items:center;font-size:13px;font-weight:700}
 /* ---------- 主区 ---------- */
 .main{flex:1;min-width:0;display:flex;flex-direction:column}
@@ -76,11 +78,12 @@ label.f .req{color:var(--red)}
 /* ===== 非遗 × 动效 ===== */
 @keyframes floatY{0%,100%{transform:translateY(0) rotate(var(--rr,0deg))}50%{transform:translateY(-14px) rotate(var(--rr,0deg))}}
 @keyframes drift{from{transform:translateX(0)}to{transform:translateX(-50%)}}
-@keyframes heroPan{0%,100%{background-position:0% 40%}50%{background-position:100% 60%}}
+/* 首页 hero 照片：极慢推拉 + 夕照呼吸（只动 transform/opacity，走 GPU） */
+@keyframes heroDrift{from{transform:translate3d(0,0,0) scale(1.04)}to{transform:translate3d(-1.6%,-1.1%,0) scale(1.1)}}
+@keyframes heroGlow{0%,100%{opacity:.32}50%{opacity:.82}}
 @keyframes sealIn{0%{opacity:0;transform:scale(1.9) rotate(-20deg)}60%{opacity:1;transform:scale(.93) rotate(-8deg)}100%{opacity:1;transform:scale(1) rotate(-8deg)}}
 @keyframes shine{from{transform:translateX(-130%) skewX(-18deg)}to{transform:translateX(260%) skewX(-18deg)}}
 @keyframes pulseDot{0%,100%{transform:scale(1)}50%{transform:scale(1.3)}}
-.hero{background-size:220% 220%;animation:heroPan 16s ease-in-out infinite}
 .hero-inner>*{opacity:0;animation:rise .7s cubic-bezier(.2,.7,.3,1) forwards}
 .hero-inner>*:nth-child(1){animation-delay:.1s}.hero-inner>*:nth-child(2){animation-delay:.22s}
 .hero-inner>*:nth-child(3){animation-delay:.34s}.hero-inner>*:nth-child(4){animation-delay:.48s}
@@ -108,18 +111,30 @@ transform:translateX(-130%) skewX(-18deg);pointer-events:none}
 .poster{border:7px solid #B23727}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.view{display:none}.view.active{display:block}.reveal{opacity:1!important;transform:none!important}.hero-inner>*{opacity:1!important}}
 /* ---------- v0 首页 hero ---------- */
-.hero{border-radius:22px;overflow:hidden;position:relative;color:#fff;
-  background:linear-gradient(115deg,#1B2A52 0%,#27407E 45%,#3A5499 75%,#4A63B8 100%);padding:64px 56px;box-shadow:var(--shadow)}
-.hero::before{content:"";position:absolute;inset:0;opacity:.5;
-  background:radial-gradient(600px 300px at 85% 20%,rgba(124,92,252,.5),transparent 60%),radial-gradient(500px 260px at 10% 90%,rgba(46,107,240,.55),transparent 60%)}
+.hero{border-radius:22px;overflow:hidden;position:relative;isolation:isolate;color:#fff;background:#0E1F19;
+  padding:64px 56px;box-shadow:var(--shadow)}
+/* 照片层 */
+.hero-photo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 42%;
+  z-index:-3;transform:translate3d(0,0,0) scale(1.04);will-change:transform;
+  animation:heroDrift 34s cubic-bezier(.45,0,.55,1) infinite alternate}
+/* 压暗层：保证左侧白字对比度，右侧留出苹果与茶芽 */
+.hero::before{content:"";position:absolute;inset:0;z-index:-2;pointer-events:none;background:
+  linear-gradient(96deg,rgba(7,22,17,.95) 0%,rgba(7,22,17,.91) 22%,rgba(7,22,17,.80) 40%,rgba(7,22,17,.56) 60%,rgba(7,22,17,.20) 80%,rgba(7,22,17,.28) 100%),
+  linear-gradient(180deg,rgba(7,22,17,.34) 0%,rgba(7,22,17,0) 38%,rgba(7,22,17,.30) 100%)}
+/* 夕照呼吸层 */
+.hero-glow{position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:radial-gradient(54% 76% at 84% 6%,rgba(255,204,132,.42),transparent 66%);
+  animation:heroGlow 15s cubic-bezier(.45,0,.55,1) infinite}
 .hero-inner{position:relative;max-width:560px}
-.hero h1{font-size:44px;font-weight:900;line-height:1.35;letter-spacing:.02em;margin-bottom:14px}
-.hero p{font-size:15px;color:#FFFFFF;margin-bottom:28px;max-width:480px}
+.hero h1{font-size:clamp(32px,4.2vw,44px);font-weight:900;line-height:1.35;letter-spacing:.02em;margin-bottom:14px;
+  text-shadow:0 2px 20px rgba(6,20,15,.34)}
+.hero h1 .mark{color:#F2DDA8}
+.hero p{font-size:15px;color:#F4F1E6;margin-bottom:28px;max-width:480px;text-shadow:0 1px 12px rgba(6,20,15,.34)}
 .hero-cta{display:flex;gap:14px;flex-wrap:wrap}
 .hero .btn.primary{box-shadow:0 10px 24px -12px rgba(0,0,0,.5)}
 .hero-badges{display:flex;gap:26px;margin-top:36px;flex-wrap:wrap}
-.hb{display:flex;align-items:center;gap:9px;font-size:12.5px;color:#FFFFFF}
-.hb svg{width:20px;height:20px;stroke:#9DB9F0;fill:none;stroke-width:1.8}
+.hb{display:flex;align-items:center;gap:9px;font-size:12.5px;color:#F1EEE2}
+.hb svg{width:20px;height:20px;stroke:#E7D3A8;fill:none;stroke-width:1.8}
 .feat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:22px}
 .feat{padding:22px}
 .feat svg{width:26px;height:26px;stroke:var(--primary);fill:none;stroke-width:1.8;margin-bottom:10px}
@@ -236,16 +251,114 @@ transform:translateX(-130%) skewX(-18deg);pointer-events:none}
 .dl-ic{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;flex:none;font-weight:900;font-size:12px;color:#fff}
 .dl-row .meta{margin-left:auto;text-align:right;font-size:11.5px;color:var(--muted)}
 .notice{background:var(--amber-soft);border:1px solid #F3DFAE;border-radius:12px;padding:14px 18px;font-size:12.5px;color:#8A5A12;margin-top:18px}
-@media (max-width:1100px){.p2,.p4{grid-template-columns:1fr 1fr}.p5,.p6{grid-template-columns:1fr}.feat-grid,.quick{grid-template-columns:1fr 1fr}.work-grid{grid-template-columns:1fr 1fr}}
+@media (max-width:1100px){
+  /* 卡片变窄后文字会压到照片右侧亮部，改用竖向压暗保证对比度 */
+  .hero::before{background:
+    linear-gradient(168deg,rgba(7,22,17,.90) 0%,rgba(7,22,17,.72) 46%,rgba(7,22,17,.88) 100%),
+    linear-gradient(96deg,rgba(7,22,17,.46) 0%,rgba(7,22,17,0) 72%)}
+  /* 标题第二行变长后会撞到右上角印章：中等宽度起就缩小印章并上移 */
+  .seal{width:58px;height:58px;font-size:14px;line-height:1.4;top:16px;right:16px;border-radius:11px}
+  /* 卡片变窄后窗花会叠到标题后面，降低存在感 */
+  .hero-deco{opacity:.45}
+  .p2,.p4{grid-template-columns:1fr 1fr}.p5,.p6{grid-template-columns:1fr}.feat-grid,.quick{grid-template-columns:1fr 1fr}.work-grid{grid-template-columns:1fr 1fr}}
 @media (max-width:760px){
-  .sidebar{display:none}.view{padding:18px 14px 60px}.hero{padding:40px 26px}.hero h1{font-size:30px}
-  .p2,.p4,.quick,.feat-grid,.work-grid{grid-template-columns:1fr}.topbar{padding:10px 14px}.search{display:none}
+  /* 侧栏改为抽屉：复用同一套导航，不另建一份 */
+  .nav-toggle{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;border:1px solid var(--line);
+    background:#fff;color:var(--ink2);cursor:pointer;flex:none;padding:0}
+  .nav-toggle svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
+  .sidebar{display:flex;position:fixed;left:0;top:0;bottom:0;width:264px;max-width:84vw;height:100vh;z-index:70;
+    overflow-y:auto;transform:translateX(-100%);transition:transform .28s cubic-bezier(.32,.72,0,1)}
+  body.nav-open .sidebar{transform:translateX(0);box-shadow:0 24px 60px -18px rgba(40,32,16,.38)}
+  .nav-backdrop{display:block;position:fixed;inset:0;background:rgba(26,22,12,.42);z-index:65;
+    opacity:0;pointer-events:none;transition:opacity .22s ease}
+  body.nav-open .nav-backdrop{opacity:1;pointer-events:auto}
+  body.nav-open{overflow:hidden}
+  .side-close{display:grid;place-items:center;position:absolute;top:12px;right:10px;width:32px;height:32px;
+    border:0;border-radius:9px;background:transparent;color:var(--muted);font-size:22px;line-height:1;cursor:pointer}
+  .side-close:hover{background:#F0EBDB;color:var(--ink)}
+  .view{padding:18px 14px 60px}.hero{padding:40px 26px}.hero h1{font-size:30px}
+  .hero-photo{object-position:64% 50%}
+  .hero::before{background:linear-gradient(180deg,rgba(7,22,17,.93) 0%,rgba(7,22,17,.72) 52%,rgba(7,22,17,.90) 100%)}
+  .p2,.p4,.quick,.feat-grid,.work-grid{grid-template-columns:1fr}.topbar{padding:10px 14px;gap:10px}.search{display:none}
+  /* 顶栏别被汉堡按钮挤换行；邮箱已在抽屉底部显示，窄屏收起 */
+  .top-actions{flex:none}
+  .topbar .btn{white-space:nowrap}
+  #top_user{display:none!important}
+  .works-head{flex-wrap:wrap;gap:10px}
+  .works-head h3{white-space:nowrap}
+  .works-head>div{flex-wrap:wrap;min-width:0}
+  /* 窄屏下步骤条与分镜表改为自身滚动，避免撑出页面横滚 */
+  .stepper{overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .stepper::-webkit-scrollbar{display:none}
+  .stepper .stp{flex:none}
+  .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .table-scroll .sb-table{min-width:600px}
 }
 
 /* ===== 真机适配追加 ===== */
 #toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(20px);background:#252820;color:#fff;
-padding:12px 22px;border-radius:12px;font-size:13.5px;opacity:0;pointer-events:none;transition:all .3s;z-index:999;max-width:80vw;box-shadow:0 12px 32px -10px rgba(0,0,0,.4)}
+padding:12px 22px;border-radius:12px;font-size:13.5px;opacity:0;pointer-events:none;transition:opacity .3s,transform .3s;z-index:999;max-width:80vw;box-shadow:0 12px 32px -10px rgba(0,0,0,.4)}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+/* 视图首屏骨架屏：数据到达前先给出加载态，避免内容区空白 */
+.skel{position:relative;overflow:hidden;background:#ECEFF4;border-radius:10px}
+.skel::after{content:"";position:absolute;inset:0;transform:translateX(-100%);
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.7),transparent);animation:skel_sweep 1.2s infinite}
+@keyframes skel_sweep{to{transform:translateX(100%)}}
+.skel-head{height:30px;width:220px;margin:2px 0 6px}
+.skel-sub{height:16px;width:340px;max-width:90%;margin-bottom:22px}
+.skel-row{height:120px;margin-bottom:14px}
+@media (prefers-reduced-motion:reduce){.skel::after{animation:none}}
+/* ===== V3 视图布局补齐（发布中心 v8 / 素材库 v9 用的类原本没有 CSS，裸堆叠） ===== */
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;background:var(--card);
+  border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);
+  padding:14px 16px;margin-bottom:14px}
+.toolbar>.input,.toolbar>input,.toolbar>select{flex:1 1 170px;min-width:0;width:auto}
+.toolbar>.btn,.toolbar>button{flex:0 0 auto;white-space:nowrap}
+.toolbar .tl-label{flex:none;font-size:12.5px;color:var(--muted);white-space:nowrap}
+.toolbar .sep{flex-basis:100%;height:0;border-top:1px dashed var(--line)}
+.pub-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.pub-card-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pub-detail>.row{margin-top:8px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;font-size:13px;color:var(--ink2)}
+@media(max-width:640px){.grid2{grid-template-columns:1fr}}
+.check-item{display:flex;gap:10px;align-items:flex-start;padding:9px 12px;border-radius:9px;
+  margin:6px 0;font-size:13px;background:var(--bg)}
+.check-item>span:first-child{flex:none;font-weight:700}
+.check-item.ok{background:var(--green-soft)}
+.check-item.ok>span:first-child{color:var(--green)}
+.check-item.fail{background:var(--red-soft)}
+.check-item.fail>span:first-child{color:var(--red)}
+.check-item .muted{margin-left:auto;text-align:right}
+.lib-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
+.lib-card{display:flex;gap:12px;align-items:flex-start}
+.lib-thumb{width:76px;height:76px;flex:none;border-radius:10px;background:var(--bg);
+  border:1px solid var(--line);display:grid;place-items:center;overflow:hidden}
+.lib-thumb img{width:100%;height:100%;object-fit:cover}
+.lib-thumb .lib-ic{font-size:30px}
+.lib-body{flex:1;min-width:0}
+.lib-name{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lib-actions{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.rev-dash-item{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0;font-size:13px}
+/* 文案优化器：侧栏新建表单改纵向堆叠，select 不再被挤成省略号 */
+.copy-new{display:grid;gap:8px;margin-top:12px}
+.copy-new .row{gap:8px}
+.copy-new .row>select{flex:1 1 auto}
+.copy-new .row>.btn{flex:0 0 auto}
+.copy-side>.card{position:sticky;top:76px}
+@media(max-width:960px){.copy-side>.card{position:static}}
+/* ===== 工作台使用说明卡片 ===== */
+.guide{padding:18px 20px 16px;margin-bottom:18px}
+.guide-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.guide-head h3{font-size:15.5px;margin:0}
+.guide-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+@media(max-width:1080px){.guide-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:640px){.guide-grid{grid-template-columns:1fr}}
+.guide-step{display:flex;gap:10px;background:var(--bg);border-radius:12px;padding:12px}
+.gs-num{flex:none;width:26px;height:26px;border-radius:50%;background:var(--primary);color:#fff;
+  display:grid;place-items:center;font-size:13px;font-weight:700;margin-top:2px}
+.guide-step b{font-size:13.5px;display:block;margin-bottom:3px}
+.guide-step p{font-size:12.5px;color:var(--ink2);line-height:1.6;margin:0 0 7px}
+.guide-foot{margin-top:12px;border-top:1px dashed var(--line);padding-top:10px}
 #ai_loading{position:fixed;inset:0;background:rgba(27,36,54,.45);backdrop-filter:blur(3px);z-index:998;display:none;place-items:center}
 #ai_loading.show{display:grid}
 .load-box{background:#fff;border-radius:18px;padding:34px 44px;text-align:center;box-shadow:0 24px 60px -20px rgba(0,0,0,.4)}
@@ -285,7 +398,8 @@ input[type=file]{display:none}
 </head>
 <body>
 <div class="app">
-  <aside class="sidebar">
+  <aside class="sidebar" id="sidebar" aria-label="主导航">
+    <button class="side-close" id="btn_nav_close" aria-label="关闭导航">×</button>
     <div class="brand"><span class="brand-mark">鲁</span><b>鲁品开拍</b></div>
     <button class="nav-item active" data-v="v0"><svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a2 2 0 01-2 2h-4v-7h-6v7H5a2 2 0 01-2-2z"/></svg>首页</button>
     <div class="nav-cap">创作</div>
@@ -299,8 +413,10 @@ input[type=file]{display:none}
     <button class="nav-item" id="nav_api_cfg"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>模型配置</button>
     <div class="side-foot" id="side_user" style="cursor:pointer"><span class="avatar" id="user_avatar">鲁</span><div><div id="user_name" style="font-size:13px;color:var(--ink)">未登录</div><span style="font-size:11px" id="user_sub">点击登录</span></div></div>
   </aside>
+  <div class="nav-backdrop" id="nav_backdrop"></div>
   <div class="main">
     <header class="topbar">
+      <button class="nav-toggle" id="btn_nav" aria-label="打开导航" aria-controls="sidebar" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
       <label class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input placeholder="搜索作品、产品、镜头…"></label>
       <div class="top-actions">
         <span class="pill blue" id="top_user" style="display:none"></span>
@@ -336,12 +452,14 @@ input[type=file]{display:none}
     <section class="view active" id="v0">
       <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><g id="pf" fill="none" stroke="currentColor" stroke-width="2.5">
 <circle cx="50" cy="50" r="45" stroke-dasharray="7 6"/><ellipse cx="50" cy="25" rx="11" ry="24"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(45 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(90 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(135 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(180 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(225 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(270 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(315 50 50)"/><circle cx="50" cy="50" r="9"/><circle cx="50" cy="50" r="3" fill="currentColor" stroke="none"/></g></defs></svg><div class="hero">
+      <img class="hero-photo" src="/static/assets/app/hero-home.webp" alt="" aria-hidden="true" decoding="async">
+      <div class="hero-glow" aria-hidden="true"></div>
       <div class="hero-deco" style="top:24px;right:5%;width:170px;height:170px;--rr:14deg;animation:floatY 8s ease-in-out infinite"><svg viewBox="0 0 100 100"><use href="#pf"/></svg></div>
       <div class="hero-deco" style="bottom:30px;left:3%;width:110px;height:110px;--rr:-12deg;animation:floatY 10s ease-in-out infinite reverse"><svg viewBox="0 0 100 100"><use href="#pf"/></svg></div>
       <div class="hero-deco" style="top:46%;left:44%;width:70px;height:70px;--rr:8deg;animation:floatY 12s ease-in-out infinite"><svg viewBox="0 0 100 100"><use href="#pf"/></svg></div>
       <span class="seal">齐鲁<br>年画</span>
       <div class="hero-inner">
-        <h1>让好产品<br>被更多人看见</h1>
+        <h1>把山东好物，<br>拍成<span class="mark">值得记住的故事</span></h1>
         <p>基于真实产品资料的 AI 营销与短视频创作工作台，助力山东特色农产品走向更大的市场。</p>
         <div class="hero-cta"><button class="btn primary shine" data-goto="v1">立即使用 →</button></div>
         <div class="hero-badges">
@@ -359,7 +477,7 @@ input[type=file]{display:none}
       </div></div>
       <div class="feat-grid stagger">
         <div class="card feat"><svg viewBox="0 0 24 24"><path d="M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 17.3 5.9 20.6l1.4-6.8L2.2 9.1l6.9-.8z"/></svg><h2>事实先行</h2><p>产品事实库沉淀可核实信息，AI 生成有据可依，拒绝胡编。</p></div>
-        <div class="card feat"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9l5 3-5 3z"/></svg><h2>分镜到秒</h2><p>11 个镜头自动排布，时长、景别、口播一次给齐。</p></div>
+        <div class="card feat"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9l5 3-5 3z"/></svg><h2>分镜到秒</h2><p>按目标时长自动排布分镜，时长、景别、口播一次给齐。</p></div>
         <div class="card feat"><svg viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg><h2>拍摄友好</h2><p>一人一机也能拍，执行清单打勾推进，不漏镜头。</p></div>
         <div class="card feat"><svg viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg><h2>人工把关</h2><p>风险提示只提醒依据缺失，每条都由你亲自确认。</p></div>
       </div>
@@ -367,13 +485,23 @@ input[type=file]{display:none}
 
     <!-- ============ v1 工作台总览 ============ -->
     <section class="view" id="v1">
-      <div class="greet"><h2 id="greet_title">你好，让山东好产品，被更多人看见！</h2><p id="greet_text">正在加载工作台数据…</p></div>
+      <div class="greet"><h2 id="greet_title">上午好。把山东好物，拍成值得记住的故事。</h2><p id="greet_text">正在加载工作台数据…</p></div>
       <div class="quick stagger">
         <div class="card qa" id="qa_new"><span class="ic" style="background:linear-gradient(135deg,#0F5132,#2E7D6B)"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span><div><b>创建新作品</b><span>从产品资料开始</span></div></div>
         <div class="card qa" id="qa_import" style="cursor:pointer"><span class="ic" style="background:linear-gradient(135deg,#2E7D6B,#8FC3B0)"><svg viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg></span><div><b>导入已有产品</b><span>上传文档抽取事实</span></div></div>
         <div class="card qa" id="qa_cases" style="cursor:pointer"><span class="ic" style="background:linear-gradient(135deg,#C62828,#D4A05A)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 9l5 3-5 3z"/></svg></span><div><b>查看示例案例</b><span>3 个山东农产品示例</span></div></div>
       </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div class="card guide stagger">
+        <div class="guide-head"><h3>使用说明 · 四步把产品拍成短视频</h3><span class="pill green">建议按顺序操作</span></div>
+        <div class="guide-grid">
+          <div class="guide-step"><span class="gs-num">1</span><div><b>产品资料</b><p>录入产品名称、产地、卖点，补充核心事实。AI 只依据已确认的事实生成，不编造。</p><button class="btn ghost sm" data-goto="v2">去填写 →</button></div></div>
+          <div class="guide-step"><span class="gs-num">2</span><div><b>创意策划</b><p>一键生成创意方案与分镜脚本，逐镜确认口播与字幕，可重新生成直到满意。</p><button class="btn ghost sm" data-goto="v3">去生成 →</button></div></div>
+          <div class="guide-step"><span class="gs-num">3</span><div><b>海报与拍摄</b><p>在海报制作页排版宣传图；拍摄时按执行清单逐镜打勾，素材自动归档。</p><button class="btn ghost sm" data-goto="v4">去制作 →</button></div></div>
+          <div class="guide-step"><span class="gs-num">4</span><div><b>交付与发布</b><p>运行交付检查，导出拍摄单、字幕、文案，再按发布中心的流程记录发布。</p><button class="btn ghost sm" data-goto="v6">去交付 →</button></div></div>
+        </div>
+        <p class="guide-foot muted small">小贴士：「文案优化」帮你打磨口播稿和发布文案（未经你确认不会覆盖原稿）；「素材库」可跨作品复用已上传的图片和视频。左侧导航随时切换，不会丢失当前进度。</p>
+      </div>
+      <div class="works-head" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
         <h3 style="font-size:16px">我的作品</h3>
         <div style="display:flex;gap:8px;align-items:center"><span class="pill blue" data-filter="all" style="cursor:pointer">全部</span> <span class="pill gray" data-filter="active" style="cursor:pointer">进行中</span> <span class="pill gray" data-filter="done" style="cursor:pointer">已完成</span>
         <button class="btn primary sm" id="btn_new_work" style="margin-left:8px">＋ 新建作品</button></div>
@@ -454,9 +582,11 @@ input[type=file]{display:none}
         </div>
         <div id="sb_stale_warn"></div>
         <div class="err-text" id="sb_err"></div>
+        <div class="table-scroll">
         <table class="sb-table"><thead><tr><th>#</th><th>景别</th><th>画面描述</th><th>拍摄动作</th><th>时长</th><th>台词/字幕</th><th>操作</th></tr></thead><tbody id="sb_tbody">
           <tr><td colspan="7" style="color:var(--muted)">暂无分镜，请先选择创意方向并生成。</td></tr>
           </tbody></table>
+        </div>
       </div>
       <div class="card panel" style="margin-top:18px">
         <div class="tabs" style="margin-bottom:14px">

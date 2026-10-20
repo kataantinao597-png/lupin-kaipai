@@ -124,29 +124,53 @@ def test_record_failed(db):
 # ---------- 133/134：台账与汇总 ----------
 
 def test_calls_api_and_summary(db):
+    """133/134：台账与汇总。
+
+    2026-10-19 起两个接口按组织隔离（`ai_calls` 无 org_id，经 task_id → ai_tasks.org_id
+    归属），因此这里先建组织和任务，并让调用挂到该任务上；未挂任务的调用不计入。
+    """
     from backend.api.v1.ai_stats import list_calls, usage_summary
+    from backend import models
+
+    org = models.Organization(id="org-t1", name="测试组织", created_by="u-t1")
+    db.add(org)
+    db.commit()  # ai_tasks.org_id 是硬外键，且两模型间无 relationship，
+    # 一并 add_all 时 unit of work 不保证 organizations 先插 → 必须分两次提交
+    task = models.AITask(id="task-t1", org_id="org-t1", created_by="u-t1",
+                         task_type="ideas", payload_json={})
+    db.add(task)
+    db.commit()
+
+    # 无 task_id 的调用无法归属组织，必须被排除在统计之外
+    obs.run_observed(task_type="risk_check", model="gpt-5.6-luna",
+                     payload={"k": "orphan"}, do_call=lambda: ("c", {"prompt_tokens": 9,
+                     "completion_tokens": 9, "total_tokens": 18}),
+                     cacheable=False)
+
     usage = {"prompt_tokens": 100, "completion_tokens": 50,
              "total_tokens": 150}
     obs.run_observed(task_type="ideas", model="gpt-6-luna",
                      payload={"k": "a"}, do_call=lambda: ("c", usage),
-                     cacheable=False)
+                     cacheable=False, task_id="task-t1")
     obs.run_observed(task_type="risk_check", model="gpt-5.6-luna",
                      payload={"k": "b"}, do_call=lambda: ("c", usage),
-                     cacheable=False)
-    assert _wait_for(lambda: db.query(AICall).count() >= 2)
+                     cacheable=False, task_id="task-t1")
+    assert _wait_for(lambda: db.query(AICall).count() >= 3)
     db.expire_all()
 
-    page1 = list_calls(page=1, page_size=1, task_type=None, model=None,
-                       start=None, end=None, db=db)
+    kw = dict(task_type=None, model=None, start=None, end=None,
+              org_id="org-t1", db=db)
+    page1 = list_calls(page=1, page_size=1, **kw)
     assert page1["total"] == 2 and len(page1["items"]) == 1
-    only_ideas = list_calls(page=1, page_size=20, task_type="ideas",
-                            model=None, start=None, end=None, db=db)
+    assert page1["org_id"] == "org-t1"
+    only_ideas = list_calls(page=1, page_size=20,
+                            **{**kw, "task_type": "ideas"})
     assert only_ideas["total"] == 1
-    only_model = list_calls(page=1, page_size=20, task_type=None,
-                            model="gpt-5.6-luna", start=None, end=None, db=db)
+    only_model = list_calls(page=1, page_size=20,
+                            **{**kw, "model": "gpt-5.6-luna"})
     assert only_model["total"] == 1
 
-    summary = usage_summary(days=30, db=db)
+    summary = usage_summary(days=30, org_id="org-t1", db=db)
     assert summary["today"]["tokens"] == 300
     assert summary["today"]["calls"] == 2
     assert summary["month"]["tokens"] == 300
@@ -154,6 +178,39 @@ def test_calls_api_and_summary(db):
     assert {"gpt-6-luna", "gpt-5.6-luna"} <= names
     ttypes = {t["name"] for t in summary["by_task_type"]}
     assert {"ideas", "risk_check"} <= ttypes
+
+
+def test_ai_usage_requires_org_admin(db):
+    """2026-10-19 权限收紧：必须登录 + 是本组织 owner/admin。"""
+    from backend.api.v1.ai_stats import _org_admin
+    from backend.auth.models import User
+    from backend.core.exceptions import AuthError, BusinessError
+    from backend import models
+
+    org = models.Organization(id="org-p1", name="权限测试", created_by="u-p1")
+    user = User(id="u-p1", email="p1@test.local", password_hash="x")
+    db.add_all([org, user])
+    db.commit()
+
+    # 组织不存在 → 404 语义
+    with pytest.raises(BusinessError):
+        _org_admin(org_id="no-such-org", user=user, db=db)
+    # 非成员 → 403
+    with pytest.raises(AuthError):
+        _org_admin(org_id="org-p1", user=user, db=db)
+
+    ms = models.Membership(id="ms-p1", user_id="u-p1", org_id="org-p1", role="editor")
+    db.add(ms)
+    db.commit()
+    # editor 不够
+    with pytest.raises(AuthError):
+        _org_admin(org_id="org-p1", user=user, db=db)
+
+    # admin 通过
+    ms.role = "admin"
+    db.commit()
+    assert _org_admin(org_id="org-p1", user=user, db=db) == "org-p1"
+
 
 
 # ---------- 135：熔断 ----------

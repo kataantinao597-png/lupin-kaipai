@@ -22,6 +22,11 @@ from ...auth.models import User
 from ...core.deps import get_ai_gateway, get_request_model
 from ...core.idempotency import (idempotency_begin, idempotency_invalidate)
 from ...rbac import get_membership
+from ._ai_guard import (
+    bind_gateway_org,
+    enforce_ai_org,
+    optional_user as _optional_user,
+)
 from ...ai.prompts import get_prompt_version
 from ...prompts import (
     build_idea_messages,
@@ -147,25 +152,6 @@ def _validate_shot(data: dict):
 
 # ---------- 034：异步任务入口 ----------
 
-def _optional_user(request: Request,
-                   db: Session = Depends(get_db)) -> Optional[User]:
-    """可选登录：合法 Bearer 返回用户，否则 None。
-
-    同步 MVP 流程保持匿名可用；?async=true 分支要求登录（见下）。
-    """
-    auth = request.headers.get("Authorization", "")
-    token = auth[7:].strip() if auth.startswith("Bearer ") else ""
-    if not token:
-        return None
-    from ...auth.security import decode_access_token
-    from ...repositories.user_repository import UserRepository
-    user_id = decode_access_token(token)
-    if not user_id:
-        return None
-    user = UserRepository(db).get_by_id(user_id)
-    return user if user is not None and user.is_active else None
-
-
 def _enqueue_ai_task(task_type: str, payload: dict, request: Request,
                      user: User, db: Session) -> dict:
     """034：同步接口的 ?async=true 入口——创建任务并返回 task_id。
@@ -255,6 +241,10 @@ def create_ideas(
             "org_id": req.org_id,
         }, request, user, db)
     _model = get_request_model(request)
+    # P0：声称了 org_id 就必须登录且是该组织成员。
+    # 否则「匿名 + 他人 org_id」可以替别人花 AI 预算（实测 used_cents 会真的增长）。
+    _org = enforce_ai_org(request, req.org_id, user, db)
+    bind_gateway_org(gw, _org)
     # V2.1 #3：Idempotency-Key 去重——同 key 同体直接回放，不重复调模型扣费
     idem = idempotency_begin("ideas", request, req.model_dump(),
                              scope=_model or "")
@@ -322,6 +312,9 @@ def create_storyboard(
             "org_id": req.org_id,
         }, request, user, db)
     _model = get_request_model(request)
+    # P0：声称了 org_id 就必须登录且是该组织成员（同 /api/ideas）
+    _org = enforce_ai_org(request, req.org_id, user, db)
+    bind_gateway_org(gw, _org)
     product = req.product.model_dump()
 
     # V2.1 #3：Idempotency-Key 去重——同 key 同体直接回放，不重复调模型扣费
@@ -376,8 +369,13 @@ def regenerate_shot(
     req: RegenShotRequest,
     request: Request,
     gw=Depends(get_ai_gateway),
+    user: Optional[User] = Depends(_optional_user),
+    db: Session = Depends(get_db),
 ):
     _model = get_request_model(request)
+    # P0：请求头/查询参数声称了 org_id 就必须登录且是该组织成员
+    _org = enforce_ai_org(request, None, user, db)
+    bind_gateway_org(gw, _org)
     # V2.1 #3：Idempotency-Key 去重——同 key 同体直接回放，不重复调模型扣费
     idem = idempotency_begin("regenerate-shot", request, req.model_dump(),
                              scope=_model or "")

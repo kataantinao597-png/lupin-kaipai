@@ -1,8 +1,9 @@
 """S10 配额系统：组织维度硬限额。
 
 quota_type:
-- ai_calls_daily：组织每日 AI 调用次数（含同步/异步，以 ai_calls 落库为准，
-  通过 ai_tasks 关联组织；task_id 为空的同步调用无法归属，不计入——见文档说明）
+- ai_calls_daily：组织每日 AI 调用次数（含同步/异步）。归属口径见
+  `services/ai_ledger.org_calls_query`：优先 ai_calls.org_id，存量行回退
+  ai_tasks 关联。修复前同步调用（task_id 为空）不计入，配额永不触发。
 - storage_mb：作品 data_json 总量（MB，向下取整；不含回收站）
 - members：组织成员数
 
@@ -70,13 +71,11 @@ def current_usage(db, org_id: str, quota_type: str) -> int:
     """当前用量。"""
     if quota_type == QUOTA_AI_CALLS_DAILY:
         day_start = _day_start_naive()
+        from .ai_ledger import org_calls_query
         return (
-            db.query(func.count(models.AICall.id))
-            .join(models.AITask,
-                  models.AICall.task_id == models.AITask.id)
-            .filter(models.AITask.org_id == org_id,
-                    models.AICall.created_at >= day_start)
-            .scalar() or 0
+            org_calls_query(db, org_id)
+            .filter(models.AICall.created_at >= day_start)
+            .count() or 0
         )
     if quota_type == QUOTA_STORAGE_MB:
         total_bytes = (

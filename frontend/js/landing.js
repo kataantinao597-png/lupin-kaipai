@@ -127,7 +127,9 @@
   var fill = document.getElementById("flowFill");
   function paintFlow(){
     var lit = steps.filter(function(s){ return s.classList.contains("lit"); }).length;
-    if(fill) fill.style.width = (steps.length > 1 ? (lit - 1) / (steps.length - 1) * 100 : 0) + "%";
+    var pct = steps.length > 1 ? (lit - 1) / (steps.length - 1) * 100 : 0;
+    // 动效标准#7：动画 transform 而非 width（避免逐帧重排）
+    if(fill) fill.style.transform = "scaleX(" + (pct / 100) + ")";
   }
   if("IntersectionObserver" in window && !reduced){
     var fio = new IntersectionObserver(function(entries){

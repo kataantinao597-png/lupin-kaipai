@@ -645,10 +645,15 @@ class AICall(Base):
         Index("ix_aicall_model", "model"),
         Index("ix_aicall_created", "created_at"),
         Index("ix_aicall_task", "task_id"),
+        Index("ix_aicall_org", "org_id"),
     )
 
     id = Column(String(32), primary_key=True, default=_uuid)
     task_id = Column(String(32), nullable=True)  # 关联 ai_tasks.id；同步调用为 None
+    # P1 修复：归属组织。同步调用没有 ai_tasks 行，只能靠这一列做租户归属，
+    # 否则「用量仪表盘/组织配额/用量报表」三个口径都把同步调用算作 0。
+    # 可为空：匿名调用（未声称 org_id）确实不属于任何组织。
+    org_id = Column(String(32), nullable=True)
     task_type = Column(String(32), nullable=False)
     model = Column(String(128), nullable=False)
     prompt_tokens = Column(Integer, nullable=False, default=0, server_default="0")

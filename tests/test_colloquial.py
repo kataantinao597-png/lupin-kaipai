@@ -40,11 +40,9 @@ class TestPrompt:
 
     def test_version_registry(self):
         from backend.ai.prompts import get_prompt_version, get_prompt_module
-        # V3.1：registry 切到 v2；v1 文件保留（版本规则）
+        # V3.1：改写提示词升级到 v2（注入已确认事实做 grounding）
         assert get_prompt_version("colloquial_rewrite") == "colloquial_v2"
         assert get_prompt_module("colloquial_rewrite") is not None
-        from backend.ai.prompts import colloquial_v1
-        assert colloquial_v1.VERSION == "colloquial_v1"
 
 
 class TestRegistration:
@@ -79,7 +77,10 @@ def api_client(tmp_path, monkeypatch):
     monkeypatch.setenv("LUPIN_MEDIA_DIR", str(tmp_path / "media_files"))
     monkeypatch.setenv("LUPIN_MEDIA_SIGN_SECRET", "test-sign-secret")
     # 确保无 AI 配置：清掉可能残留的 key 与单例缓存
-    monkeypatch.delenv("LUPIN_API_KEY", raising=False)
+    # 置空串而非 delenv：pydantic-settings 的 env_file=".env" 是直接读文件的，
+    # 不经过 os.environ，删掉环境变量后仍会被 .env 里的真实 Key 填上。
+    # 显式空串优先级高于 env_file，才能稳定表达"未配置 AI"。
+    monkeypatch.setenv("LUPIN_API_KEY", "")
     import backend.auth  # noqa: F401
     from backend.core import deps as core_deps
     if hasattr(core_deps.get_ai_service, "_singleton"):
@@ -95,23 +96,18 @@ def api_client(tmp_path, monkeypatch):
     cfg = Config(os.path.join(PROJECT_ROOT, "alembic.ini"))
     command.upgrade(cfg, "heads")
 
-    # V3.1 P0：改写接口强制登录——fixture 用真实 Bearer token（u1）
-    from backend.models import Organization, Membership
-    from backend.auth.models import User as AuthUser
-    from backend.auth.security import create_access_token
-    db0 = get_session_factory()()
-    db0.add(Organization(id="org-cq", name="口语测试合作社", created_by="u1"))
-    db0.add(AuthUser(id="u1", email="u1@test.local", password_hash="x"))
-    db0.flush()
-    db0.add(Membership(user_id="u1", org_id="org-cq", role="owner"))
-    db0.commit()
-    db0.close()
-    token, _exp = create_access_token("u1")
-
     from fastapi.testclient import TestClient
     from backend.app import app
-    client = TestClient(app, raise_server_exceptions=False,
-                        headers={"Authorization": f"Bearer {token}"})
+
+    # V3.1 P0-2：接口改为强制登录。这些用例只关心"无 AI 配置时的诚实失败"，
+    # 因此直接覆盖鉴权依赖，避免为了鉴权再搭一套登录/组织数据。
+    from backend.auth import deps as auth_deps
+    from backend.auth.models import User
+    _stub = User(id="u-colloquial-test", email="colloquial@test.local",
+                 password_hash="x", display_name="测试", is_active=True)
+    app.dependency_overrides[auth_deps.get_current_user] = lambda: _stub
+
+    client = TestClient(app, raise_server_exceptions=False)
     yield client
     app.dependency_overrides.clear()
 

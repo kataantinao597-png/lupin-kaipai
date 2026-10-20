@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from ...ai_service import AIConfigError, AIService
 from ...auth.database import get_db
 from ...core.response import success
+from ...rbac import require_org_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai", tags=["v1-ai-config"])
@@ -136,8 +137,13 @@ def _budget_out(b) -> dict:
 
 
 @router.get("/budgets/{org_id}", response_model=dict)
-def get_budget(org_id: str, db: Session = Depends(get_db)):
-    """查看组织本月 AI 预算。"""
+def get_budget(org_id: str, db: Session = Depends(get_db),
+               _ms=Depends(require_org_permission("org:config:model"))):
+    """查看组织本月 AI 预算。
+
+    P0 修复：原实现无任何身份校验，未登录即可读取任意组织的预算与已用额度
+    （实测 GET 返回 200）。预算属管理员视图，改为要求登录 + 本组织 owner/admin。
+    """
     from ...ai.budget import get_or_create_budget
     b = get_or_create_budget(db, org_id)
     return success(_budget_out(b))
@@ -150,10 +156,13 @@ class BudgetLimitUpdate(BaseModel):
 
 @router.put("/budgets/{org_id}", response_model=dict)
 def set_budget_limit(org_id: str, req: BudgetLimitUpdate,
-                     db: Session = Depends(get_db)):
-    """124：管理员调整组织本月 AI 预算限额。"""
-    # TODO(Phase 4 权限组)：此处应校验调用者为 org admin/owner。
-    # 当前按"默认全开"施工，先不做鉴权，部署前必须补上。
+                     db: Session = Depends(get_db),
+                     _ms=Depends(require_org_permission("org:config:model"))):
+    """124：管理员调整组织本月 AI 预算限额。
+
+    P0 修复：原实现只有一行 TODO、没有任何鉴权，未登录即可改任意组织的月限额
+    （实测 PUT 返回 200）—— 等于预算控制形同虚设。现要求登录 + 本组织 owner/admin。
+    """
     from ...ai.budget import set_limit
     b = set_limit(db, org_id, req.monthly_limit_cents)
     logger.info("管理员调整组织 %s AI 预算限额为 %d 分", org_id, req.monthly_limit_cents)
@@ -161,8 +170,12 @@ def set_budget_limit(org_id: str, req: BudgetLimitUpdate,
 
 
 @router.post("/budgets/{org_id}/reset", response_model=dict)
-def reset_budget(org_id: str, db: Session = Depends(get_db)):
-    """124：管理员重置组织本月已用额度。"""
+def reset_budget(org_id: str, db: Session = Depends(get_db),
+                 _ms=Depends(require_org_permission("org:config:model"))):
+    """124：管理员重置组织本月已用额度。
+
+    P0 修复：原实现无鉴权，未登录即可把任意组织的已用额度清零。
+    """
     from ...ai.budget import reset_usage
     b = reset_usage(db, org_id)
     logger.info("管理员重置组织 %s 本月 AI 预算用量", org_id)

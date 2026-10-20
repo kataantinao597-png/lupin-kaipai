@@ -155,8 +155,8 @@
   /* ============ E · 创作流程 ============ */
   .flow{margin-top:56px;position:relative}
   .flow-line{position:absolute;top:31px;left:5%;right:5%;height:3px;background:var(--lp-hair);border-radius:2px;z-index:0}
-  .flow-line i{display:block;height:100%;width:0;background:linear-gradient(to right,var(--lp-forest),var(--lp-teal));
-    border-radius:2px;transition:width .8s ease}
+  .flow-line i{display:block;height:100%;width:100%;background:linear-gradient(to right,var(--lp-forest),var(--lp-teal));
+    border-radius:2px;transform:scaleX(0);transform-origin:left center;transition:transform .8s ease}
   .flow-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:26px 22px;position:relative;z-index:1}
   .fstep{text-align:center;padding:0 6px;opacity:.92;transition:opacity .3s}
   .fstep .dot{width:62px;height:62px;margin:0 auto 16px;border-radius:50%;background:var(--lp-card);

@@ -48,11 +48,10 @@ class TestPrompt:
 
     def test_version_registry(self):
         from backend.ai.prompts import get_prompt_version, get_prompt_module
-        # V3.1：registry 切到 v2；v1 文件保留（版本规则）
+        # V3.1：店播提示词升级到 v2（可选输入 + 待确认清单）
         assert get_prompt_version("livestream_script") == "livestream_v2"
+        assert get_prompt_version("livestream_regen_segment") == "livestream_v2"
         assert get_prompt_module("livestream_script") is not None
-        from backend.ai.prompts import livestream_v1
-        assert livestream_v1.VERSION == "livestream_v1"
 
 
 class TestRegistration:
@@ -77,14 +76,15 @@ class TestRegistration:
 class TestValidator:
     def test_valid(self):
         from backend.ai_tasks.runners import _validate_livestream
+        # V3.1 P0-3：时间轴必须连续且完整覆盖 0→total_minutes
         data = {
             "title": "果园现摘烟台苹果专场",
-            "total_minutes": 120,
+            "total_minutes": 20,
             "segments": [
                 {"phase": "开场留人", "start_minute": 0, "end_minute": 5,
                  "goal": "留人", "script": ["欢迎来到直播间"],
                  "tips": ["发福袋"]},
-                {"phase": "讲品", "start_minute": 5, "end_minute": 120,
+                {"phase": "讲品", "start_minute": 5, "end_minute": 20,
                  "goal": "讲透产品", "script": ["看这个果"],
                  "tips": []},
             ],
@@ -95,6 +95,36 @@ class TestValidator:
         }
         errs, out = _validate_livestream(data)
         assert errs == [] and out is data
+
+    def test_timeline_gap_rejected(self):
+        """V3.1 P0-3：段间空洞必须判不合格。"""
+        from backend.ai_tasks.runners import _validate_livestream
+        data = {
+            "title": "测试", "total_minutes": 20,
+            "segments": [
+                {"phase": "开场留人", "start_minute": 0, "end_minute": 5,
+                 "script": ["a"]},
+                {"phase": "讲品", "start_minute": 8, "end_minute": 20,
+                 "script": ["b"]},
+            ],
+        }
+        errs, out = _validate_livestream(data)
+        assert errs and out is None
+        assert any("不连续" in e for e in errs)
+
+    def test_duration_mismatch_rejected(self):
+        """V3.1 P0-3：total_minutes 与请求时长不一致必须判不合格。"""
+        from backend.ai_tasks.runners import _validate_livestream
+        data = {
+            "title": "测试", "total_minutes": 20,
+            "segments": [
+                {"phase": "开场留人", "start_minute": 0, "end_minute": 20,
+                 "script": ["a"]},
+            ],
+        }
+        errs, out = _validate_livestream(data, duration=60)
+        assert errs and out is None
+        assert any("不一致" in e for e in errs)
 
     def test_invalid(self):
         from backend.ai_tasks.runners import _validate_livestream

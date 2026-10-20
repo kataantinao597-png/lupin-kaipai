@@ -11,12 +11,16 @@ from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError
 from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
+from ...auth.database import get_db
+from ...auth.models import User
 from ...core.deps import get_ai_gateway, get_request_model
 from ...services.delivery_service import check_delivery
 from ...services.risk_service import check_storyboard_risk
+from ._ai_guard import bind_gateway_org, enforce_ai_org, optional_user
 from .ideas import ProductInput
 
 router = APIRouter(tags=["risks"])
@@ -45,7 +49,12 @@ def check_risk(
     req: RiskCheckRequest,
     request: Request,
     gw=Depends(get_ai_gateway),
+    user: Optional[User] = Depends(optional_user),
+    db: Session = Depends(get_db),
 ):
+    # P0：声称了 org_id 就必须登录且是该组织成员（否则可匿名替他人扣预算）
+    _org = enforce_ai_org(request, None, user, db)
+    bind_gateway_org(gw, _org)
     _model = get_request_model(request)
     try:
         from ...prompts import product_block

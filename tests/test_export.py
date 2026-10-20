@@ -48,22 +48,37 @@ export_docx(sb, OUT)
 doc = Document(OUT)
 check("文档可正常打开", True, f"{len(doc.paragraphs)}段落/{len(doc.tables)}表格")
 
+table = doc.tables[0]
 n_shots = len(sb["shots"])
-full = "\n".join(p.text for p in doc.paragraphs)
-# V2.0：分镜改为每镜头独立小节（不再用一张大表），不再断言 tables[0]
-check("每镜头有独立小节", all(f"镜头 {i+1}" in full for i in range(n_shots)),
-      f"shots={n_shots}")
-check("旧'总拍摄时长'文案已移除", "总拍摄时长" not in full)
-check("有'成片目标时长'", "成片目标时长" in full)
-check("有'预计现场拍摄耗时'", "预计现场拍摄耗时" in full)
+check("分镜表行数=表头+镜头数", len(table.rows) == n_shots + 1,
+      f"rows={len(table.rows)}, shots={n_shots}")
+check("表头6列完整", len(table.rows[0].cells) == 6)
+
+# tblHeader 检查
+hdr_tcPr = table.rows[0].cells[0]._tc.get_or_add_tcPr()
+has_tblHeader = hdr_tcPr.find(qn("w:tblHeader")) is not None
+check("表头行跨页重复(tblHeader)", has_tblHeader)
+
+# cantSplit 检查（抽查所有行）
+def row_cantsplit(row):
+    trPr = row._tr.find(qn("w:trPr"))
+    if trPr is None:
+        return False
+    el = trPr.find(qn("w:cantSplit"))
+    return el is not None and el.get(qn("w:val"), "true") == "true"
+
+all_rows = all(row_cantsplit(r) for r in table.rows)
+check("所有行不跨页断开(cantSplit)", all_rows)
 
 # 内容完整性
+full = "\n".join(p.text for p in doc.paragraphs)
 check("含产品信息", sb["product_summary"][:8] in full)
 check("含创意方向", sb["creative_direction"][:6] in full)
 check("含素材清单", all(m[:6] in full for m in sb["materials_checklist"][:3]))
 check("含风险提示", any(r["text"][:6] in full for r in sb["risk_flags"]))
 check("含待确认事项", all(c[:6] in full for c in sb["pending_confirmations"][:2]))
 check("中文标题正常", "短视频拍摄执行单" in full)
+check("总时长行存在", "总拍摄时长" in full)
 
 print("\n==== 汇总 ====")
 failed = [n for n, ok, _ in results if not ok]

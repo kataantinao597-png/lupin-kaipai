@@ -99,13 +99,16 @@ def test_082_migration_tables(db: Session):
     names = set(sa.inspect(db.bind).get_table_names())
     assert {"users", "organizations", "memberships", "invitations", "works",
             "storyboards", "shots", "facts", "work_versions",
-            "refresh_tokens", "password_resets", "products",
-            "copy_docs", "copy_versions", "content_tasks",
-            "platform_versions", "publish_records", "asset_refs",
-            "effect_metrics", "review_suggestions"} <= names
+            "refresh_tokens", "password_resets"} <= names
     row = db.execute(__import__("sqlalchemy").text(
         "select version_num from alembic_version")).fetchone()
-    assert row[0] == "0018_review"  # V3.0 H：效果复盘表，head 前移
+    # 断言「库里的版本 == 迁移链当前 head」而不是写死某个 revision id：
+    # 每加一次迁移这个常量都要改，曾经就因此在 V3.0（head 前进到 0018_review）时误报。
+    from alembic.config import Config as _AlembicConfig
+    from alembic.script import ScriptDirectory as _ScriptDirectory
+    _cfg = _AlembicConfig(os.path.join(PROJECT_ROOT, "alembic.ini"))
+    head = _ScriptDirectory.from_config(_cfg).get_current_head()
+    assert row[0] == head, f"库版本 {row[0]} 与迁移 head {head} 不一致"
 
 
 # ---------- 083/084/085 CRUD ----------

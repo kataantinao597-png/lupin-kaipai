@@ -80,12 +80,50 @@ def ensure_indexes(engine: Engine) -> None:
         Index("ix_fact_org_status", biz_models.Fact.org_id,
               biz_models.Fact.status),
         Index("ix_workversion_work", biz_models.WorkVersion.work_id),
+        # 2026-10-20：台账按组织查询（用量仪表盘/配额/报表）
+        Index("ix_aicall_org", biz_models.AICall.org_id),
     ]
     for ix in pending:
         try:
             ix.create(engine, checkfirst=True)
         except Exception:
             # 索引已存在或后端不支持时忽略，不阻断启动
+            pass
+
+
+def ensure_columns(engine: Engine) -> None:
+    """存量库补列（幂等）。
+
+    `create_all(checkfirst=True)` 只补建缺失的**表**，不会给已存在的表加列。
+    本项目的库历史上是 create_all 建的（alembic 版本戳落后），所以模型新增
+    列后必须在启动时显式 ALTER，否则该列在解析 SQL 时就会报
+    `no such column`，台账写入会被静默丢弃。
+
+    只允许追加可空列 / 带默认值的列，不做任何改列或删列。
+    """
+    from sqlalchemy import inspect, text
+
+    pending = [
+        # 2026-10-20 P1：AI 调用台账的组织归属（同步调用没有 ai_tasks 行）
+        ("ai_calls", "org_id", "VARCHAR(32)"),
+    ]
+    try:
+        insp = inspect(engine)
+        tables = set(insp.get_table_names())
+    except Exception:
+        return
+    for table, col, ddl_type in pending:
+        if table not in tables:
+            continue
+        try:
+            existing = {c["name"] for c in insp.get_columns(table)}
+            if col in existing:
+                continue
+            with engine.begin() as conn:
+                conn.execute(text(
+                    f"ALTER TABLE {table} ADD COLUMN {col} {ddl_type}"))
+        except Exception:
+            # 并发启动/权限不足时不阻断启动；下一轮启动会再试
             pass
 
 
@@ -112,6 +150,7 @@ def get_engine() -> Engine:
         # 避免 create_all 与迁移版本表打架；本地开发默认保持开箱即用。
         if os.environ.get("LUPIN_DB_AUTO_CREATE", "1") != "0":
             Base.metadata.create_all(_engine)
+        ensure_columns(_engine)  # 2026-10-20：存量库补新增列（幂等）
         ensure_indexes(_engine)  # 094：存量库补建高频查询索引
     return _engine
 

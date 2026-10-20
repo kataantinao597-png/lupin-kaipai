@@ -7,16 +7,22 @@ TODO(021)：合并逻辑迁 services/feasibility_service.py。
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError, DEFAULT_MODEL
 from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
+from ...auth.database import get_db
+from ...auth.models import User
 from ...core.deps import get_ai_gateway, get_request_model
 from ...ai.prompts import get_prompt_version
 from ...prompts import build_feasibility_messages
 from ...schemas import FeasibilityReport
 from ...validator import rule_feasibility_scan, validate_dict
+from ._ai_guard import bind_gateway_org, enforce_ai_org, optional_user
 
 router = APIRouter(tags=["feasibility"])
 
@@ -68,8 +74,13 @@ def check_feasibility(
     req: FeasibilityCheckRequest,
     request: Request,
     gw=Depends(get_ai_gateway),
+    user: Optional[User] = Depends(optional_user),
+    db: Session = Depends(get_db),
 ):
     """智能拍摄可行性检查：规则预检 + 模型批量分析（一次请求覆盖所有镜头）。"""
+    # P0：声称了 org_id 就必须登录且是该组织成员（否则可匿名替他人扣预算）
+    _org = enforce_ai_org(request, None, user, db)
+    bind_gateway_org(gw, _org)
     errors, sb = validate_dict(req.storyboard)
     if errors:
         raise HTTPException(status_code=400, detail="分镜未通过校验，无法检查：" + "; ".join(errors[:3]))

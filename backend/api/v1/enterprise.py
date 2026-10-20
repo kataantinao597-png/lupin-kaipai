@@ -218,8 +218,8 @@ def usage_report(
     storage_mb（快照）、members（快照）、tasks（当前各状态数，快照）。
 
     说明：
-    - ai_calls 经 ai_tasks 归属组织；同步调用（task_id 为空）无法归属，
-      不计入组织报表（data.unattributed_note 说明）。
+    - ai_calls 按 `org_id` 归属（同步/异步都写）；存量行回退
+      `task_id → ai_tasks.org_id`。口径统一在 `services/ai_ledger.py`。
     - storage/tasks 为"当前快照"，非时间范围聚合。
 
     错误码：4000（日期格式非法）、4002（组织不存在/无权限，防枚举）。
@@ -239,13 +239,13 @@ def usage_report(
     f_naive = d_from.replace(tzinfo=None)
     t_naive = d_to.replace(tzinfo=None)
 
+    from ...services.ai_ledger import org_calls_query
     rows = (
-        db.query(models.AICall.total_tokens, models.AICall.cost_cents,
-                 models.AICall.model, models.AICall.task_type,
-                 models.AICall.status)
-        .join(models.AITask, models.AICall.task_id == models.AITask.id)
-        .filter(models.AITask.org_id == org_id,
-                models.AICall.created_at >= f_naive,
+        org_calls_query(db, org_id)
+        .with_entities(models.AICall.total_tokens, models.AICall.cost_cents,
+                       models.AICall.model, models.AICall.task_type,
+                       models.AICall.status)
+        .filter(models.AICall.created_at >= f_naive,
                 models.AICall.created_at <= t_naive)
         .all()
     )
@@ -288,7 +288,7 @@ def usage_report(
         "tasks_by_status": task_states,
         "notes": [
             "storage_mb/members/tasks_by_status 为当前快照，非时间范围聚合。",
-            "同步 AI 调用（task_id 为空）无法归属组织，未计入 ai 统计。",
+            "ai 统计含同步与异步调用；匿名调用（无组织）不计入任何组织。",
             "cost_cents 为调用时按当时价格估算，仅供参考，不代表实际账单。",
         ],
     })

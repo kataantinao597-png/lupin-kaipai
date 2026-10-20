@@ -14,7 +14,18 @@ CONNECT_TIMEOUT = 15
 READ_TIMEOUT = 120
 TOTAL_TIMEOUT = 600
 
-CONFIG_PATH = "/home/hatch/.omp/agent/models.yml"
+DEFAULT_CONFIG_PATH = "~/.omp/agent/models.yml"
+
+
+def config_path() -> str:
+    """模型配置文件路径（本地开发兜底用）。
+
+    优先级：`LUPIN_MODEL_CONFIG` 环境变量 > `~/.omp/agent/models.yml`。
+    原实现硬编码 `/home/hatch/.omp/agent/models.yml`，换机/换部署环境后
+    必然读不到，只能靠 `LUPIN_API_KEY` 兜底，排查时很容易误判成「Key 失效」。
+    """
+    raw = os.environ.get("LUPIN_MODEL_CONFIG", "").strip() or DEFAULT_CONFIG_PATH
+    return os.path.normpath(os.path.expanduser(raw))
 
 
 def parse_json_content(content):
@@ -76,12 +87,15 @@ def load_api_key() -> str:
     env_key = os.environ.get("LUPIN_API_KEY", "").strip()
     if env_key:
         return env_key
+    path = config_path()
     try:
-        with open(CONFIG_PATH, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             d = yaml.safe_load(f)
         key = d["providers"]["deepkey"]["apiKey"]
     except Exception as e:
-        raise AIConfigError(f"读取模型配置失败: {type(e).__name__}（可改用 LUPIN_API_KEY 环境变量）")
+        raise AIConfigError(
+            f"读取模型配置失败: {type(e).__name__}（尝试 {path}；"
+            "可改用 LUPIN_API_KEY 环境变量或 LUPIN_MODEL_CONFIG 指定配置文件）")
     if not key:
         raise AIConfigError("模型配置中未找到 apiKey")
     return key

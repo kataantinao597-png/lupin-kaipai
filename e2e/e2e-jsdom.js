@@ -13,7 +13,8 @@ const { JSDOM } = require('jsdom');
 const fs = require('fs');
 const path = require('path');
 
-const FE = '/home/hatch/workspace/lupin-kaipai/frontend';
+// 相对本文件定位前端目录，避免绑定某一台机器的绝对路径
+const FE = path.resolve(__dirname, '..', 'frontend');
 const results = [];
 const shot = (n, ok, d = '') => { results.push(!!ok); console.log(`${ok ? 'PASS' : 'FAIL'} ${n} ${d}`); };
 

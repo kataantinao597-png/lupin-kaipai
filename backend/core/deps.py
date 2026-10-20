@@ -127,8 +127,12 @@ def get_ai_gateway(request: Request):
     from ..ai.gateway import AIGateway
     from ..auth.database import get_db as _get_db
     svc = get_ai_service(request)
-    # org_id：从请求头 X-Org-Id 取（v1 新体系）；没有则 None（跳过预算）
-    org_id = request.headers.get("X-Org-Id", "").strip() or None
+    # org_id：优先请求头 X-Org-Id（v1 新体系），其次 ?org_id= 查询参数。
+    # 生产网关会剥离自定义请求头，只留 Cookie；若无 query 兜底，预算会静默失效
+    # （表现为"预算已生效"但实际一分钱都没记账）。两者都没有则 None → 跳过预算。
+    org_id = (request.headers.get("X-Org-Id", "").strip()
+              or (request.query_params.get("org_id") or "").strip()
+              or None)
     # db：有则做预算检查/扣减；拿不到也不阻断（降级为只记日志）
     db_gen = _get_db()
     try:
