@@ -108,6 +108,32 @@ transform:rotate(-8deg);box-shadow:0 12px 28px -8px rgba(0,0,0,.55),inset 0 0 0 
 animation:sealIn .7s cubic-bezier(.2,.9,.3,1.25) .6s both;z-index:2}
 .meander{height:12px;margin:24px 2px 6px;opacity:.85;
 background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='12' viewBox='0 0 28 12'%3E%3Cpath d='M1 11 V2 H27 V9 H8 V5 H18' fill='none' stroke='%23C62828' stroke-width='1.6'/%3E%3C/svg%3E") repeat-x left center;background-size:28px 12px}
+/* ---------- Phase4 非遗深化：回纹页眉/空状态剪纸/印章徽章/落印/骨架屏/签条 ---------- */
+.page-meander{height:9px;margin:10px 2px 20px;opacity:.5;
+background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='12' viewBox='0 0 28 12'%3E%3Cpath d='M1 11 V2 H27 V9 H8 V5 H18' fill='none' stroke='%23C62828' stroke-width='1.6'/%3E%3C/svg%3E") repeat-x left center;background-size:24px 10px}
+.empty-state{text-align:center;padding:28px 16px;color:var(--muted)}
+.empty-state>svg{width:56px;height:56px;opacity:.55}
+.empty-state .empty-text{font-size:13.5px;margin-top:10px;color:var(--ink2)}
+.empty-state .empty-hint{font-size:12.5px;margin-top:3px}
+.empty-state.compact{padding:12px 8px;display:flex;align-items:center;justify-content:center;gap:10px;text-align:left}
+.empty-state.compact>svg{width:27px;height:27px;flex:none}
+.empty-state.compact .empty-text{margin-top:0;font-size:13px}
+.empty-state.compact .empty-hint{margin-top:1px;font-size:12px}
+.stamp-badge{display:inline-flex;align-items:center;background:#C62828;color:#FFF3E2;border-radius:4px 5px 4px 6px;
+padding:3px 8px;font-size:11.5px;font-weight:800;letter-spacing:.16em;line-height:1.5;flex:none;
+box-shadow:inset 0 0 0 1.5px rgba(255,243,226,.5),0 1px 3px rgba(198,40,40,.28);transform:rotate(-2deg)}
+.work .cover .stamp-badge{position:absolute;top:10px;right:10px}
+.fact-row .stamp-badge{margin-left:auto}
+.stamp-pop{position:absolute;top:-9px;right:16px;z-index:6;background:#C62828;color:#FFF3E2;border-radius:5px 6px 5px 7px;
+padding:4px 10px;font-size:12.5px;font-weight:900;letter-spacing:.22em;pointer-events:none;white-space:nowrap;
+box-shadow:inset 0 0 0 2px rgba(255,243,226,.55),0 8px 18px -6px rgba(198,40,40,.5);animation:sealIn .6s cubic-bezier(.2,.9,.3,1.25) both}
+.stamp-pop.fixed{position:fixed;top:auto;bottom:92px;right:24px;z-index:400}
+.copy-ver{position:relative}
+.skel-body{position:relative}
+.skel-flower{position:absolute;inset:0;display:grid;place-content:center;pointer-events:none;opacity:.08}
+.skel-flower>svg{width:118px;height:118px}
+.region-tag{display:inline-flex;align-items:center;border:1.5px solid #C62828;color:#B02A20;background:#FBF5E6;
+border-radius:3px;padding:0 7px;font-size:11.5px;font-weight:700;letter-spacing:.24em;line-height:1.7;white-space:nowrap}
 .marquee{overflow:hidden;padding:13px 28px;margin-top:16px}
 .marquee-track{display:flex;align-items:center;gap:28px;width:max-content;animation:drift 32s linear infinite;
 font-size:13.5px;color:var(--ink2);white-space:nowrap}
@@ -528,6 +554,7 @@ input[type=file]{display:none}
     <!-- ============ v1 工作台总览 ============ -->
     <section class="view" id="v1">
       <div class="greet"><h2 id="greet_title">上午好。把山东好物，拍成值得记住的故事。</h2><p id="greet_text">正在加载工作台数据…</p></div>
+      <div class="page-meander" aria-hidden="true"></div>
       <div class="quick stagger">
         <button type="button" class="card qa" id="qa_new"><span class="ic" style="background:linear-gradient(135deg,#0F5132,#2E7D6B)"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span><div><b>创建新作品</b><span>从产品资料开始</span></div></button>
         <button type="button" class="card qa" id="qa_import" style="cursor:pointer"><span class="ic" style="background:linear-gradient(135deg,#2E7D6B,#8FC3B0)"><svg viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg></span><div><b>导入已有产品</b><span>上传文档抽取事实</span></div></button>
@@ -557,6 +584,7 @@ input[type=file]{display:none}
         <h2 class="page-title" style="margin:0" id="w2_title">产品资料</h2><span class="pill amber" id="w2_status">草稿</span>
         <span style="margin-left:auto;display:flex;gap:10px"><button class="btn ghost sm" id="btn_save_product">保存</button><button class="btn primary sm" id="btn_to_v3">下一步 →</button></span>
       </div>
+      <div class="page-meander" aria-hidden="true"></div>
       <div class="p2">
         <div class="card panel"><h3>产品基本信息</h3><div class="form-stack">
           <label class="f">产品名称 <span class="req">*</span><input id="p_name" placeholder="如：章丘大葱"></label>
@@ -601,6 +629,7 @@ input[type=file]{display:none}
         <h2 class="page-title" style="margin:0" id="w3_title">创意策划</h2>
         <span style="margin-left:auto;display:flex;gap:10px"><button class="btn ghost sm" data-goto="v2">上一步</button><button class="btn primary sm" data-goto="v5">去拍摄 →</button></span>
       </div>
+      <div class="page-meander" aria-hidden="true"></div>
       <div class="stepper" id="stepper"></div>
       <div class="card panel" style="margin-bottom:18px">
         <h3>创意方案 <span class="pill gray" id="ideas_count">尚未生成</span></h3>
@@ -660,6 +689,7 @@ input[type=file]{display:none}
         <h2 class="page-title" style="margin:0" id="w4_title">海报制作</h2>
         <span style="margin-left:auto;display:flex;gap:10px"><button class="btn ghost sm" data-goto="v3">← 返回</button><button class="btn ghost sm" id="btn_poster_save">存草稿</button><button class="btn primary sm" id="btn_poster_png">导出 PNG</button></span>
       </div>
+      <div class="page-meander" aria-hidden="true"></div>
       <div class="p4">
         <div class="card panel"><h3>模板库</h3><div class="tpl" id="poster_tpls">
           <button type="button" class="t active" data-tpl="harvest" data-name="丰收橙" style="background:linear-gradient(160deg,#7A2E1D,#E8A25C)"><span class="t-name">丰收橙</span></button>
@@ -698,6 +728,7 @@ input[type=file]{display:none}
         <h2 class="page-title" style="margin:0" id="w5_title">拍摄执行</h2><span class="pill blue" id="shoot_progress">拍摄进度</span>
         <span style="margin-left:auto;display:flex;gap:10px"><button class="btn ghost sm" id="btn_print">台本打印预览</button><button class="btn primary sm" data-goto="v6">去交付 →</button></span>
       </div>
+      <div class="page-meander" aria-hidden="true"></div>
       <div class="p5">
         <div class="card panel"><h3>拍摄清单 <span style="font-size:12.5px;color:var(--muted);font-weight:400">点击勾选完成</span></h3>
           <div id="shoot_list"><p style="font-size:13.5px;color:var(--muted)">暂无分镜，请先在「创意策划」页生成分镜。</p></div>
@@ -761,10 +792,10 @@ input[type=file]{display:none}
 
     <!-- ============ v6 交付中心 ============ -->
     <section class="view" id="v6">
-      <div class="meander" style="margin-top:0"></div>
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">
         <h2 class="page-title" style="margin:0" id="w6_title">交付中心</h2><span class="pill green" id="w6_status">待交付</span>
       </div>
+      <div class="page-meander" aria-hidden="true"></div>
       <div class="p6">
         <div>
           <div class="card panel"><h3>交付检查 <span style="font-size:12.5px;color:var(--muted);font-weight:400">勾选 = 人工已确认</span></h3>
@@ -839,6 +870,7 @@ input[type=file]{display:none}
 </div></div>
 <div class="modal-mask" id="cfg_modal"><div class="modal">
   <h3>模型配置</h3>
+  <div class="page-meander" style="margin:10px 0 2px" aria-hidden="true"></div>
   <p style="font-size:12.5px;color:var(--muted);margin-bottom:14px">自带 Key 调用 AI（走兼容接口）。Key 只保存在当前浏览器标签页，关闭即清除，不会上传到服务器。</p>
   <div class="form-stack">
     <label class="f">API Base URL<input id="cfg_base" placeholder="留空用服务端默认"></label>

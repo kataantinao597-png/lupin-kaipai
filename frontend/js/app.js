@@ -13,6 +13,30 @@ const V1 = (r) => (r && r.data && r.data.data !== undefined) ? r.data.data : (r 
 const RAW = (r) => (r ? r.data : null);
 
 let toastTimer = null;
+
+/* ---------- Phase4 非遗深化：团花线稿（复用 v0 剪纸团花 #pf 的几何路径） ---------- */
+const FLOWER_SVG = `<svg viewBox="0 0 100 100" fill="none" aria-hidden="true"><circle cx="50" cy="50" r="45" stroke="#D4A05A" stroke-width="2.5" stroke-dasharray="7 6"/><g stroke="#C62828" stroke-width="2.5"><ellipse cx="50" cy="25" rx="11" ry="24"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(45 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(90 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(135 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(180 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(225 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(270 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(315 50 50)"/><circle cx="50" cy="50" r="9"/><circle cx="50" cy="50" r="3" fill="#C62828" stroke="none"/></g></svg>`;
+
+/* 空状态渲染助手：团花线稿 + 引导文字；报错态不走这里（保持现有 err 样式） */
+function emptyState(text, hint, compact) {
+  return `<div class="empty-state${compact ? " compact" : ""}" role="status">${FLOWER_SVG}<div class="empty-tx"><p class="empty-text">${esc(text)}</p>${hint ? `<p class="empty-hint">${esc(hint)}</p>` : ""}</div></div>`;
+}
+
+/* 落印反馈：在关键确认成功时于卡片角落盖一枚小印；锚点找不到则落到右下角兜底 */
+function stampPop(anchor, text) {
+  const s = document.createElement("span");
+  s.className = "stamp-pop";
+  s.textContent = text;
+  s.setAttribute("aria-hidden", "true");
+  if (anchor && anchor.isConnected) {
+    if (getComputedStyle(anchor).position === "static") anchor.style.position = "relative";
+    anchor.appendChild(s);
+  } else {
+    s.classList.add("fixed");
+    document.body.appendChild(s);
+  }
+  setTimeout(() => s.remove(), 2000);
+}
 function toast(msg) {
   const el = $("toast");
   el.textContent = msg;
@@ -485,7 +509,7 @@ async function renderOverview() {
         <div class="progress"><i style="width:${lp.pct}%"></i></div></div>
         <button class="btn primary" data-ov-open="${esc(last.id)}">继续创作 →</button>
       </div>`
-    : `<div class="card ov-last"><div class="ov-last-tx"><h3>还没有作品</h3><p>进入工作台，点「新建作品」，从一件山东好物开始。</p></div></div>`}
+    : `<div class="card ov-last">${emptyState("还没有作品", "进入工作台，点「新建作品」，从一件山东好物开始。")}</div>`}
     <div class="ov-todos">
       ${todo(pendingShots, "个镜头待验收", "v5", "var(--primary)")}
       ${todo(pendingRisks, "条风险待确认", "v3", "var(--red)")}
@@ -530,18 +554,19 @@ async function renderWorkbench() {
   if (S.workFilter === "active") items = items.filter((w) => (w.status || "draft") !== "archived");
   if (S.workFilter === "done") items = items.filter((w) => (w.status || "") === "archived");
   if (!items.length) {
-    grid.innerHTML = '<p style="color:var(--muted);grid-column:1/-1">暂无作品，点击「创建新作品」开始。</p>';
+    grid.innerHTML = '<div style="grid-column:1/-1">' + emptyState("暂无作品", "点击「创建新作品」开始。") + '</div>';
   } else {
     grid.innerHTML = items.map((w, i) => {
       const d = w.data || {};
       const p = workProgress(d);
       const name = (d.product && d.product.product_name) || w.title;
       const done = w.status === "archived";
+      const origin = ((d.product || {}).origin || "").trim();
       // I-9：封面优先真实图（海报 AI 图 → 素材首图懒加载），无图回退 COVERS 渐变
       const aiImg = ((d.poster || {}).ai_image || "").trim();
       return `<div class="card work" data-id="${esc(w.id)}" tabindex="0" role="button" aria-label="打开作品 ${esc(name)}">
-        <div class="cover"${aiImg ? "" : ` data-cover-need="${esc(w.id)}"`} style="background:${COVERS[i % COVERS.length]}">${aiImg ? `<img class="cover-img" alt="" src="${esc(aiImg)}">` : ""}<span class="pill ${done ? "green" : "amber"}">${done ? "已归档" : "进行中"}</span></div>
-        <div class="body"><h4>${esc(name)}</h4><div class="date">${esc((w.updated_at || "").slice(0, 16).replace("T", " "))}</div>
+        <div class="cover"${aiImg ? "" : ` data-cover-need="${esc(w.id)}"`} style="background:${COVERS[i % COVERS.length]}">${aiImg ? `<img class="cover-img" alt="" src="${esc(aiImg)}">` : ""}${done ? '<span class="stamp-badge">已归档</span>' : '<span class="pill amber">进行中</span>'}</div>
+        <div class="body"><h4>${esc(name)}</h4><div style="display:flex;align-items:center;gap:8px"><div class="date">${esc((w.updated_at || "").slice(0, 16).replace("T", " "))}</div>${origin ? `<span class="region-tag" style="margin-left:auto">${esc(origin)}</span>` : ""}</div>
         <div class="meta"><span>${esc(p.stage)}</span><span>${p.pct}%</span></div><div class="progress"><i style="width:${p.pct}%"></i></div>
         <div style="display:flex;gap:8px;margin-top:10px">
           <button class="btn ghost sm" data-act="open" style="flex:1;justify-content:center">继续创作</button>
@@ -700,7 +725,7 @@ function renderFacts() {
   const pending = S.facts.filter((f) => f.status === "pending_review").length;
   $("fact_summary").textContent = S.facts.length ? `已确认 ${confirmed} / 待审核 ${pending} / 共 ${S.facts.length}` : "";
   if (!S.facts.length) {
-    list.innerHTML = '<p style="font-size:12.5px;color:var(--muted)">暂无事实。添加已确认的产品信息，AI 生成时将优先使用有依据的内容。</p>';
+    list.innerHTML = emptyState("暂无事实", "添加已确认的产品信息，AI 生成时将优先使用有依据的内容。", true);
     return;
   }
   list.innerHTML = S.facts.map((f) => {
@@ -713,7 +738,7 @@ function renderFacts() {
     else if (f.status === "rejected" || f.status === "expired" || f.status === "revoked") actions = `<button class="btn ghost sm" data-fact="resubmit" data-id="${esc(f.id)}">重新提交</button>`;
     return `<div class="fact-row"><span class="dot" style="background:${dot}"></span>
       <div><b>${esc(f.content)}</b><span>分类：${esc(f.category || "—")}　来源：${esc(f.source_ref || "未填写")}　v${f.version || 1}${f.allow_use === false ? "　· 不用于生成" : ""}</span></div>
-      <span class="pill ${tone}">${label}</span></div>
+      ${f.status === "confirmed" ? '<span class="stamp-badge">已确认</span>' : `<span class="pill ${tone}">${label}</span>`}</div>
       <div style="display:flex;gap:8px;margin:2px 0 10px 18px;flex-wrap:wrap">
         ${actions}
         <button class="btn ghost sm" data-fact="edit" data-id="${esc(f.id)}">编辑内容</button>
@@ -759,6 +784,11 @@ async function factAction(act, id) {
       return;
     }
     await loadFacts();
+    if (act === "confirm") {
+      const fb = $("fact_list")?.querySelector(`[data-fact="revoke"][data-id="${id}"]`);
+      const frow = fb ? fb.closest("div")?.previousElementSibling : null;
+      stampPop(frow && frow.classList.contains("fact-row") ? frow : (fb ? fb.closest("div") : null), "已确认");
+    }
   } catch (e) {
     toast("操作失败：" + (e.message || "网络错误"));
   }
@@ -843,7 +873,7 @@ function renderProductInfo() {
   const p = S.products.find((x) => x.id === S.selectedProductId);
   if (!p) { info.textContent = S.selectedProductId ? "" : "不选则显示该组织全部事实；选中后事实列表只显示该产品，新建事实自动归属该产品。"; return; }
   const pts = (p.selling_points || []).slice(0, 3).join("、");
-  info.innerHTML = `品类：${esc(p.category || "—")}　产地：${esc(p.origin || "—")}${p.brand_tone ? `<br>品牌语气：${esc(p.brand_tone)}` : ""}${pts ? `<br>核心卖点：${esc(pts)}${(p.selling_points || []).length > 3 ? "…" : ""}` : ""}`;
+  info.innerHTML = `品类：${esc(p.category || "—")}　产地：${p.origin ? `<span class="region-tag">${esc(p.origin)}</span>` : "—"}${p.brand_tone ? `<br>品牌语气：${esc(p.brand_tone)}` : ""}${pts ? `<br>核心卖点：${esc(pts)}${(p.selling_points || []).length > 3 ? "…" : ""}` : ""}`;
 }
 
 /* ---------- V3.0 B-4：v3 生成页产品档案选择器 ---------- */
@@ -1274,7 +1304,7 @@ function renderShots() {
     return d;
   })();
   if (!sb || !(sb.shots || []).length) {
-    wrap.innerHTML = '<p style="color:var(--muted)">暂无分镜，请先选择创意方向并生成。</p>';
+    wrap.innerHTML = emptyState("暂无分镜", "请先选择创意方向并生成。");
     $("sb_meta").textContent = "";
     return;
   }
@@ -1674,7 +1704,7 @@ function renderShoot() {
 const sb = S.data.storyboard;
 const list = $("shoot_list");
 if (!sb ||!(sb.shots || []).length) {
-list.innerHTML = '<p style="font-size:13.5px;color:var(--muted)">暂无分镜，请先在「创意策划」页生成分镜。</p>';
+list.innerHTML = emptyState("暂无分镜", "请先在「创意策划」页生成分镜。");
 $("shoot_progress").textContent = "拍摄进度";
 $("shoot_bar").style.width = "0%"; $("shoot_pct").textContent = "0%";
 return;
@@ -2346,7 +2376,7 @@ try {
 const list = V1(await ApiClient.get(`/api/v1/assets?org_id=${encodeURIComponent(S.org.id)}&work_id=${encodeURIComponent(S.activeWork.id)}`)) || [];
 $("asset_count").textContent = list.length? `${list.length} 条`: "";
 if (!list.length) {
-grid.innerHTML = '<p style="font-size:12.5px;color:var(--muted);grid-column:1/-1">暂无素材，点击下方按钮上传。</p>';
+grid.innerHTML = '<div style="grid-column:1/-1">' + emptyState("暂无素材", "点击下方按钮上传。", true) + '</div>';
 return;
 }
 grid.innerHTML = list.map((a) => {
@@ -2433,7 +2463,7 @@ if (!S.activeWork) { panel.innerHTML = '<p style="font-size:13.5px;color:var(--m
 try {
 const t = V1(await ApiClient.get(`/api/v1/works/${S.activeWork.id}/timeline`));
 if (!t ||!(t.shots || []).length) {
-panel.innerHTML = '<p style="font-size:13.5px;color:var(--muted)">暂无分镜时间轴，请先生成分镜。</p>';
+panel.innerHTML = emptyState("暂无分镜时间轴", "请先生成分镜。", true);
 return;
 }
 panel.innerHTML =
@@ -2660,7 +2690,7 @@ async function renderFinalArchive() {
       "&work_id=" + encodeURIComponent(S.activeWork.id))) || [];
     const videos = list.filter((a) => (a.mime || "").indexOf("video/") === 0);
     if (!videos.length) {
-      box.innerHTML = '<p style="font-size:12.5px;color:var(--muted);padding:8px 6px">暂无归档成片。</p>';
+      box.innerHTML = emptyState("暂无归档成片", "", true);
       return;
     }
     box.innerHTML = videos.map((v) =>
@@ -2742,7 +2772,7 @@ function renderCasesGrid() {
   $("cases_grid").innerHTML = SAMPLE_CASES.map((c, i) =>
     '<div class="card" style="padding:0;overflow:hidden">' +
     '<img src="' + c.img + '" alt="' + esc(c.name) + '" style="width:100%;aspect-ratio:16/10;object-fit:cover">' +
-    '<div style="padding:14px"><b style="font-size:14px">' + esc(c.name) + '</b>' +
+    '<div style="padding:14px"><b style="font-size:14px">' + esc(c.name) + '</b>' + (c.product && c.product.origin ? '<span class="region-tag" style="margin-left:8px">' + esc(c.product.origin) + '</span>' : '') +
     '<p style="font-size:12.5px;color:var(--ink2);margin:8px 0;line-height:1.7">' + esc(c.desc) + '</p>' +
     '<button class="btn primary sm" style="width:100%;justify-content:center" data-case="' + i + '">一键套用</button></div></div>'
   ).join("");
@@ -3122,8 +3152,9 @@ function copyRiskBadge(v) {
 /* 视图首屏骨架屏：进入视图时先渲染加载态，数据到了再替换成真实内容 */
 function viewSkeleton(headTitle, headSub) {
   return `<div class="page-head"><div class="skel skel-head" aria-hidden="true"></div>
-    ${headSub ? `<div class="skel skel-sub" aria-hidden="true"></div>` : ""}</div>
-    <div role="status" aria-label="加载中">
+    ${headSub ? `<div class="skel skel-sub" aria-hidden="true"></div>` : ""}<div class="page-meander" style="opacity:.22;margin-bottom:14px" aria-hidden="true"></div></div>
+    <div class="skel-body" role="status" aria-label="加载中">
+    <div class="skel-flower" aria-hidden="true">${FLOWER_SVG}</div>
     <div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div>
     </div>`;
 }
@@ -3131,12 +3162,12 @@ function viewSkeleton(headTitle, headSub) {
 async function renderCopyOpt() {
   const sec = $("v7");
   if (!sec) return;
-  if (!S.org) { sec.innerHTML = '<div class="page-head"><h2>文案优化器</h2><p class="muted">请先登录并选择组织</p></div>'; return; }
+  if (!S.org) { sec.innerHTML = '<div class="page-head"><h2>文案优化器</h2><p class="muted">请先登录并选择组织</p><div class="page-meander" aria-hidden="true"></div></div>'; return; }
   sec.innerHTML = viewSkeleton(); // 先给加载态：线上网关延迟下不能留白
   await loadCopyDocs();
   sec.innerHTML = `
     <div class="page-head"><h2>文案优化器</h2>
-    <p class="muted">优化已有文案 / 从零生成 / 视频脚本 / 发布文案 / 平台适配 —— 未经你确认，不会覆盖任何已确认版本</p></div>
+    <p class="muted">优化已有文案 / 从零生成 / 视频脚本 / 发布文案 / 平台适配 —— 未经你确认，不会覆盖任何已确认版本</p><div class="page-meander" aria-hidden="true"></div></div>
     <div class="copy-wrap">
       <div class="copy-side">
         <div class="card"><h3>文案文档</h3><div id="copy_doc_list"></div>
@@ -3194,7 +3225,7 @@ async function deleteCopyDoc(id) {
 function renderCopyDocList() {
   const el = $("copy_doc_list");
   if (!el) return;
-  if (!COPY.docs.length) { el.innerHTML = '<p class="muted">还没有文案文档，右侧新建一个开始。</p>'; return; }
+  if (!COPY.docs.length) { el.innerHTML = emptyState("还没有文案文档", "右侧新建一个开始。", true); return; }
   el.innerHTML = COPY.docs.map((d) => `
     <div class="copy-doc-item ${COPY.doc && COPY.doc.id === d.id ? "active" : ""}" data-id="${d.id}">
       <div><b>${esc(d.title)}</b> <span class="pill">${esc(copyKindLabel(d.kind))}</span></div>
@@ -3334,7 +3365,7 @@ function renderCopyVersions() {
     return `<div class="copy-ver ${isDraft ? "is-draft" : ""}">
       <div class="row" style="justify-content:space-between;align-items:center">
         <div><b>v${v.version_no}</b> <span class="pill">${esc(copyModeLabel(v.mode))}</span>
-          ${isDraft ? '<span class="pill amber">草稿待确认</span>' : '<span class="pill green">已确认</span>'}
+          ${isDraft ? '<span class="pill amber">草稿待确认</span>' : '<span class="stamp-badge">已确认</span>'}
           ${copyRiskBadge(v)}
           ${v.restored_from ? '<span class="pill">恢复版本</span>' : ""}</div>
         <div class="row" style="gap:6px">
@@ -3374,6 +3405,7 @@ async function confirmCopyVersion(id) {
       `/api/v1/copy/docs/${COPY.doc.id}/versions/${id}/confirm?org_id=` + encodeURIComponent(S.org.id), {}));
     await openCopyDoc(COPY.doc.id);
     toast("已确认为当前版本 v" + r.current_version.version_no);
+    stampPop(document.querySelector(`.copy-ver [data-id="${id}"]`)?.closest(".copy-ver"), "已确认");
   } catch (e) { toast("确认失败：" + (e.message || e)); }
 }
 
@@ -3518,7 +3550,7 @@ async function loadPlatformList(versionId) {
     const r = V1(await ApiClient.get(
       `/api/v1/platforms/copy/docs/${COPY.doc.id}/platforms?org_id=` + encodeURIComponent(S.org.id)));
     const items = r.items || [];
-    if (!items.length) { el.innerHTML = '<p class="muted">还没有平台版本，先选平台生成一个</p>'; return; }
+    if (!items.length) { el.innerHTML = emptyState("还没有平台版本", "先选平台生成一个", true); return; }
     el.innerHTML = items.map((p) => `
       <div class="copy-ver" style="margin-top:8px">
         <div class="row" style="justify-content:space-between;align-items:center">
@@ -3658,6 +3690,7 @@ async function reviewPlatform(pid, versionId, items) {
     await ApiClient.post(`/api/v1/platforms/${pid}/review?org_id=` + encodeURIComponent(S.org.id), { reviewed });
     toast(reviewed ? "已标记为人工审核" : "已取消审核标记");
     await loadPlatformList(versionId);
+    if (reviewed) stampPop(document.querySelector(`[data-pid="${pid}"]`)?.closest(".copy-ver"), "已审核");
   } catch (e) { toast("操作失败：" + (e.message || e)); }
 }
 
@@ -4003,7 +4036,7 @@ async function loadPublishRecords() {
 async function renderPublishCenter() {
   const sec = $("v8");
   if (!sec) return;
-  if (!S.org) { sec.innerHTML = '<div class="page-head"><h2>发布中心</h2><p class="muted">请先登录并选择组织</p></div>'; return; }
+  if (!S.org) { sec.innerHTML = '<div class="page-head"><h2>发布中心</h2><p class="muted">请先登录并选择组织</p><div class="page-meander" aria-hidden="true"></div></div>'; return; }
   initPublishView();
   sec.innerHTML = viewSkeleton(); // 先给加载态：线上网关延迟下不能留白
   await loadPublishRecords();
@@ -4018,7 +4051,7 @@ function renderPublishList() {
     <div class="card pub-card" data-id="${esc(r.id)}">
       <div class="pub-card-head"><strong>${esc(r.title)}</strong>
         <span class="pill">${esc(pubPlatformLabel(r.platform))}</span>
-        <span class="pill ${r.status === "published" ? "green" : r.status === "reviewed" ? "blue" : ""}">${esc(pubStatusLabel(r.status))}</span>
+        ${r.status === "published" ? '<span class="stamp-badge">已发布</span>' : `<span class="pill ${r.status === "reviewed" ? "blue" : ""}">${esc(pubStatusLabel(r.status))}</span>`}
       </div>
       <div class="muted small">${r.publish_url ? "链接：" + esc(r.publish_url) : "未发布"}</div>
       <div class="row"><button class="btn sm" data-act="open">打开</button>
@@ -4026,7 +4059,7 @@ function renderPublishList() {
     </div>`).join("");
   sec.innerHTML = `
     <div class="page-head"><h2>发布中心</h2>
-    <p class="muted">为每次发布建立独立记录：发布前检查 → 手动状态流转 → 记录发布时间与链接。本工具仅支持人工复制发布。</p></div>
+    <p class="muted">为每次发布建立独立记录：发布前检查 → 手动状态流转 → 记录发布时间与链接。本工具仅支持人工复制发布。</p><div class="page-meander" aria-hidden="true"></div></div>
     <div class="toolbar">
       <span class="tl-label">状态筛选</span>
       <select id="pub_filter" class="input" style="flex:0 1 150px">${opts}</select>
@@ -4040,7 +4073,7 @@ function renderPublishList() {
       <button class="btn primary" id="pub_new_btn">＋ 新建</button>
     </div>
     <div id="pub_detail"></div>
-    <div class="pub-list">${cards || '<div class="card" style="padding:18px;text-align:center"><p class="muted">暂无发布记录。在上方填写标题、选平台后点「新建」开始。</p></div>'}</div>`;
+    <div class="pub-list">${cards || '<div class="card">' + emptyState("暂无发布记录", "在上方填写标题、选平台后点「新建」开始。", true) + '</div>'}</div>`;
   $("pub_filter").addEventListener("change", async (e) => { PUB.filter = e.target.value; await loadPublishRecords(); renderPublishList(); });
   $("pub_new_btn").addEventListener("click", createPublishRecord);
   sec.querySelectorAll(".pub-card").forEach((c) => {
@@ -4098,7 +4131,7 @@ function renderPublishDetail() {
     <div class="card pub-detail">
       <div class="pub-card-head"><h3>${esc(r.title)}</h3>
         <span class="pill">${esc(pubPlatformLabel(r.platform))}</span>
-        <span class="pill">${esc(pubStatusLabel(r.status))}</span></div>
+        ${r.status === "published" ? '<span class="stamp-badge">已发布</span>' : `<span class="pill">${esc(pubStatusLabel(r.status))}</span>`}</div>
       <div class="grid2 small">
         <div>源拍摄项目：${esc(r.work_id || "未关联")}</div>
         <div>文案版本：${esc(r.copy_version_id || "未关联")}</div>
@@ -4285,7 +4318,7 @@ async function renderReviewDashboard() {
       const pairs = latest ? Object.entries(latest.metrics || {}).map(([k, v]) => `${esc(k)}=${esc(String(v))}`).join("、") : "";
       return `<div class="rev-dash-item"><strong>${esc(it.title)}</strong>
         <span class="pill">${esc(it.platform || "")}</span>
-        <span class="pill">${esc(it.status === "reviewed" ? "已复盘" : "已发布")}</span>
+        ${it.status === "reviewed" ? '<span class="pill">已复盘</span>' : '<span class="stamp-badge">已发布</span>'}
         <div class="muted small">共录入 ${it.batches} 批${it.review_note ? " · 有复盘结论" : ""}</div>
         ${pairs ? `<div>最新：${pairs}</div>` : '<div class="muted">暂无数据</div>'}</div>`;
     }).join("");
@@ -4432,7 +4465,7 @@ function libMimeLabel(m) {
 async function renderAssetLibrary() {
   const sec = $("v9");
   if (!sec) return;
-  if (!S.org) { sec.innerHTML = '<div class="page-head"><h2>素材库</h2><p class="muted">请先登录并选择组织</p></div>'; return; }
+  if (!S.org) { sec.innerHTML = '<div class="page-head"><h2>素材库</h2><p class="muted">请先登录并选择组织</p><div class="page-meander" aria-hidden="true"></div></div>'; return; }
   initLibView();
   sec.innerHTML = viewSkeleton(); // 先给加载态：线上网关延迟下不能留白
   // 作品列表与素材检索互不依赖：并行请求（原为串行，线上高延迟下白屏时间翻倍）
@@ -4508,7 +4541,7 @@ function renderLibView() {
     </div>`).join("");
   sec.innerHTML = `
     <div class="page-head"><h2>素材库</h2>
-      <p class="muted">跨项目检索与复用。引用只记关系、不复制文件；删引用 ≠ 删实体——仍被引用的文件不许删除。</p></div>
+      <p class="muted">跨项目检索与复用。引用只记关系、不复制文件；删引用 ≠ 删实体——仍被引用的文件不许删除。</p><div class="page-meander" aria-hidden="true"></div></div>
     <div class="toolbar">
       <input id="lib-q" class="input" style="flex:2 1 220px" placeholder="按素材名称搜索…" value="${esc(LIB.q)}" />
       <select id="lib-mime" class="input" style="flex:1 1 130px">${mimeOpts}</select>
@@ -4519,7 +4552,7 @@ function renderLibView() {
       <select id="lib-dest" class="input" style="flex:1 1 240px">${destOpts}</select>
       <span class="muted small" style="flex:none">默认为当前打开的项目</span>
     </div>
-    <div class="lib-grid">${LIB.busy ? '<div class="card" style="padding:18px;text-align:center"><p class="muted">检索中…</p></div>' : (cards || '<div class="card" style="padding:18px;text-align:center"><p class="muted">暂无素材。可在「拍摄执行」视图上传。</p></div>')}</div>`;
+    <div class="lib-grid">${LIB.busy ? '<div class="card" style="padding:18px;text-align:center"><p class="muted">检索中…</p></div>' : (cards || '<div class="card">' + emptyState("暂无素材", "可在「拍摄执行」视图上传。", true) + '</div>')}</div>`;
   $("lib-q").addEventListener("input", (e) => { LIB.q = e.target.value; });
   $("lib-q").addEventListener("keydown", (e) => { if (e.key === "Enter") doLibSearch(); });
   $("lib-mime").addEventListener("change", (e) => { LIB.mime = e.target.value; doLibSearch(); });
