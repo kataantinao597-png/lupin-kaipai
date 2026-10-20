@@ -17,10 +17,23 @@ let toastTimer = null;
 /* ---------- Phase4 非遗深化：团花线稿（复用 v0 剪纸团花 #pf 的几何路径） ---------- */
 const FLOWER_SVG = `<svg viewBox="0 0 100 100" fill="none" aria-hidden="true"><circle cx="50" cy="50" r="45" stroke="#D4A05A" stroke-width="2.5" stroke-dasharray="7 6"/><g stroke="#C62828" stroke-width="2.5"><ellipse cx="50" cy="25" rx="11" ry="24"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(45 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(90 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(135 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(180 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(225 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(270 50 50)"/><ellipse cx="50" cy="25" rx="11" ry="24" transform="rotate(315 50 50)"/><circle cx="50" cy="50" r="9"/><circle cx="50" cy="50" r="3" fill="#C62828" stroke="none"/></g></svg>`;
 
-/* 空状态渲染助手：团花线稿 + 引导文字；报错态不走这里（保持现有 err 样式） */
-function emptyState(text, hint, compact) {
-  return `<div class="empty-state${compact ? " compact" : ""}" role="status">${FLOWER_SVG}<div class="empty-tx"><p class="empty-text">${esc(text)}</p>${hint ? `<p class="empty-hint">${esc(hint)}</p>` : ""}</div></div>`;
+/* 空状态渲染助手：团花线稿 + 引导文字 + 可选 CTA（I-7）；报错态不走这里（保持现有 err 样式）
+   action:{label, fn} —— fn 注册进 EMPTY_ACTS，靠全局委托触发（各视图 innerHTML 重渲染后依然有效） */
+const EMPTY_ACTS = [];
+function emptyState(text, hint, compact, action) {
+  let actHtml = "";
+  if (action && action.label && typeof action.fn === "function") {
+    const idx = EMPTY_ACTS.push(action.fn) - 1;
+    actHtml = `<div class="empty-act"><button type="button" class="btn primary sm" data-empty-act="${idx}">${esc(action.label)}</button></div>`;
+  }
+  return `<div class="empty-state${compact ? " compact" : ""}" role="status">${FLOWER_SVG}<div class="empty-tx"><p class="empty-text">${esc(text)}</p>${hint ? `<p class="empty-hint">${esc(hint)}</p>` : ""}${actHtml}</div></div>`;
 }
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-empty-act]");
+  if (!b) return;
+  const fn = EMPTY_ACTS[+b.dataset.emptyAct];
+  if (fn) fn();
+});
 
 /* 落印反馈：在关键确认成功时于卡片角落盖一枚小印；锚点找不到则落到右下角兜底 */
 function stampPop(anchor, text) {
@@ -55,15 +68,32 @@ function aiLoadingDone() { $("ai_loading").classList.remove("show"); }
 function errText(id, msg) { const el = $(id); if (el) el.textContent = msg || ""; }
 
 /* ---------- 通用弹窗（Phase2：替代原生 prompt/confirm/alert，复用 .modal-mask 体系） ---------- */
-function _openUiModal(html) {
-  const old = $("ui_modal");
-  if (old) old.remove();
+/* 焦点圈定：Tab 只在弹窗内循环（I-6） */
+function _trapTab(m, e) {
+  const f = Array.from(m.querySelectorAll("button, input, textarea, select, [tabindex]")).filter((el) => !el.disabled && el.offsetParent !== null);
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+function _openUiModal(html, label) {
+  const prev = $("ui_modal");
+  if (prev) { // 顶掉旧弹窗前先结算它，避免旧调用方的 await 永久挂起（I-6）
+    if (typeof prev._settle === "function") prev._settle();
+    if (prev.isConnected) prev.remove();
+  }
   const m = document.createElement("div");
   m.className = "modal-mask"; m.id = "ui_modal";
-  m.innerHTML = `<div class="modal">${html}</div>`;
+  m._returnFocus = document.activeElement;
+  m.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="${esc(label || "弹窗")}">${html}</div>`;
   document.body.appendChild(m);
   m.classList.add("show");
   return m;
+}
+function _closeUiModal(m) {
+  const t = m._returnFocus;
+  m.remove();
+  if (t && t.isConnected && typeof t.focus === "function") t.focus({ preventScroll: true });
 }
 /* 确认弹窗：resolve(true)=点确定，false=取消/Esc/点遮罩 */
 function modalConfirm(opts) {
@@ -71,22 +101,27 @@ function modalConfirm(opts) {
   const title = o.title || "请确认", body = o.body || "";
   const okText = o.okText || "确定", cancelText = o.cancelText || "取消";
   return new Promise((resolve) => {
+    const danger = !!o.danger; // B-1：危险确认——红按钮 + 默认焦点在「取消」
     const m = _openUiModal(`
       <h3>${esc(title)}</h3>
       ${body ? `<div style="white-space:pre-line;font-size:13.5px;color:var(--ink2);margin-bottom:18px">${esc(body)}</div>` : ""}
       <div style="display:flex;gap:10px;justify-content:flex-end">
         <button class="btn ghost" data-m="cancel">${esc(cancelText)}</button>
-        <button class="btn primary" data-m="ok">${esc(okText)}</button>
-      </div>`);
+        <button class="btn ${danger ? "danger-solid" : "primary"}" data-m="ok">${esc(okText)}</button>
+      </div>`, title);
     let settled = false;
-    const done = (v) => { if (settled) return; settled = true; document.removeEventListener("keydown", onKey, true); m.remove(); resolve(v); };
-    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); done(false); } };
+    const done = (v) => { if (settled) return; settled = true; document.removeEventListener("keydown", onKey, true); _closeUiModal(m); resolve(v); };
+    m._settle = () => done(false);
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.stopPropagation(); done(false); }
+      else if (e.key === "Tab") _trapTab(m, e);
+    };
     m.addEventListener("click", (e) => { if (e.target === m) done(false); });
     m.querySelector('[data-m="cancel"]').addEventListener("click", () => done(false));
     m.querySelector('[data-m="ok"]').addEventListener("click", () => done(true));
     document.addEventListener("keydown", onKey, true);
-    const okBtn = m.querySelector('[data-m="ok"]');
-    if (okBtn) okBtn.focus();
+    const focusBtn = m.querySelector(danger ? '[data-m="cancel"]' : '[data-m="ok"]');
+    if (focusBtn) focusBtn.focus();
   });
 }
 /* 输入弹窗：resolve(字符串)=点确定，null=取消/Esc/点遮罩（与 prompt 返回值语义一致）；required 时空值不关闭 */
@@ -106,10 +141,11 @@ function modalInput(opts) {
       <div style="display:flex;gap:10px;justify-content:flex-end">
         <button class="btn ghost" data-m="cancel">取消</button>
         <button class="btn primary" data-m="ok">${esc(okText)}</button>
-      </div>`);
+      </div>`, title);
     const input = m.querySelector("#ui_modal_input");
     let settled = false;
-    const done = (v) => { if (settled) return; settled = true; document.removeEventListener("keydown", onKey, true); m.remove(); resolve(v); };
+    const done = (v) => { if (settled) return; settled = true; document.removeEventListener("keydown", onKey, true); _closeUiModal(m); resolve(v); };
+    m._settle = () => done(null);
     const submit = () => {
       if (required && !input.value.trim()) {
         m.querySelector("#ui_modal_err").textContent = "此项必填";
@@ -120,6 +156,7 @@ function modalInput(opts) {
     };
     const onKey = (e) => {
       if (e.key === "Escape") { e.stopPropagation(); done(null); }
+      else if (e.key === "Tab") _trapTab(m, e);
       else if (e.key === "Enter" && !o.multiline && document.activeElement === input) { e.preventDefault(); submit(); }
     };
     m.addEventListener("click", (e) => { if (e.target === m) done(null); });
@@ -140,10 +177,14 @@ function modalInfo(opts) {
       <div style="white-space:pre-line;font-size:13.5px;color:var(--ink2);margin-bottom:18px;max-height:50vh;overflow:auto">${esc(body)}</div>
       <div style="display:flex;gap:10px;justify-content:flex-end">
         <button class="btn primary" data-m="ok">${esc(o.okText || "知道了")}</button>
-      </div>`);
+      </div>`, title);
     let settled = false;
-    const done = () => { if (settled) return; settled = true; document.removeEventListener("keydown", onKey, true); m.remove(); resolve(); };
-    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); done(); } };
+    const done = () => { if (settled) return; settled = true; document.removeEventListener("keydown", onKey, true); _closeUiModal(m); resolve(); };
+    m._settle = () => done();
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.stopPropagation(); done(); }
+      else if (e.key === "Tab") _trapTab(m, e);
+    };
     m.addEventListener("click", (e) => { if (e.target === m) done(); });
     m.querySelector('[data-m="ok"]').addEventListener("click", done);
     document.addEventListener("keydown", onKey, true);
@@ -272,7 +313,7 @@ function go(v) {
   const sec = $(v);
   if (sec) sec.classList.add("active");
   document.querySelectorAll(".nav-item[data-v]").forEach((b) => b.classList.toggle("active", b.dataset.v === v));
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  window.scrollTo(0, 0); // P-6：高频切换滚顶改即时，避免平滑滚动的拖沓感
   if (v !== "v0" && v !== "v-login") revealIn(sec);
   onEnter(v);
 }
@@ -447,7 +488,7 @@ async function openWork(id, view) {
 async function deleteWork(id) {
   const w = S.works.find((x) => x.id === id);
   if (!w) return;
-  if (!(await modalConfirm({ title: "删除作品", body: `确定删除作品「${w.title}」吗？`, okText: "删除" }))) return;
+  if (!(await modalConfirm({ title: "删除作品", body: `确定删除作品「${w.title}」吗？\n此操作不可恢复。`, okText: "删除", danger: true }))) return;
   await ApiClient.del("/api/v1/works/" + id);
   if (S.activeWork && S.activeWork.id === id) { S.activeWork = null; S.data = blankData(); }
   await loadWorks();
@@ -465,7 +506,12 @@ function workProgress(d) {
   if (d.feasibility) { pct = Math.max(pct, 70); }
   if (shots.length && done === shots.length && done > 0) { pct = 90; stage = "交付"; }
   if ((d.risk || []).length) { pct = Math.max(pct, 85); }
-  return { pct, stage, shots: shots.length, done };
+  // P-6：百分比是阶段映射的假进度，呈现改「阶段名 + 步点」；这里给步序号（共 5 步）
+  const STAGE_IDX = { "产品资料": 1, "创意策划": 2, "分镜编辑": 3, "拍摄执行": 4, "交付": 5 };
+  return { pct, stage, step: STAGE_IDX[stage] || 1, steps: 5, shots: shots.length, done };
+}
+function stepDots(p) {
+  return `<span class="sdots" role="img" aria-label="第 ${p.step} 步，共 ${p.steps} 步">${"●".repeat(p.step)}${"○".repeat(p.steps - p.step)}</span>`;
 }
 
 function nextViewFor(d) {
@@ -500,20 +546,25 @@ async function renderOverview() {
   const last = active.slice().sort(byRecent)[0];
   const lp = last ? workProgress(last.data || {}) : null;
   const lastName = last ? (((last.data || {}).product || {}).product_name || last.title || "未命名作品") : "";
-  const todo = (n, label, view, color) =>
-    `<button class="ov-todo" data-ov-go="${view}"><b style="color:${color}">${n}</b><span>${label}</span></button>`;
+  // I-4：待办落点带作品——分别找「含待验收镜头最多」「含待确认风险最多」的作品，点卡直接落到该作品的对应视图
+  const argmaxWork = (score) => active.slice().sort((a, b) => score(b) - score(a))[0];
+  const shotScore = (w) => Object.values((w.data || {}).shoot_state || {}).filter((x) => x && x.status === "shot").length;
+  const riskScore = (w) => (Array.isArray((w.data || {}).risk) ? (w.data || {}).risk : []).filter((f) => f && f.confirmed !== true).length;
+  const shotWork = pendingShots ? argmaxWork(shotScore) : null;
+  const riskWork = pendingRisks ? argmaxWork(riskScore) : null;
+  const todo = (n, label, view, color, work) =>
+    `<button class="ov-todo${n === 0 ? " quiet" : ""}" data-ov-go="${view}"${work ? ` data-ov-work="${esc(work.id)}"` : ""}><b style="color:${n === 0 ? "var(--muted)" : color}">${n}</b><span>${label}</span></button>`;
   host.innerHTML = `<div class="ov-wrap">
     ${last ? `<div class="card ov-last">
         <div class="ov-last-tx"><span class="pill amber">继续上次作品</span><h3>${esc(lastName)}</h3>
-        <div class="meta"><span>当前阶段：${esc(lp.stage)}</span><span>${lp.pct}%</span></div>
-        <div class="progress"><i style="width:${lp.pct}%"></i></div></div>
+        <div class="meta"><span>当前阶段：${esc(lp.stage)}</span>${stepDots(lp)}</div></div>
         <button class="btn primary" data-ov-open="${esc(last.id)}">继续创作 →</button>
       </div>`
-    : `<div class="card ov-last">${emptyState("还没有作品", "进入工作台，点「新建作品」，从一件山东好物开始。")}</div>`}
+    : `<div class="card ov-last">${emptyState("还没有作品", "从一件山东好物开始。", false, { label: "新建作品", fn: () => { go("v1"); newWorkFlow(); } })}</div>`}
     <div class="ov-todos">
-      ${todo(pendingShots, "个镜头待验收", "v5", "var(--primary)")}
-      ${todo(pendingRisks, "条风险待确认", "v3", "var(--red)")}
-      ${pendingFacts >= 0 ? todo(pendingFacts, "条事实待确认", "v2", "#A5762A") : ""}
+      ${todo(pendingShots, "个镜头待验收", "v5", "var(--primary)", shotWork)}
+      ${todo(pendingRisks, "条风险待确认", "v3", "var(--red)", riskWork)}
+      ${pendingFacts >= 0 ? todo(pendingFacts, "条事实待确认", "v2", "var(--amber-deep)", last) : ""}
     </div>
     ${all.length ? `<div class="card ov-recent"><h3 class="ov-h">最近动态</h3>${all.slice().sort(byRecent).slice(0, 4).map((w) => {
       const d = w.data || {}; const p = workProgress(d);
@@ -522,7 +573,10 @@ async function renderOverview() {
     }).join("")}</div>` : ""}
   </div>`;
   host.querySelectorAll("[data-ov-open]").forEach((b) => b.addEventListener("click", () => openWork(b.dataset.ovOpen)));
-  host.querySelectorAll("[data-ov-go]").forEach((b) => b.addEventListener("click", () => go(b.dataset.ovGo)));
+  host.querySelectorAll("[data-ov-go]").forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.ovWork) openWork(b.dataset.ovWork, b.dataset.ovGo);
+    else go(b.dataset.ovGo);
+  }));
 }
 
 /* ---------- v1 工作台 ---------- */
@@ -543,10 +597,23 @@ async function renderWorkbench() {
   const doneCount = S.works.filter((w) => w.status === "archived").length;
   const hour = new Date().getHours();
   const hi = hour < 12 ? "上午好" : hour < 18 ? "下午好" : "晚上好";
-  $("greet_title").textContent = `${hi}。把山东好物，拍成值得记住的故事。`;
+  $("greet_title").textContent = `${hi}。`;
   $("greet_text").innerHTML = S.works.length === 0
     ? `还没有作品，点右上角「新建作品」，从一件山东好物开始。`
     : `你有 <b>${activeCount}</b> 个作品正在推进` + (doneCount ? `，<b>${doneCount}</b> 个已交付` : ``) + `。`;
+
+  // I-2：问候行右侧「继续上次作品」主按钮（取最近更新的进行中作品）
+  const cont = $("greet_continue");
+  if (cont) {
+    const lastW = S.works.filter((w) => (w.status || "draft") !== "archived")
+      .slice().sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")))[0];
+    if (lastW) {
+      const nm = ((lastW.data || {}).product || {}).product_name || lastW.title || "未命名作品";
+      cont.style.display = "";
+      cont.textContent = `继续《${nm}》 →`;
+      cont.onclick = () => openWork(lastW.id);
+    } else cont.style.display = "none";
+  }
 
   // 作品卡片
   const grid = $("work_grid");
@@ -554,7 +621,7 @@ async function renderWorkbench() {
   if (S.workFilter === "active") items = items.filter((w) => (w.status || "draft") !== "archived");
   if (S.workFilter === "done") items = items.filter((w) => (w.status || "") === "archived");
   if (!items.length) {
-    grid.innerHTML = '<div style="grid-column:1/-1">' + emptyState("暂无作品", "点击「创建新作品」开始。") + '</div>';
+    grid.innerHTML = '<div style="grid-column:1/-1">' + emptyState("暂无作品", "从一件山东好物开始。", false, { label: "新建作品", fn: () => newWorkFlow() }) + '</div>';
   } else {
     grid.innerHTML = items.map((w, i) => {
       const d = w.data || {};
@@ -564,21 +631,21 @@ async function renderWorkbench() {
       const origin = ((d.product || {}).origin || "").trim();
       // I-9：封面优先真实图（海报 AI 图 → 素材首图懒加载），无图回退 COVERS 渐变
       const aiImg = ((d.poster || {}).ai_image || "").trim();
-      return `<div class="card work" data-id="${esc(w.id)}" tabindex="0" role="button" aria-label="打开作品 ${esc(name)}">
+      return `<div class="card work" data-id="${esc(w.id)}">
         <div class="cover"${aiImg ? "" : ` data-cover-need="${esc(w.id)}"`} style="background:${COVERS[i % COVERS.length]}">${aiImg ? `<img class="cover-img" alt="" src="${esc(aiImg)}">` : ""}${done ? '<span class="stamp-badge">已归档</span>' : '<span class="pill amber">进行中</span>'}</div>
         <div class="body"><h4>${esc(name)}</h4><div style="display:flex;align-items:center;gap:8px"><div class="date">${esc((w.updated_at || "").slice(0, 16).replace("T", " "))}</div>${origin ? `<span class="region-tag" style="margin-left:auto">${esc(origin)}</span>` : ""}</div>
-        <div class="meta"><span>${esc(p.stage)}</span><span>${p.pct}%</span></div><div class="progress"><i style="width:${p.pct}%"></i></div>
+        <div class="meta"><span>${esc(p.stage)}</span>${stepDots(p)}</div>
         <div style="display:flex;gap:8px;margin-top:10px">
           <button class="btn ghost sm" data-act="open" style="flex:1;justify-content:center">继续创作</button>
           ${done ? "" : `<button class="btn ghost sm" data-act="arch" title="归档">归档</button>`}
-          <button class="btn ghost sm" data-act="del" title="删除">删</button>
+          <button class="btn danger sm" data-act="del" title="删除作品">删除</button>
         </div></div></div>`;
     }).join("");
   }
   grid.querySelectorAll(".work").forEach((card) => {
     const id = card.dataset.id;
-    card.addEventListener("click", (e) => { if (e.target === card || e.target.closest(".cover")) openWork(id); });
-    keyActivate(card);
+    // I-3：整卡可点——除内嵌按钮外的任何区域都打开作品（键盘路径由「继续创作」按钮承担，卡片不再套 role=button）
+    card.addEventListener("click", (e) => { if (e.target.closest("button")) return; openWork(id); });
     card.querySelector('[data-act="open"]').addEventListener("click", (e) => { e.stopPropagation(); openWork(id); });
     const archBtn = card.querySelector('[data-act="arch"]');
     if (archBtn) archBtn.addEventListener("click", (e) => { e.stopPropagation(); archiveWork(id); });
@@ -590,7 +657,6 @@ async function renderWorkbench() {
 /* I-9：无海报图的作品封面，用该作品素材库首张图懒加载填充；取不到则保持渐变 */
 async function hydrateWorkCovers(grid) {
   if (!grid || !S.org) return;
-  const token = (typeof AuthClient === "object" && AuthClient.getAccessToken) ? AuthClient.getAccessToken() : "";
   const jobs = Array.from(grid.querySelectorAll(".cover[data-cover-need]")).map(async (el) => {
     const wid = el.dataset.coverNeed;
     el.removeAttribute("data-cover-need");
@@ -598,11 +664,11 @@ async function hydrateWorkCovers(grid) {
       const list = V1(await ApiClient.get(`/api/v1/assets?org_id=${encodeURIComponent(S.org.id)}&work_id=${encodeURIComponent(wid)}`)) || [];
       const first = list.find((a) => (a.mime || "").startsWith("image/"));
       if (!first) return;
-      const r = await fetch(`/api/v1/assets/${first.id}/raw`, { headers: { Authorization: "Bearer " + token } });
-      if (!r.ok) return;
-      const url = URL.createObjectURL(await r.blob());
+      // 与素材库缩略图同模式：走 /download 换签名 URL（/raw 为验签制接口，旧 Bearer 直调会静默 422、封面永远回退渐变）
+      const d = V1(await ApiClient.get("/api/v1/assets/" + first.id + "/download?org_id=" + encodeURIComponent(S.org.id)));
+      if (!d || !d.url) return;
       const im = document.createElement("img");
-      im.className = "cover-img"; im.alt = ""; im.src = url;
+      im.className = "cover-img"; im.alt = ""; im.src = d.url;
       el.prepend(im);
     } catch (e) { /* 保持渐变回退 */ }
   });
@@ -725,7 +791,7 @@ function renderFacts() {
   const pending = S.facts.filter((f) => f.status === "pending_review").length;
   $("fact_summary").textContent = S.facts.length ? `已确认 ${confirmed} / 待审核 ${pending} / 共 ${S.facts.length}` : "";
   if (!S.facts.length) {
-    list.innerHTML = emptyState("暂无事实", "添加已确认的产品信息，AI 生成时将优先使用有依据的内容。", true);
+    list.innerHTML = emptyState("暂无事实", "添加已确认的产品信息，AI 生成时将优先使用有依据的内容。", true, { label: "补充事实", fn: () => { const b = $("btn_add_fact"); if (b) b.click(); } });
     return;
   }
   list.innerHTML = S.facts.map((f) => {
@@ -1304,7 +1370,7 @@ function renderShots() {
     return d;
   })();
   if (!sb || !(sb.shots || []).length) {
-    wrap.innerHTML = emptyState("暂无分镜", "请先选择创意方向并生成。");
+    wrap.innerHTML = emptyState("暂无分镜", "先在上方选择创意方向，再生成分镜。", false, { label: "生成分镜", fn: () => { const b = $("btn_gen_storyboard"); if (b) b.click(); } });
     $("sb_meta").textContent = "";
     return;
   }
@@ -1376,8 +1442,10 @@ async function saveShotEdit(i) {
   const oldVo = s.voiceover || "";
   s.scene_description = box.querySelector(".se-scene").value.trim();
   s.voiceover = box.querySelector(".se-vo").value.trim();
-  const d = parseFloat(box.querySelector(".se-dur").value);
-  if (d > 0) s.duration_seconds = d;
+  const durRaw = box.querySelector(".se-dur").value.trim();
+  const d = parseFloat(durRaw);
+  if (durRaw && !(d > 0)) { toast("时长需大于 0 秒，已保留原时长"); }
+  else if (d > 0) s.duration_seconds = d;
   if (s.voiceover !== oldVo) { markRiskDirty(); } // V2.1：口播文案变更 → 风险检查标脏
   await saveWork(); renderShots();
   updateRiskDirtyBadge();
@@ -1392,16 +1460,17 @@ async function shotAction(act, i) {
     await saveWork(); renderShots();
     toast(s.locked ? `镜头 ${s.shot_number} 已锁定，重新生成时将保留` : `镜头 ${s.shot_number} 已解锁`);
   } else if (act === "del") {
-    if (!(await modalConfirm({ title: "删除镜头", body: `删除镜头 ${s.shot_number}？删除后可点「恢复上一版」找回。`, okText: "删除" }))) return;
+    if (!(await modalConfirm({ title: "删除镜头", body: `删除镜头 ${s.shot_number}？删除后可点「恢复上一版」找回。`, okText: "删除", danger: true }))) return;
     pushSbVersion();
     shots.splice(i, 1);
     shots.forEach((x, j) => { x.shot_number = j + 1; });
     await saveWork(); renderShots();
   } else if (act === "edit") {
-    // Phase2：行内展开表单（表单在 renderShots 模板内，保存走 saveShotEdit）
-    document.querySelectorAll(".shot-edit").forEach((el) => { el.style.display = "none"; });
+    // Phase2：行内展开表单（表单在 renderShots 模板内，保存走 saveShotEdit）；P-5：再点一次「编辑」收起（toggle）
     const box = document.querySelector(`[data-edit="${i}"]`);
-    if (box) { box.style.display = ""; const f = box.querySelector(".se-scene"); if (f) f.focus(); }
+    const wasOpen = box && box.style.display !== "none";
+    document.querySelectorAll(".shot-edit").forEach((el) => { el.style.display = "none"; });
+    if (box && !wasOpen) { box.style.display = ""; const f = box.querySelector(".se-scene"); if (f) f.focus(); }
   } else if (act === "colloquial") {
     openColloquialModal(i);
   } else if (act === "regen") {
@@ -1432,6 +1501,7 @@ async function addShot() {
   const scene = await modalInput({ title: "新增镜头", placeholder: "新镜头的画面描述", required: true, okText: "下一步" });
   if (!scene || !scene.trim()) return;
   const durStr = await modalInput({ title: "镜头时长", placeholder: "时长（秒）", value: "5", okText: "添加" });
+  if (durStr === null) return; // I-5：第二步取消即放弃新增，不能把取消吞成默认值继续创建
   const dur = parseFloat(durStr) || 5;
   sb.shots.push({ shot_number: sb.shots.length + 1, shot_type: "中景", scene_description: scene.trim(),
     shooting_action: "", camera_movement: "", voiceover: "", subtitle: "", duration_seconds: dur, props: [], required_assets: [] });
@@ -1704,7 +1774,7 @@ function renderShoot() {
 const sb = S.data.storyboard;
 const list = $("shoot_list");
 if (!sb ||!(sb.shots || []).length) {
-list.innerHTML = emptyState("暂无分镜", "请先在「创意策划」页生成分镜。");
+list.innerHTML = emptyState("暂无分镜", "先去创意策划生成分镜，再回来逐镜拍摄。", false, { label: "去创意策划", fn: () => go("v3") });
 $("shoot_progress").textContent = "拍摄进度";
 $("shoot_bar").style.width = "0%"; $("shoot_pct").textContent = "0%";
 return;
@@ -2376,7 +2446,7 @@ try {
 const list = V1(await ApiClient.get(`/api/v1/assets?org_id=${encodeURIComponent(S.org.id)}&work_id=${encodeURIComponent(S.activeWork.id)}`)) || [];
 $("asset_count").textContent = list.length? `${list.length} 条`: "";
 if (!list.length) {
-grid.innerHTML = '<div style="grid-column:1/-1">' + emptyState("暂无素材", "点击下方按钮上传。", true) + '</div>';
+grid.innerHTML = '<div style="grid-column:1/-1">' + emptyState("暂无素材", "点下方按钮，上传图片或视频素材。", true, { label: "上传素材", fn: () => { const f = $("file_asset"); if (f) f.click(); } }) + '</div>';
 return;
 }
 grid.innerHTML = list.map((a) => {
@@ -2463,7 +2533,7 @@ if (!S.activeWork) { panel.innerHTML = '<p style="font-size:13.5px;color:var(--m
 try {
 const t = V1(await ApiClient.get(`/api/v1/works/${S.activeWork.id}/timeline`));
 if (!t ||!(t.shots || []).length) {
-panel.innerHTML = emptyState("暂无分镜时间轴", "请先生成分镜。", true);
+panel.innerHTML = emptyState("暂无分镜时间轴", "先去创意策划生成分镜。", true, { label: "去创意策划", fn: () => go("v3") });
 return;
 }
 panel.innerHTML =
@@ -2675,7 +2745,7 @@ async function downloadFinal(aid) {
   } catch (err) { toast(err.message || "下载失败"); }
 }
 async function deleteFinal(aid) {
-  if (!(await modalConfirm({ title: "删除归档成片", body: "确定删除这条归档成片吗？", okText: "删除" }))) return;
+  if (!(await modalConfirm({ title: "删除归档成片", body: "确定删除这条归档成片吗？\n此操作不可恢复。", okText: "删除", danger: true }))) return;
   try {
     await ApiClient.del("/api/v1/assets/" + aid + "?org_id=" + encodeURIComponent(S.org.id));
     toast("已删除");
@@ -2690,7 +2760,7 @@ async function renderFinalArchive() {
       "&work_id=" + encodeURIComponent(S.activeWork.id))) || [];
     const videos = list.filter((a) => (a.mime || "").indexOf("video/") === 0);
     if (!videos.length) {
-      box.innerHTML = emptyState("暂无归档成片", "", true);
+      box.innerHTML = emptyState("暂无归档成片", "拍好的成片可以归档到这里。", true, { label: "上传成片", fn: () => { const b = $("btn_upload_final"); if (b) b.click(); } });
       return;
     }
     box.innerHTML = videos.map((v) =>
@@ -2893,6 +2963,37 @@ function bindTodo5() {
   $("btn_close_cases").addEventListener("click", () => $("cases_modal").classList.remove("show"));
 }
 
+/* I-2：使用说明可折叠——首次默认展开，收起后 localStorage 记住（只加折叠，不动内容） */
+function initGuide() {
+  const body = $("guide_body"), btn = $("guide_toggle");
+  if (!body || !btn) return;
+  let open = true;
+  try { open = localStorage.getItem("lupin_guide_open") !== "0"; } catch (e) { /* 隐私模式等场景按展开处理 */ }
+  const apply = () => {
+    body.style.display = open ? "" : "none";
+    btn.textContent = open ? "收起" : "展开";
+    btn.setAttribute("aria-expanded", String(open));
+  };
+  apply();
+  btn.addEventListener("click", () => {
+    open = !open;
+    try { localStorage.setItem("lupin_guide_open", open ? "1" : "0"); } catch (e) { /* 忽略 */ }
+    apply();
+  });
+}
+
+/* P-4：移动端搜索入口——顶栏图标点开全宽搜索浮层（桌面端该按钮隐藏） */
+function initMobileSearch() {
+  const btn = $("btn_search_m");
+  if (!btn) return;
+  const bar = btn.closest(".topbar");
+  btn.addEventListener("click", () => {
+    const open = bar.classList.toggle("search-open");
+    btn.setAttribute("aria-expanded", String(open));
+    if (open) { const inp = $("global_search"); if (inp) inp.focus(); }
+  });
+}
+
 /* ================= 事件绑定 ================= */
 /* 移动端导航抽屉：复用同一套 .sidebar，不另建一份导航
    注意 V3 会在 bindAll 里动态注入 v7/v8/v9 导航项，所以用事件委托而不是逐个绑定 */
@@ -2940,9 +3041,10 @@ $("btn_logout").addEventListener("click", doLogout);
 const newWork = () => newWorkFlow();
 bindTodo5();
 initGlobalSearch();
-$("qa_new").addEventListener("click", newWork);
-$("btn_new_work").addEventListener("click", newWork);
+// I-2：新建入口收敛——只留顶栏按钮（工作台快捷卡与作品区按钮已撤，空状态另有 CTA）
 $("btn_new_work_top").addEventListener("click", newWork);
+initGuide();
+initMobileSearch();
 document.querySelectorAll("#v1 [data-filter]").forEach((p) => { keyActivate(p); p.addEventListener("click", () => {
 S.workFilter = p.dataset.filter;
 document.querySelectorAll("#v1 [data-filter]").forEach((x) => {
@@ -3213,7 +3315,7 @@ async function openCopyDoc(id) {
 }
 
 async function deleteCopyDoc(id) {
-  if (!(await modalConfirm({ title: "删除文案文档", body: "确定删除整个文案文档（含全部版本）？此操作不可恢复。", okText: "删除" }))) return;
+  if (!(await modalConfirm({ title: "删除文案文档", body: "确定删除整个文案文档（含全部版本）？此操作不可恢复。", okText: "删除", danger: true }))) return;
   try {
     await ApiClient.del(`/api/v1/copy/docs/${id}?org_id=` + encodeURIComponent(S.org.id));
     COPY.docs = COPY.docs.filter((d) => d.id !== id);
@@ -3225,7 +3327,7 @@ async function deleteCopyDoc(id) {
 function renderCopyDocList() {
   const el = $("copy_doc_list");
   if (!el) return;
-  if (!COPY.docs.length) { el.innerHTML = emptyState("还没有文案文档", "右侧新建一个开始。", true); return; }
+  if (!COPY.docs.length) { el.innerHTML = emptyState("还没有文案文档", "新建一篇，从口播稿或发布文案开始。", true, { label: "新建文档", fn: () => { const t = $("copy_new_title"); if (t) { t.focus(); t.scrollIntoView({ block: "center", behavior: "smooth" }); } } }); return; }
   el.innerHTML = COPY.docs.map((d) => `
     <div class="copy-doc-item ${COPY.doc && COPY.doc.id === d.id ? "active" : ""}" data-id="${d.id}">
       <div><b>${esc(d.title)}</b> <span class="pill">${esc(copyKindLabel(d.kind))}</span></div>
@@ -3410,7 +3512,7 @@ async function confirmCopyVersion(id) {
 }
 
 async function dropCopyVersion(id) {
-  if (!(await modalConfirm({ title: "放弃草稿版本", body: "确定放弃这个草稿版本吗？", okText: "放弃" }))) return;
+  if (!(await modalConfirm({ title: "放弃草稿版本", body: "确定放弃这个草稿版本吗？\n此操作不可恢复。", okText: "放弃", danger: true }))) return;
   try {
     await ApiClient.del(`/api/v1/copy/docs/${COPY.doc.id}/versions/${id}?org_id=` + encodeURIComponent(S.org.id));
     await openCopyDoc(COPY.doc.id); toast("已放弃草稿");
@@ -3550,7 +3652,7 @@ async function loadPlatformList(versionId) {
     const r = V1(await ApiClient.get(
       `/api/v1/platforms/copy/docs/${COPY.doc.id}/platforms?org_id=` + encodeURIComponent(S.org.id)));
     const items = r.items || [];
-    if (!items.length) { el.innerHTML = emptyState("还没有平台版本", "先选平台生成一个", true); return; }
+    if (!items.length) { el.innerHTML = emptyState("还没有平台版本", "选好平台后生成一份适配版本。", true, { label: "去生成", fn: () => { const sel = document.querySelector("#v7 select"); if (sel) { sel.focus(); sel.scrollIntoView({ block: "center", behavior: "smooth" }); } } }); return; }
     el.innerHTML = items.map((p) => `
       <div class="copy-ver" style="margin-top:8px">
         <div class="row" style="justify-content:space-between;align-items:center">
@@ -3716,7 +3818,7 @@ async function exportPlatform(pid) {
 }
 
 async function deletePlatform(pid, versionId) {
-  if (!(await modalConfirm({ title: "删除平台版本", body: "删除这个平台版本？不影响其他平台版本。", okText: "删除" }))) return;
+  if (!(await modalConfirm({ title: "删除平台版本", body: "删除这个平台版本？不影响其他平台版本。\n此操作不可恢复。", okText: "删除", danger: true }))) return;
   try {
     await ApiClient.del(`/api/v1/platforms/${pid}?org_id=` + encodeURIComponent(S.org.id));
     toast("已删除");
@@ -4073,7 +4175,7 @@ function renderPublishList() {
       <button class="btn primary" id="pub_new_btn">＋ 新建</button>
     </div>
     <div id="pub_detail"></div>
-    <div class="pub-list">${cards || '<div class="card">' + emptyState("暂无发布记录", "在上方填写标题、选平台后点「新建」开始。", true) + '</div>'}</div>`;
+    <div class="pub-list">${cards || '<div class="card">' + emptyState("暂无发布记录", "填好标题、选好平台，建第一条发布记录。", true, { label: "新建发布记录", fn: () => { const t = $("pub_new_title"); if (t) { t.focus(); t.scrollIntoView({ block: "center", behavior: "smooth" }); } } }) + '</div>'}</div>`;
   $("pub_filter").addEventListener("change", async (e) => { PUB.filter = e.target.value; await loadPublishRecords(); renderPublishList(); });
   $("pub_new_btn").addEventListener("click", createPublishRecord);
   sec.querySelectorAll(".pub-card").forEach((c) => {
@@ -4097,7 +4199,7 @@ async function createPublishRecord() {
 }
 
 async function deletePublishRecord(id) {
-  if (!(await modalConfirm({ title: "删除发布记录", body: "确定删除这条发布记录吗？（只删除记录，不删除已关联的文件）", okText: "删除" }))) return;
+  if (!(await modalConfirm({ title: "删除发布记录", body: "确定删除这条发布记录吗？（只删除记录，不删除已关联的文件）\n此操作不可恢复。", okText: "删除", danger: true }))) return;
   try {
     await pubApi(`/records/${id}`, { method: "DELETE" });
     PUB.records = PUB.records.filter((r) => r.id !== id);
@@ -4552,7 +4654,7 @@ function renderLibView() {
       <select id="lib-dest" class="input" style="flex:1 1 240px">${destOpts}</select>
       <span class="muted small" style="flex:none">默认为当前打开的项目</span>
     </div>
-    <div class="lib-grid">${LIB.busy ? '<div class="card" style="padding:18px;text-align:center"><p class="muted">检索中…</p></div>' : (cards || '<div class="card">' + emptyState("暂无素材", "可在「拍摄执行」视图上传。", true) + '</div>')}</div>`;
+    <div class="lib-grid">${LIB.busy ? '<div class="card" style="padding:18px;text-align:center"><p class="muted">检索中…</p></div>' : (cards || '<div class="card">' + emptyState("暂无素材", "在「拍摄执行」上传的素材会自动归档到这里。", true, { label: "去上传素材", fn: () => go("v5") }) + '</div>')}</div>`;
   $("lib-q").addEventListener("input", (e) => { LIB.q = e.target.value; });
   $("lib-q").addEventListener("keydown", (e) => { if (e.key === "Enter") doLibSearch(); });
   $("lib-mime").addEventListener("change", (e) => { LIB.mime = e.target.value; doLibSearch(); });
@@ -4604,7 +4706,7 @@ async function showLibDetail(assetId) {
   m.classList.add("show");
   m.querySelectorAll(".lib-ref-row [data-ref]").forEach((b) => {
     b.addEventListener("click", async () => {
-      if (!(await modalConfirm({ title: "解除引用", body: "解除该引用？只删引用关系，不删文件实体。", okText: "解除" }))) return;
+      if (!(await modalConfirm({ title: "解除引用", body: "解除该引用？只删引用关系，不删文件实体。", okText: "解除", danger: true }))) return;
       try {
         await libApi("/refs/" + encodeURIComponent(b.dataset.ref), { method: "DELETE" });
         toast("引用已解除");
