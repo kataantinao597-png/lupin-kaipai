@@ -164,3 +164,12 @@
 - 用户级每日限额：保持 `check_user_quota()` 桩位不动，未自行实现；KNOWN_ISSUES 登记"延后（等用户点头），Phase 7 未对接"
 - 遗留（非阻塞）：真实模型冒烟未跑（Phase 7 无新增模型调用路径；网关/编排 429 与成本路径沿用 Phase 5 已验证逻辑）
 - Phase 7 Gate：**PASS**（§十一：跨租户 0 越权 ✓；注入不改白名单/权限 ✓；超限进 partial/failed 保留成果 ✓；密钥扫描干净 ✓；幂等 DB 化重启可回放 ✓；费用归属可查 ✓）
+
+## Phase 7 — 安全/成本/可观测性（子代理执行，commit 4a794ac，15 文件 +1249/-116）
+- A：runner.py 加 STEP_TIMEOUT_SECONDS=300 / MAX_RUN_TOTAL_SECONDS=1800；security/rate_limit.py 给 /api/v1/agent 加 20/分钟/用户限流（429+Retry-After）；scripts/scan_secrets_phase7.py 密钥扫描（自检+植入 5/5 检出）；全链路权限复核通过（6 路由+run_tool+adapter，无需改代码）
+- B：迁移 0021_idempotency_keys（idempotency_keys 表）；core/idempotency.py 内存→DB 重写（接口兼容，调用方零改动）；agent create_run 接 Idempotency-Key
+- C：成本归属验证（task_id/org_id 单测断言）；429 穿透硬停复核通过；**用户级每日限额保持桩位未对接**（另一 agent 任务，KNOWN_ISSUES 已登记延后）
+- 测试：新 30/30；回归 phase2+v21 47/47、phase3 25/25、phase4a+5 50/50、phase6 21/21 全绿；3 轮修复；业务库零写入（0019/2197/16）；零真实模型调用
+- Phase 7 Gate：**PASS**（进入 Phase 8）
+
+## Phase 8 — 完整回归与评测（子代理执行中）
