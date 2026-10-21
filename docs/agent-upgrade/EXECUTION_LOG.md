@@ -173,3 +173,18 @@
 - Phase 7 Gate：**PASS**（进入 Phase 8）
 
 ## Phase 8 — 完整回归与评测（子代理执行中）
+
+## Phase 8 — 完整回归与评测（子代理执行，commit 4bf2cba，11 files +2498/-3）
+- 新增测试 57：test_agent_boundary_phase8.py（49 边界）+ test_agent_e2e_phase8.py（8：1 完整闭环 + 7 故障演练）
+- E2E：brief→建 run→新 session 重读→真实 execute_run_steps→局部修改→版本恢复→导出，全断言基于 DB 重读
+- 故障演练 7 项全过：超时/429 硬停/5xx 不重试/可选→partial/幂等重放/取消/乐观锁冲突
+- 评测集：scripts/eval_phase8.py 25 场景（正常 7/边界 9/失败 3/对抗 6）25/25 通过；EVALUATION.md 诚实标注 mock 驱动
+- 质量指标实测：闭环 100%（3/3）、工具选择 100%（13/13）、越权/未确认高风险/无关变化/重复扣费/UI 不一致全部 0
+- 修 2 真 bug：快照淘汰方向反了（删最新→改删最旧）；HIGH_RISK_KEYWORDS 增补"血压/血糖"
+- 全量回归：721 passed、6 failed、1 skipped（558s），6 失败恰为基线陈旧用例，无新增失败
+- Phase 8 Gate：**PASS**（全部阶段完成，Phase 9 按用户指令跳过）
+
+### ⚠️ 事故记录（已处理）
+- Phase 8 全量回归时，旧测试 test_retry_drill.py（真实演练）因 DATABASE_URL 未隔离，9 次真实模型调用打到业务库（model=gpt-6-luna，合计约 59 分钟 token 39883，约 ¥0.59，走用户 deepkey key），另有 7 行假名噪音行
+- 已删除该 16 行，业务库恢复基线（2197/48/16，integrity ok，alembic 0019）
+- 教训：全量回归必须确认 DATABASE_URL 指向 scratch；test_retry_drill 等真实演练测试应加 skip 标记或独立分组

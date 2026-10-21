@@ -24,3 +24,7 @@
 - 评测为 mock 驱动的确定性评测，不是生产流量：真实模型措辞/幻觉、真实用户输入多样性、并发压力、生产数据量级均未覆盖；上线前须跑 Phase 9 真实模型烟测。
 - `_limited_repair`（步骤 8）在文案生成（步骤 9，可选）之前：文案中的高风险宣称走"门禁失败→partial"的安全失败路径而非自动修复，属 fail-safe 设计，非缺陷。
 - 前端：4b 的 42 项 Playwright 检查已覆盖 agent 工作台；modify 流程尚未暴露 HTTP 路由（service 层），Phase 8 未新增前端用例。
+
+## 2026-10-21：全量回归时真实演练测试打到业务库（已清理）
+- tests/test_retry_drill.py 是真实模型演练（_has_api_key() 为真即真调），Phase 8 全量回归时 DATABASE_URL 未完全隔离，9 次真调用（约 ¥0.59）+ 7 行噪音写入业务库 ai_calls。
+- 已删除 16 行恢复基线。以后全量回归前必须 export DATABASE_URL 指向 scratch，并考虑给真实演练测试加 skip/分组。
