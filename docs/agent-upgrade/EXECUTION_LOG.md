@@ -42,7 +42,42 @@
 4. 用户级每日限额由另一 agent 实现，本分支只在 context.py 预留 `check_user_quota()` 桩位
 - Phase 1 Gate：**PASS**（进入 Phase 2）
 
-## Phase 2 — 工具层实现（子代理执行中）
+## Phase 2 — 工具层实现（子代理执行，commit 54e963e）
 
-- 范围：`backend/services/agent/` 四模块 + alembic 迁移（三表）+ `tests/test_agent_tools_phase2.py`
-- 红线已传达：scratch DB、429 硬停、视频 key 禁用、密钥不进 git
+### 改动文件
+- `backend/services/agent/tools.py` — 14 工具注册表（8 逻辑 + 6 扩展）：Pydantic v2 schema（extra=forbid）、白名单校验、工具分级（patch_work/delete_work 为确认级）
+- `backend/services/agent/context.py` — 只读上下文装配（跨组织对象返回 None 防枚举）；`check_user_quota()` 桩位（enforced=False + TODO，Phase 7 对接）
+- `backend/services/agent/adapters.py` — 14 适配器 + `run_tool` 统一分派：只调既有 service/repository，无直写 DB；统一信封；权限每次从 Membership 重读；patch_work 乐观锁；regenerate_shot 检查 Shot.locked
+- `backend/services/agent/planner.py` — JSON 计划校验：白名单/params schema/depends_on 无环/run 级上限（25 步 / 8 模型步）
+- `migrations/versions/0020_agent_tables.py` — conversations / conversation_messages / agent_steps（SQLite/Postgres 兼容，幂等，downgrade 验证）
+- `tests/test_agent_tools_phase2.py` — 38 个测试
+
+### 测试结果
+- 新测试：38/38 通过
+- 相关既有测试无新增失败：test_db_phase3 14✓、test_ai_observability 12✓、test_ai_gateway_ext 22✓、test_async_tasks_phase4 22✓
+- 真实 DB 未触碰（alembic 仍 0019，无 agent 表）；全程无真实模型调用
+- 发现（非阻塞）：`backend.models` 循环导入坑（须先 import backend.auth.*），已在 agent/__init__.py 固定顺序并注释
+- Phase 2 Gate：**PASS**（进入 Phase 3）
+
+## Phase 3 — 对话持久化与任务控制（子代理执行，commit 6314062）
+
+### 改动文件
+- `backend/services/agent/conversations.py`（新建）：Conversation/ConversationMessage/AgentStep ORM + CRUD，org 归属校验（404 防枚举），role 限 user/assistant/tool，消息分页
+- `backend/services/agent/runner.py`（新建）：create_agent_run / set_run_plan / execute_run_steps / run_agent_run（queue runner 签名）/ confirm_step / get_run_state / step_params_digest
+- `backend/ai_tasks/runners.py`：RUNNERS["agent_run"] 注册（函数内延迟导入避循环导入）
+- `backend/models.py`：TASK_TYPE_AGENT_RUN="agent_run" 加入 TASK_TYPES
+- `backend/ai_tasks/repository.py`：新增 update_payload()（整体替换 payload_json，不碰状态机）
+- `backend/ai_tasks/queue.py`：_execute 识别 waiting_user 挂起信号（保持 running）；sweep_timed_out 跳过 waiting_user 的 agent run
+- `tests/test_agent_run_phase3.py`（新建，25 用例）
+
+### 测试结果
+- 新测试：25/25 PASS；回归 test_async_tasks_phase4 22/22、test_agent_tools_phase2 38/38
+- 全部 mock run_tool，零真实模型调用
+
+### ⚠️ 事故记录（已恢复）
+- 子代理调试迁移时用 `set_main_option("sqlalchemy.url", …)` 定向 scratch 库，被 `migrations/env.py:29` 的 DATABASE_URL 覆盖，一条 `alembic upgrade head` 误跑到业务库（0019→0020）
+- 已立即 `downgrade 0019_ai_call_org` 恢复；我方独立验证：integrity ok、版本戳 0019、三表无残留、业务数据完好（48 用户/2197 ai_calls/16 作品）
+- 教训：迁移类操作一律走 DATABASE_URL 环境变量定向；已记入 KNOWN_ISSUES.md
+- Phase 3 Gate：**PASS**（进入 Phase 4）
+
+## Phase 4 — AI 创作助手 UI（待派发，拆 4a 路由 + 4b 前端）
