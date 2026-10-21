@@ -114,10 +114,10 @@ def _snapshot_work(db: Session, work: models.Work, user_id: str) -> models.WorkV
     )
     db.add(snap)
     db.flush()
-    # 超限：删除最旧的快照
+    # 超限：删除最旧的快照（按 version_no 降序取，offset 之外的即最旧）
     excess = (db.query(models.WorkVersion)
               .filter(models.WorkVersion.work_id == work.id)
-              .order_by(models.WorkVersion.version_no.asc())
+              .order_by(models.WorkVersion.version_no.desc())
               .offset(MAX_VERSIONS_PER_WORK)
               .all())
     for old in excess:

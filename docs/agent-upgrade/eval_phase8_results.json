@@ -1,0 +1,185 @@
+{
+  "scenarios": [
+    {
+      "id": "E01",
+      "kind": "正常",
+      "name": "一句话生成标准 brief",
+      "pass": true,
+      "detail": "work=44f3c524 5 artifacts 齐"
+    },
+    {
+      "id": "E02",
+      "kind": "正常",
+      "name": "多轮对话复用 conversation（brief 增量合并）",
+      "pass": true,
+      "detail": "同一 conversation 串联两轮，brief 增量合并"
+    },
+    {
+      "id": "E03",
+      "kind": "正常",
+      "name": "局部修改：改文案标题",
+      "pass": true,
+      "detail": "仅 copy 变化，其余零变化"
+    },
+    {
+      "id": "E04",
+      "kind": "正常",
+      "name": "局部修改：预算数字纯字段替换",
+      "pass": true,
+      "detail": "budget_yuan=300"
+    },
+    {
+      "id": "E05",
+      "kind": "正常",
+      "name": "版本恢复",
+      "pass": true,
+      "detail": "恢复后与修改前一致"
+    },
+    {
+      "id": "E06",
+      "kind": "正常",
+      "name": "plan 执行：query_facts+query_products",
+      "pass": true,
+      "detail": "真实 adapter 读到种子行"
+    },
+    {
+      "id": "E07",
+      "kind": "正常",
+      "name": "导出 export-json 含版本历史",
+      "pass": true,
+      "detail": "versions=1 含快照 v1"
+    },
+    {
+      "id": "E08",
+      "kind": "边界",
+      "name": "brief 缺字段 → 透明默认值",
+      "pass": true,
+      "detail": "confirmed_defaults=3 项"
+    },
+    {
+      "id": "E09",
+      "kind": "边界",
+      "name": "空 brief → failed 可读错误",
+      "pass": true,
+      "detail": "brief 解析失败：工具 parse_brief 参数非法: user_text: String should hav"
+    },
+    {
+      "id": "E10",
+      "kind": "边界",
+      "name": "预算 0 视为未指定",
+      "pass": true,
+      "detail": "budget_yuan=None（未指定）"
+    },
+    {
+      "id": "E11",
+      "kind": "边界",
+      "name": "超长 brief 截断 2000",
+      "pass": true,
+      "detail": "存了 2000 字符（原文 4000 截断）"
+    },
+    {
+      "id": "E12",
+      "kind": "边界",
+      "name": "触碰确认事实 → waiting_user",
+      "pass": true,
+      "detail": "confirmed_fact:该修改涉及人工已确认事实，需人工确认"
+    },
+    {
+      "id": "E13",
+      "kind": "边界",
+      "name": "高风险宣称无引用 → 自动标待核实",
+      "pass": true,
+      "detail": "repaired=1 处"
+    },
+    {
+      "id": "E14",
+      "kind": "边界",
+      "name": "可选步骤失败 → partial",
+      "pass": true,
+      "detail": "partial"
+    },
+    {
+      "id": "E15",
+      "kind": "边界",
+      "name": "非法 plan 被拒（未知 tool）",
+      "pass": true,
+      "detail": "拒绝：非法 plan：steps[0].tool_id 不在白名单: 'exec_shell'"
+    },
+    {
+      "id": "E16",
+      "kind": "边界",
+      "name": "超长 plan 被拒（26 步）",
+      "pass": true,
+      "detail": "拒绝：非法 plan：步数 26 超过 run 上限 25"
+    },
+    {
+      "id": "E17",
+      "kind": "失败",
+      "name": "模型超时 → 快速失败无重试",
+      "pass": true,
+      "detail": "1 次调用快速失败"
+    },
+    {
+      "id": "E18",
+      "kind": "失败",
+      "name": "429 硬停零新调用",
+      "pass": true,
+      "detail": "429 后零新调用"
+    },
+    {
+      "id": "E19",
+      "kind": "失败",
+      "name": "5xx 不重试",
+      "pass": true,
+      "detail": "1 次调用直接失败"
+    },
+    {
+      "id": "E20",
+      "kind": "对抗",
+      "name": "提示注入改白名单被拒",
+      "pass": true,
+      "detail": "白名单外工具拒绝"
+    },
+    {
+      "id": "E21",
+      "kind": "对抗",
+      "name": "跨租户读 run 被拒",
+      "pass": true,
+      "detail": "跨租户 found=False（404 防枚举），本租户可读"
+    },
+    {
+      "id": "E22",
+      "kind": "对抗",
+      "name": "跨作品修改被拒",
+      "pass": true,
+      "detail": "跨作品拒绝"
+    },
+    {
+      "id": "E23",
+      "kind": "对抗",
+      "name": "重复提交同幂等键 → 同一任务",
+      "pass": true,
+      "detail": "同一 task_id，无重复"
+    },
+    {
+      "id": "E24",
+      "kind": "对抗",
+      "name": "并发编辑 stale 版本 → 冲突",
+      "pass": true,
+      "detail": "stale 写入被拒，数据完好"
+    },
+    {
+      "id": "E25",
+      "kind": "对抗",
+      "name": "用户中途取消",
+      "pass": true,
+      "detail": "取消后停步，状态 cancelled"
+    }
+  ],
+  "summary": {
+    "total": 25,
+    "passed": 25,
+    "failed": 0
+  },
+  "note": "mock 驱动的确定性评测，不是生产流量"
+}

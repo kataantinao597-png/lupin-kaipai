@@ -1,0 +1,202 @@
+........................................................................ [  9%]
+........................................................................ [ 19%]
+........................................................................ [ 29%]
+........................................................................ [ 39%]
+..............FF........................................................ [ 49%]
+...........F...........F...F............................................ [ 59%]
+...........................................................F............ [ 69%]
+........................................................................ [ 79%]
+........................................................................ [ 89%]
+........................................................................ [ 99%]
+.......                                                                  [100%]
+=================================== FAILURES ===================================
+_ DeliveryCheckTests.test_delivery_check_is_data_driven_and_blocks_unconfirmed_risks _
+
+self = <test_delivery_check.DeliveryCheckTests testMethod=test_delivery_check_is_data_driven_and_blocks_unconfirmed_risks>
+
+    def test_delivery_check_is_data_driven_and_blocks_unconfirmed_risks(self):
+        storyboard = valid_storyboard()
+        storyboard["risk_flags"] = [{"text": "待核实卖点", "level": "高", "reason": "缺少证据", "confirmed": False}]
+>       result = app_module.delivery_check(app_module.DeliveryCheckRequest(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+            storyboard=storyboard,
+            product={"product_name": "测试产品"},
+            facts=[],
+            feasibility=None,
+            shoot_state={},
+        ))
+E       AttributeError: module 'backend.app' has no attribute 'delivery_check'
+
+tests/test_delivery_check.py:18: AttributeError
+_____ DeliveryCheckTests.test_delivery_check_marks_empty_project_as_action _____
+
+self = <test_delivery_check.DeliveryCheckTests testMethod=test_delivery_check_marks_empty_project_as_action>
+
+    def test_delivery_check_marks_empty_project_as_action(self):
+>       result = app_module.delivery_check(app_module.DeliveryCheckRequest(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+            storyboard=None, product=None, facts=[], feasibility=None, shoot_state={}
+        ))
+E       AttributeError: module 'backend.app' has no attribute 'delivery_check'
+
+tests/test_delivery_check.py:31: AttributeError
+_ FeasibilityFallbackTests.test_model_failure_returns_rule_results_without_502 _
+
+self = <test_feasibility_fallback.FeasibilityFallbackTests testMethod=test_model_failure_returns_rule_results_without_502>
+
+    def test_model_failure_returns_rule_results_without_502(self):
+        class FailingAI:
+            def generate_with_retry(self, *args, **kwargs):
+                raise AIFatalError("模型不可用")
+    
+>       with patch.object(app_module, "get_ai", return_value=FailingAI()):
+
+tests/test_feasibility_fallback.py:48: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.12/unittest/mock.py:1458: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <unittest.mock._patch object at 0x7ccc4d38b740>
+
+    def get_original(self):
+        target = self.getter()
+        name = self.attribute
+    
+        original = DEFAULT
+        local = False
+    
+        try:
+            original = target.__dict__[name]
+        except (AttributeError, KeyError):
+            original = getattr(target, name, DEFAULT)
+        else:
+            local = True
+    
+        if name in _builtins and isinstance(target, ModuleType):
+            self.create = True
+    
+        if not self.create and original is DEFAULT:
+>           raise AttributeError(
+                "%s does not have the attribute %r" % (target, name)
+            )
+E           AttributeError: <module 'backend.app' from '/home/hatch/workspace/lupin-kaipai/backend/app.py'> does not have the attribute 'get_ai'
+
+/usr/lib/python3.12/unittest/mock.py:1431: AttributeError
+_________ HandoverRegressionTests.test_health_reports_configured_model _________
+
+self = <test_handover_regressions.HandoverRegressionTests testMethod=test_health_reports_configured_model>
+
+    def test_health_reports_configured_model(self):
+>       old_ai = app_module.ai
+                 ^^^^^^^^^^^^^
+E       AttributeError: module 'backend.app' has no attribute 'ai'
+
+tests/test_handover_regressions.py:56: AttributeError
+____ HandoverRegressionTests.test_regenerate_shot_declares_request_context _____
+
+self = <test_handover_regressions.HandoverRegressionTests testMethod=test_regenerate_shot_declares_request_context>
+
+    def test_regenerate_shot_declares_request_context(self):
+        """The route must receive Request before using rate limiting or headers."""
+>       request = inspect.signature(app_module.regenerate_shot).parameters
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'backend.app' has no attribute 'regenerate_shot'
+
+tests/test_handover_regressions.py:51: AttributeError
+___________ SrtRouteTests.test_export_srt_returns_utf8_subtitle_file ___________
+
+self = <test_srt_route.SrtRouteTests testMethod=test_export_srt_returns_utf8_subtitle_file>
+
+    def test_export_srt_returns_utf8_subtitle_file(self):
+>       response = app_module.export_srt(app_module.ExportRequest(storyboard=valid_storyboard()))
+                   ^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'backend.app' has no attribute 'export_srt'
+
+tests/test_srt_route.py:19: AttributeError
+=============================== warnings summary ===============================
+backend/auth/config.py:21
+  /home/hatch/workspace/lupin-kaipai/backend/auth/config.py:21: UserWarning: [lupin-auth] WARNING: LUPIN_JWT_SECRET 未配置，已生成临时随机密钥；重启后所有会话失效，生产环境请务必配置该环境变量。
+    warnings.warn(msg)
+
+venv/lib/python3.12/site-packages/passlib/utils/__init__.py:854
+  /home/hatch/workspace/lupin-kaipai/venv/lib/python3.12/site-packages/passlib/utils/__init__.py:854: DeprecationWarning: 'crypt' is deprecated and slated for removal in Python 3.13
+    from crypt import crypt as _crypt
+
+venv/lib/python3.12/site-packages/passlib/handlers/argon2.py:716
+  /home/hatch/workspace/lupin-kaipai/venv/lib/python3.12/site-packages/passlib/handlers/argon2.py:716: DeprecationWarning: Accessing argon2.__version__ is deprecated and will be removed in a future release. Use importlib.metadata directly to query for argon2-cffi's packaging metadata.
+    _argon2_cffi.__version__, max_version)
+
+backend/app.py:155
+  /home/hatch/workspace/lupin-kaipai/backend/app.py:155: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+venv/lib/python3.12/site-packages/fastapi/applications.py:4745
+  /home/hatch/workspace/lupin-kaipai/venv/lib/python3.12/site-packages/fastapi/applications.py:4745: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /home/hatch/workspace/lupin-kaipai/venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+tests/test_agent_api_phase4a.py: 23 warnings
+tests/test_agent_boundary_phase8.py: 15 warnings
+tests/test_agent_e2e_phase8.py: 8 warnings
+tests/test_agent_modify_phase6.py: 17 warnings
+tests/test_agent_orchestrator_phase5.py: 18 warnings
+tests/test_agent_run_phase3.py: 27 warnings
+tests/test_agent_security_phase7.py: 21 warnings
+tests/test_agent_tools_phase2.py: 5 warnings
+tests/test_ai_gateway_ext.py: 10 warnings
+tests/test_ai_observability.py: 5 warnings
+tests/test_assets_consistency.py: 3 warnings
+tests/test_async_tasks_phase4.py: 14 warnings
+tests/test_colloquial.py: 2 warnings
+tests/test_db_phase3.py: 12 warnings
+tests/test_deploy_auth_fallback.py: 5 warnings
+tests/test_enterprise_phase12.py: 16 warnings
+tests/test_fact_import.py: 10 warnings
+tests/test_fact_lifecycle.py: 21 warnings
+tests/test_final_archive.py: 4 warnings
+tests/test_media_phase11.py: 7 warnings
+tests/test_poster_image.py: 9 warnings
+tests/test_review_closure.py: 8 warnings
+tests/test_security_phase9.py: 6 warnings
+tests/test_shoot_v2.py: 18 warnings
+tests/test_v21_idempotency.py: 6 warnings
+tests/test_v21_risk_tolerance.py: 2 warnings
+tests/test_v30_asset_library.py: 18 warnings
+tests/test_v30_b4b5.py: 17 warnings
+tests/test_v30_copyopt.py: 22 warnings
+tests/test_v30_plan.py: 17 warnings
+tests/test_v30_platform.py: 16 warnings
+tests/test_v30_product.py: 13 warnings
+tests/test_v30_publish.py: 16 warnings
+tests/test_v30_review.py: 16 warnings
+tests/test_v31_p0_aisafety.py: 13 warnings
+tests/test_v31_p1_colloquial.py: 3 warnings
+tests/test_v31_p1_live.py: 6 warnings
+  /home/hatch/workspace/lupin-kaipai/venv/lib/python3.12/site-packages/alembic/config.py:604: DeprecationWarning: No path_separator found in configuration; falling back to legacy splitting on spaces, commas, and colons for prepend_sys_path.  Consider adding path_separator=os to Alembic config.
+    util.warn_deprecated(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_delivery_check.py::DeliveryCheckTests::test_delivery_check_is_data_driven_and_blocks_unconfirmed_risks
+FAILED tests/test_delivery_check.py::DeliveryCheckTests::test_delivery_check_marks_empty_project_as_action
+FAILED tests/test_feasibility_fallback.py::FeasibilityFallbackTests::test_model_failure_returns_rule_results_without_502
+FAILED tests/test_handover_regressions.py::HandoverRegressionTests::test_health_reports_configured_model
+FAILED tests/test_handover_regressions.py::HandoverRegressionTests::test_regenerate_shot_declares_request_context
+FAILED tests/test_srt_route.py::SrtRouteTests::test_export_srt_returns_utf8_subtitle_file
+6 failed, 721 passed, 1 skipped, 455 warnings in 558.73s (0:09:18)
+EXIT_CODE=1
