@@ -119,3 +119,13 @@
 - 真实冒烟（luna key 经保险箱 surrogate，走 backend/ai/gateway.py；key 未入代码/日志）：brief 解析 1 次，模型 gpt-6-luna，耗时 19248ms，attempts=1，prompt 4694 / completion 323 / total 5017 tokens，费用约 6 分；产地/认证/功效/价格/销量均正确标"待核实"，未臆造；无 429
 - 遗留（非阻塞）：① orchestrator 目前是同步 service 函数，HTTP 一句话入口路由未建（Phase 6/后续按需加，前端 4b 对话流已可经 run/create+plan 调用）；② check_delivery 的"产品资料/风险审核"阻断项沿用旧语义（orchestrator 只记录不强拦）；③ 4b 遗留①（排队中 run 取消语义）未动
 - Phase 5 Gate：**PASS**（§5.4 十场景全覆盖：正常/缺失字段/无效 JSON/单工具失败/风险内容/低预算单人/重读一致/可选失败→partial/confirm 异步/多轮串联）
+
+## Phase 5 — 一句话生成编排（子代理执行，commit 2634b06）
+- 新增：brief.py（Brief 解析器，Pydantic schema，关键事实不明强制待核实）/ orchestrator.py（run_one_shot_brief，11 步流程）/ quality_gates.py（artifact schema/一致性/风险引用/保存后重读）
+- 修改：tools.py（+generate_strategy/+generate_platform_copy，白名单 14→16）/ adapters.py（parse_brief 走完整 schema，修分镜校验真 bug）/ runner.py（confirm 改异步 + conversation 复用 + brief 增量合并）/ api/v1/agent.py（confirm 入队恢复 + conversation_id）/ ai_tasks/queue.py（running 重入容忍）/ frontend/js/app.js（多轮串联回传 convId）
+- 测试：新 27/27；回归 135/135 全绿（phase2/3/4a 旧测试按新语义更新）
+- 真实冒烟：gpt-6-luna 经保险箱，brief 解析 19.2s，5017 tokens（约 6 分），待核实项未臆造，无 429
+- 遗留：HTTP"一句话"入口路由未建（后续按需）；用户级限额仍是桩位
+- Phase 5 Gate：**PASS**（进入 Phase 6）
+
+## Phase 6 — 连续对话与局部修改（子代理执行中）
