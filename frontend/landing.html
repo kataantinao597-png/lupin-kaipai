@@ -100,6 +100,7 @@
   @media (prefers-reduced-motion: reduce){
     .hero .anim{opacity:1;animation:none}
     .js .reveal{opacity:1;transform:none;transition:none}
+    .demo-shot,.demo-shot img{transform:none;transition:none}
     html{scroll-behavior:auto}
   }
   .hero .anim{opacity:0;animation:fadeUp .7s ease forwards}
@@ -156,7 +157,9 @@
     border-radius:12px;padding:14px 18px;background:rgba(179,137,46,.07)}
 
   /* ============ E · 创作流程 ============ */
-  .flow{margin-top:56px;position:relative}
+  .flow{margin-top:56px}
+  .flow-row{position:relative}
+  .flow-row + .flow-row{margin-top:26px}
   .flow-line{position:absolute;top:31px;left:5%;right:5%;height:3px;background:var(--lp-hair);border-radius:2px;z-index:0}
   .flow-line i{display:block;height:100%;width:100%;background:linear-gradient(to right,var(--lp-forest),var(--lp-teal));
     border-radius:2px;transform:scaleX(0);transform-origin:left center;transition:transform .8s ease}
@@ -204,6 +207,13 @@
   .demo-tx h3{font-size:24px;font-weight:800;margin:12px 0 10px;line-height:1.4}
   .demo-tx p{font-size:15px;color:var(--lp-muted)}
   .demo-note{margin-top:22px;font-size:13px;color:var(--lp-muted);text-align:center}
+  /* 展示区动效：克制的 hover 反馈（只动 transform，<300ms ease-out；触屏不触发） */
+  @media (hover:hover){
+    .demo-shot{transition:transform .25s ease-out}
+    .demo-shot:hover{transform:translateY(-4px)}
+    .demo-shot img{transition:transform .3s ease-out}
+    .demo-shot:hover img{transform:scale(1.03)}
+  }
 
   /* ============ H · CTA（视频背景） ============ */
   .cta{position:relative;overflow:hidden;color:#F4EEDC}
@@ -410,16 +420,23 @@
     <h2 class="reveal">八个环节，让创意走进拍摄现场</h2>
     <p class="sec-desc reveal">从资料整理到分镜、拍摄清单与交付复盘，每一步都有明确产出，也保留调整空间。</p>
     <div class="flow">
-      <div class="flow-line" aria-hidden="true"><i id="flowFill"></i></div>
-      <div class="flow-grid" id="flowGrid">
-        <div class="fstep reveal"><div class="dot">01</div><h3>整理产品资料</h3><p>记录产品特点、核心卖点与可用拍摄条件</p></div>
-        <div class="fstep reveal"><div class="dot">02</div><h3>确认关键信息</h3><p>区分已确认事实与待核实内容</p></div>
-        <div class="fstep reveal"><div class="dot">03</div><h3>生成创意方向</h3><p>围绕产品亮点提出多种拍摄思路</p></div>
-        <div class="fstep reveal"><div class="dot">04</div><h3>细化分镜脚本</h3><p>明确景别、镜头动作、台词与时长</p></div>
-        <div class="fstep reveal"><div class="dot">05</div><h3>按清单拍摄</h3><p>逐镜执行，记录完成进度</p></div>
-        <div class="fstep reveal"><div class="dot">06</div><h3>准备营销物料</h3><p>海报与发布文案按同一套资料生成</p></div>
-        <div class="fstep reveal"><div class="dot">07</div><h3>检查表达风险</h3><p>标记需核实或需谨慎使用的表述</p></div>
-        <div class="fstep reveal"><div class="dot">08</div><h3>整理成果交付</h3><p>导出脚本与清单，检查并复盘关键环节</p></div>
+      <div class="flow-row">
+        <div class="flow-line" aria-hidden="true"><i class="flowFill"></i></div>
+        <div class="flow-grid">
+          <div class="fstep reveal"><div class="dot">01</div><h3>整理产品资料</h3><p>记录产品特点、核心卖点与可用拍摄条件</p></div>
+          <div class="fstep reveal"><div class="dot">02</div><h3>确认关键信息</h3><p>区分已确认事实与待核实内容</p></div>
+          <div class="fstep reveal"><div class="dot">03</div><h3>生成创意方向</h3><p>围绕产品亮点提出多种拍摄思路</p></div>
+          <div class="fstep reveal"><div class="dot">04</div><h3>细化分镜脚本</h3><p>明确景别、镜头动作、台词与时长</p></div>
+        </div>
+      </div>
+      <div class="flow-row">
+        <div class="flow-line" aria-hidden="true"><i class="flowFill"></i></div>
+        <div class="flow-grid">
+          <div class="fstep reveal"><div class="dot">05</div><h3>按清单拍摄</h3><p>逐镜执行，记录完成进度</p></div>
+          <div class="fstep reveal"><div class="dot">06</div><h3>准备营销物料</h3><p>海报与发布文案按同一套资料生成</p></div>
+          <div class="fstep reveal"><div class="dot">07</div><h3>检查表达风险</h3><p>标记需核实或需谨慎使用的表述</p></div>
+          <div class="fstep reveal"><div class="dot">08</div><h3>整理成果交付</h3><p>导出脚本与清单，检查并复盘关键环节</p></div>
+        </div>
       </div>
     </div>
   </div>

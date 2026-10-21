@@ -4154,12 +4154,12 @@ function renderPublishList() {
     PUB_STATUSES.map(([v, l]) => `<option value="${v}"${PUB.filter === v ? " selected" : ""}>${l}</option>`)).join("");
   const cards = PUB.records.map((r) => `
     <div class="card pub-card" data-id="${esc(r.id)}">
-      <div class="pub-card-head"><strong>${esc(r.title)}</strong>
-        <span class="pill">${esc(pubPlatformLabel(r.platform))}</span>
+      <div class="pub-card-title" title="${esc(r.title)}">${esc(r.title)}</div>
+      <div class="pub-card-meta"><span class="pill">${esc(pubPlatformLabel(r.platform))}</span>
         ${r.status === "published" ? '<span class="stamp-badge">已发布</span>' : `<span class="pill ${r.status === "reviewed" ? "blue" : ""}">${esc(pubStatusLabel(r.status))}</span>`}
       </div>
-      <div class="muted small">${r.publish_url ? "链接：" + esc(r.publish_url) : "未发布"}</div>
-      <div class="row"><button class="btn sm" data-act="open">打开</button>
+      <div class="muted small pub-card-link">${r.publish_url ? "链接：" + esc(r.publish_url) : "未发布"}</div>
+      <div class="pub-card-actions"><button class="btn sm" data-act="open">打开</button>
       ${["pending", "cancelled", "failed", "postponed"].includes(r.status) ? '<button class="btn sm danger" data-act="del">删除</button>' : ""}</div>
     </div>`).join("");
   sec.innerHTML = `
@@ -4178,7 +4178,7 @@ function renderPublishList() {
       <button class="btn primary" id="pub_new_btn">＋ 新建</button>
     </div>
     <div id="pub_detail"></div>
-    <div class="pub-list">${cards || '<div class="card">' + emptyState("暂无发布记录", "填好标题、选好平台，建第一条发布记录。", true, { label: "新建发布记录", fn: () => { const t = $("pub_new_title"); if (t) { t.focus(); t.scrollIntoView({ block: "center", behavior: "smooth" }); } } }) + '</div>'}</div>`;
+    <div class="pub-list">${cards || '<div class="card pub-empty">' + emptyState("暂无发布记录", "填好标题、选好平台，建第一条发布记录。", true, { label: "新建发布记录", fn: () => { const t = $("pub_new_title"); if (t) { t.focus(); t.scrollIntoView({ block: "center", behavior: "smooth" }); } } }) + '</div>'}</div>`;
   $("pub_filter").addEventListener("change", async (e) => { PUB.filter = e.target.value; await loadPublishRecords(); renderPublishList(); });
   $("pub_new_btn").addEventListener("click", createPublishRecord);
   sec.querySelectorAll(".pub-card").forEach((c) => {

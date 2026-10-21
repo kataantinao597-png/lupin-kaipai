@@ -122,14 +122,18 @@
     revealEls.forEach(function(el){ io.observe(el); });
   }
 
-  /* 流程：滚动高亮 + 连接线填充 */
+  /* 流程：滚动高亮 + 连接线填充（每行独立一条线，按行算进度） */
   var steps = Array.prototype.slice.call(document.querySelectorAll(".fstep"));
-  var fill = document.getElementById("flowFill");
+  var flowRows = Array.prototype.slice.call(document.querySelectorAll(".flow-row"));
   function paintFlow(){
-    var lit = steps.filter(function(s){ return s.classList.contains("lit"); }).length;
-    var pct = steps.length > 1 ? (lit - 1) / (steps.length - 1) * 100 : 0;
-    // 动效标准#7：动画 transform 而非 width（避免逐帧重排）
-    if(fill) fill.style.transform = "scaleX(" + (pct / 100) + ")";
+    flowRows.forEach(function(row){
+      var rs = Array.prototype.slice.call(row.querySelectorAll(".fstep"));
+      var fill = row.querySelector(".flowFill");
+      var lit = rs.filter(function(s){ return s.classList.contains("lit"); }).length;
+      var pct = rs.length > 1 ? (lit - 1) / (rs.length - 1) * 100 : 0;
+      // 动效标准#7：动画 transform 而非 width（避免逐帧重排）
+      if(fill) fill.style.transform = "scaleX(" + (pct / 100) + ")";
+    });
   }
   if("IntersectionObserver" in window && !reduced){
     var fio = new IntersectionObserver(function(entries){

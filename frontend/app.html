@@ -422,6 +422,13 @@ padding:12px 22px;border-radius:14px;font-size:13.5px;opacity:0;pointer-events:n
 .toolbar .sep{flex-basis:100%;height:0;border-top:1px dashed var(--line)}
 .pub-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
 .pub-card-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+/* 发布记录卡片：标题独占一行（单行省略）+ 元数据行 + 统一样式节奏 */
+.pub-card{display:flex;flex-direction:column;gap:8px}
+.pub-card-title{font-weight:800;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pub-card-meta{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.pub-card-link{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pub-card-actions{display:flex;gap:8px;margin-top:2px}
+.pub-empty{grid-column:1/-1;text-align:center}
 .pub-detail>.row{margin-top:8px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;font-size:13.5px;color:var(--ink2)}
 @media(max-width:640px){.grid2{grid-template-columns:1fr}}
