@@ -261,6 +261,7 @@ try:
     from .api.v1.ai_stats import router as ai_stats_router  # noqa: E402  # 133/134
     from .api.v1.metrics import router as metrics_router  # noqa: E402  # S9.3
     from .api.v1.enterprise import router as enterprise_router  # noqa: E402  # S10
+    from .api.v1.agent import router as agent_router  # noqa: E402  # Phase 4a
     _mount(orgs_router, prefix="/api/v1")
     _mount(works_router, prefix="/api/v1")
     _mount(ai_tasks_router, prefix="/api/v1")
@@ -269,6 +270,7 @@ try:
     _mount(ai_stats_router, prefix="/api/v1")
     _mount(metrics_router, prefix="/api/v1")
     _mount(enterprise_router, prefix="/api/v1")
+    _mount(agent_router, prefix="/api/v1")
 except Exception as e:  # noqa: BLE001
     log.info(f"API v1 模块加载跳过（并行施工中）: {type(e).__name__}: {e}")
 
