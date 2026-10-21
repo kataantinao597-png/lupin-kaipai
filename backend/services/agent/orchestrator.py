@@ -293,8 +293,12 @@ def run_one_shot_brief(
     ai_generate: Optional[Callable[[str, Optional[str]], dict]] = None,
     session_factory: Optional[Callable[[], Session]] = None,
     is_cancelled: Optional[Callable[[], bool]] = None,
+    task_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """一句话生成完整项目（任务书 §5.2 11 步）。同步执行；调用方决定线程/队列。
+
+    task_id 可选：传入已创建的 run 则复用（HTTP /one-shot 路由先建 run
+    再入队时用）；不传则内部新建。
 
     返回 {"task_id","run_status","work_id","conversation_id","summary",
     "quality",...}。业务库只读 + 经 adapter 的受控写；测试一律用 scratch 库。
@@ -314,10 +318,11 @@ def run_one_shot_brief(
     identity = AgentIdentity(user_id=str(user_id), org_id=org_id, role=role)
 
     # 建 run（pending → running）；brief 先存原文，解析后回填结构化版本
-    task_id = create_agent_run(
-        db, user, org_id, work_id=work_id,
-        brief_json={"text": (brief_text or "")[:2000]},
-        conversation_id=conversation_id)
+    if task_id is None:
+        task_id = create_agent_run(
+            db, user, org_id, work_id=work_id,
+            brief_json={"text": (brief_text or "")[:2000]},
+            conversation_id=conversation_id)
     repo = AITaskRepository(db)
     repo.set_status(task_id, "running")
     conv_id = (repo.get(task_id).payload_json or {}).get("conversation_id")

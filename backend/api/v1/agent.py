@@ -6,6 +6,8 @@
 - POST   /api/v1/agent/runs/{task_id}/confirm      确认等待中的步骤
 - POST   /api/v1/agent/runs/{task_id}/cancel       取消 run（复用 ai-tasks 取消语义）
 - GET    /api/v1/agent/conversations/{conv_id}/messages  会话消息分页
+- POST   /api/v1/agent/one-shot                   一句话生成完整项目（202 入队异步执行 11 步编排）
+- POST   /api/v1/agent/modify                     连续对话局部修改（200 同步返回结果）
 
 本层只做 HTTP + 认证（get_current_user）+ 权限（组织成员校验、
 404 防枚举）+ 参数校验（Pydantic）；业务逻辑全部委托
@@ -85,6 +87,39 @@ class AgentRunPlan(BaseModel):
 class AgentRunConfirm(BaseModel):
     step_idx: int = Field(ge=0, description="待确认的步骤索引")
     approved: bool = Field(description="True=批准执行，False=拒绝并取消任务")
+
+
+class AgentOneShot(BaseModel):
+    """一句话生成完整项目：建 run + 入队异步执行 11 步编排，202 返回 task_id。
+
+    前端用 GET /runs/{task_id} 轮询真实状态（已有接口）。
+    """
+
+    org_id: str = Field(min_length=1, description="组织 id（调用者须为成员）")
+    brief_text: str = Field(min_length=1, max_length=2000,
+                            description="用户一句话需求（自然语言）")
+    work_id: Optional[str] = Field(default=None,
+                                   description="关联作品 id（可选，须属该组织）")
+    conversation_id: Optional[str] = Field(
+        default=None, description="复用的会话 id（不传则新建会话）")
+    model: Optional[str] = Field(default=None,
+                                 description="覆盖默认模型（须在允许列表，由 service 层校验）")
+
+
+class AgentModify(BaseModel):
+    """连续对话中的局部修改：同步执行，200 直接返回结果。
+
+    返回 status=completed（自动执行完毕）/ waiting_user（需确认，
+    调 confirm_modification 语义的后续接口）/ failed。
+    """
+
+    org_id: str = Field(min_length=1, description="组织 id（调用者须为成员）")
+    work_id: str = Field(min_length=1, description="目标作品 id（须属该组织）")
+    conversation_id: str = Field(min_length=1, description="会话 id（须绑定该作品）")
+    user_text: str = Field(min_length=1, max_length=2000,
+                           description="用户修改需求（自然语言）")
+    model: Optional[str] = Field(default=None,
+                                 description="覆盖默认模型（由 service 层校验）")
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +318,107 @@ def cancel_run(task_id: str,
         "message": "已取消" if final_status == "cancelled"
                    else "取消请求已提交，运行中的任务将在检查点停止",
     })
+
+
+# ---------------------------------------------------------------------------
+# 一句话生成 / 局部修改（service 层已完备，本层只做 HTTP 薄封装）
+# ---------------------------------------------------------------------------
+
+@router.post("/one-shot", response_model=ApiResponse[dict], status_code=202)
+def one_shot(req: AgentOneShot,
+             request: Request,
+             user: User = Depends(get_current_user),
+             db: Session = Depends(get_db)):
+    """一句话生成完整项目：建 run + 入队异步执行 11 步编排，202 返回。
+
+    - 须登录；调用者须为 org_id 的成员，否则 404（防枚举）；
+    - work_id 非空时必须属于该组织，否则 404；
+    - 支持 `Idempotency-Key`（DB 版）：同 key 同体直接回放，不重复建任务/执行；
+    - 执行走 TaskQueue worker（与 _enqueue_run_resume 同一入队方式），
+      前端用 GET /runs/{task_id} 轮询真实状态。
+    """
+    # 函数内导入：避免 api.v1.agent ↔ services.agent.orchestrator 顶层循环导入
+    from ...services.agent.orchestrator import run_one_shot_brief
+
+    idem = idempotency_begin("agent-one-shot", request,
+                            req.model_dump(mode="json"),
+                            scope=req.org_id, org_id=req.org_id)
+    if idem.replay is not None:
+        return success(dict(idem.replay))
+    try:
+        _require_org_member(db, user.id, req.org_id)
+        try:
+            task_id = create_agent_run(
+                db, user, req.org_id, work_id=req.work_id,
+                brief_json={"text": req.brief_text[:2000]},
+                conversation_id=req.conversation_id)
+        except EntityNotFound as e:
+            raise _entity_404(e) from e
+
+        user_id, org_id = user.id, req.org_id
+        brief_text, work_id = req.brief_text, req.work_id
+        conversation_id, model = req.conversation_id, req.model
+
+        def _runner(tid: str, is_cancelled):
+            db2 = get_session_factory()()
+            try:
+                return run_one_shot_brief(
+                    db2, user_id, org_id, brief_text, task_id=tid,
+                    work_id=work_id, conversation_id=conversation_id,
+                    model=model, is_cancelled=is_cancelled)
+            finally:
+                db2.close()
+
+        # 与 _enqueue_run_resume 同一入队方式
+        TaskQueue(get_session_factory()).submit(task_id, _runner,
+                                                priority="high")
+        state = get_run_state(db, task_id, req.org_id)
+    except Exception:
+        idem.abort()
+        raise
+    data = {
+        "task_id": task_id,
+        "status": state.get("status"),
+        "run_status": state.get("run_status"),
+        "conversation_id": state.get("conversation_id"),
+        "work_id": state.get("work_id"),
+    }
+    return success(idem.finish(data))
+
+
+@router.post("/modify", response_model=ApiResponse[dict])
+def modify(req: AgentModify,
+           user: User = Depends(get_current_user),
+           db: Session = Depends(get_db)):
+    """连续对话中的局部修改（任务书 §十）：同步执行，200 直接返回结果。
+
+    - 须登录；调用者须为 org_id 的成员，否则 404（防枚举）；
+    - 会话必须绑定目标作品，否则 404（跨作品拒绝，由 service 层校验）；
+    - ModifyParseError → 400；ModifyExecutionError → 500；EntityNotFound → 404。
+    同步接口已有先例（colloquial/ideas 同步改写），单次修改通常 1–2 次模型调用。
+    """
+    # 函数内导入：避免顶层循环导入
+    from ...services.agent.modify import (
+        ModifyExecutionError,
+        ModifyParseError,
+        apply_modification,
+    )
+
+    _require_org_member(db, user.id, req.org_id)
+    try:
+        result = apply_modification(
+            db, user, req.org_id, req.work_id, req.conversation_id,
+            req.user_text, model=req.model)
+    except EntityNotFound as e:
+        raise _entity_404(e) from e
+    except ModifyParseError as e:
+        raise BusinessError(str(e), code=error_codes.INVALID_PARAM,
+                            http_status=400) from e
+    except ModifyExecutionError as e:
+        raise BusinessError(f"局部修改执行失败：{e}",
+                            code=error_codes.SYSTEM_ERROR,
+                            http_status=500) from e
+    return success(result)
 
 
 # ---------------------------------------------------------------------------
