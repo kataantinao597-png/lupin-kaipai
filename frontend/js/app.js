@@ -304,7 +304,7 @@ function blankData() {
 }
 
 /* ---------- 路由（含登录守卫） ---------- */
-const NEED_AUTH = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9"];
+const NEED_AUTH = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "agent"];
 function loggedIn() { return !!(AuthClient && AuthClient.isLoggedIn()); }
 
 function go(v) {
@@ -333,8 +333,439 @@ function onEnter(v) {
   else if (v === "v7") { renderCopyOpt(); }
   else if (v === "v8") { renderPublishCenter(); }
   else if (v === "v9") { renderAssetLibrary(); }
+  else if (v === "agent") { enterAgentView(); }
 }
 
+/* ================= Phase 4b：AI 创作助手 =================
+   真实状态机：全部状态来自轮询 GET /api/v1/agent/runs/{id}（2.5s 间隔，
+   复用 pollAiTask 的轮询模式），不用固定延迟模拟完成。
+   run_status: queued/running/waiting_user/partial/completed/failed/cancelled；
+   idle/发送中 为客户端态；已保存 = completed 且 summary 已持久化
+   （后端完成时必写 summary 到 payload 并落 assistant 消息）。 */
+const AGENT_SRC_LABEL = { v0_home:"首页一句话创作", v2_product:"产品资料", v3_idea:"创意策划", v3_storyboard:"分镜编辑", v3_risk:"风险检查", v5_shoot:"拍摄执行", chat:"直接对话" };
+const AGENT_SRC_VIEW = { v0_home:"v1", v2_product:"v2", v3_idea:"v3", v3_storyboard:"v3", v3_risk:"v3", v5_shoot:"v5" };
+const AGENT_SRC_HINT = {
+  v2_product:"请帮我基于当前产品资料，给出下一步创作建议",
+  v3_idea:"请帮我基于当前创意方案继续推进",
+  v3_storyboard:"请帮我检查当前分镜并给出优化建议",
+  v3_risk:"请帮我处理当前风险检查中依据不足的项",
+  v5_shoot:"请帮我基于当前拍摄进度安排后续计划",
+};
+const AGENT_TOOL_LABEL = {
+  query_facts:"查事实库", query_products:"查产品档案", generate_ideas:"生成创意方案",
+  generate_storyboard:"生成分镜", check_risk:"风险检查", shooting_checklist:"拍摄清单",
+  rewrite_copy:"文案改写", check_delivery:"交付检查", parse_brief:"解析需求",
+  patch_work:"更新作品（需确认）", get_task_status:"查询任务状态", query_usage:"查询用量",
+  regenerate_shot:"重新生成镜头", delete_work:"删除作品（需确认）",
+};
+const AGENT = {
+  state:"idle", taskId:null, convId:null, lastBriefText:"",
+  ctx:null, timer:null, log:[], renderedConfirmFor:null, renderedResultFor:null,
+  lastState:null, pollFails:0, pendingSend:"",
+};
+const AGENT_TERMINAL = ["completed", "partial", "failed", "cancelled"];
+const AGENT_STATE_META = {
+  idle:["空闲","gray"], sending:["发送中","blue"], queued:["排队中","amber"],
+  running:["运行中","blue"], waiting_user:["等待确认","amber"], partial:["部分完成","amber"],
+  failed:["失败","red"], cancelled:["已取消","gray"], completed:["已完成","green"], saved:["已保存","green"],
+};
+const AGENT_STEP_META = {
+  pending:["待执行","gray"], running:["执行中","blue"], succeeded:["已完成","green"],
+  waiting_user:["等待确认","amber"], failed:["失败","red"], cancelled:["已取消","gray"], skipped:["已跳过","gray"],
+};
+
+function agentNormStatus(st) {
+  const m = { queued:"queued", running:"running", waiting_user:"waiting_user", partial:"partial",
+              completed:"completed", failed:"failed", cancelled:"cancelled" };
+  if (st && m[st.run_status]) return m[st.run_status];
+  const ts = st && st.status;
+  if (ts === "succeeded") return "completed";
+  if (ts === "failed") return "failed";
+  if (ts === "cancelled") return "cancelled";
+  if (ts === "running") return "running";
+  return "queued";
+}
+/* 已保存：completed 且 summary 已持久化（后端完成时必写） */
+function agentDisplayState(st) {
+  const s = agentNormStatus(st);
+  return (s === "completed" && st && st.summary) ? "saved" : s;
+}
+function agentToolLabel(tid) { return AGENT_TOOL_LABEL[tid] || tid || "未知步骤"; }
+
+function renderAgentPill(disp) {
+  const meta = AGENT_STATE_META[disp] || AGENT_STATE_META.idle;
+  const el = $("agent_status_pill");
+  if (el) { el.textContent = meta[0]; el.className = "pill " + meta[1]; }
+}
+function setAgentButtons(disp) {
+  const cancellable = ["queued", "running", "waiting_user"].includes(disp);
+  const retryable = ["failed", "cancelled"].includes(disp);
+  const bc = $("btn_agent_cancel"), br = $("btn_agent_retry");
+  if (bc) bc.style.display = cancellable ? "" : "none";
+  if (br) br.style.display = retryable ? "" : "none";
+}
+
+/* ---------- 对话区 ---------- */
+function agentLog(kind, data) {
+  data = data || {};
+  if (data.id) {
+    const i = AGENT.log.findIndex((e) => e.id === data.id);
+    if (i >= 0) { AGENT.log[i] = { kind, ...data }; renderAgentLog(); return; }
+  }
+  AGENT.log.push({ kind, ...data });
+  renderAgentLog();
+}
+function renderAgentLog() {
+  const box = $("agent_msgs");
+  if (!box) return;
+  if (!AGENT.log.length) {
+    box.innerHTML = `<div class="agent-msg assistant"><div class="agent-bubble">
+      <b>你好，我是 AI 创作助手。</b><br>
+      <span style="color:var(--ink2)">说一句话告诉我你想做什么，我会自动安排执行计划：查事实、做创意、排分镜。关键步骤（比如修改作品、删除内容）会先请你确认再执行。</span>
+      <div class="agent-suggest">
+        <button data-act="suggest" data-text="给当前作品做一个 60 秒带货短视频方案">60 秒带货方案</button>
+        <button data-act="suggest" data-text="检查当前作品的风险项并给出修改建议">检查风险项</button>
+        <button data-act="suggest" data-text="基于已确认事实生成 3 个创意方向">生成创意方向</button>
+      </div></div></div>`;
+    return;
+  }
+  box.innerHTML = AGENT.log.map((e) => {
+    if (e.kind === "user") return `<div class="agent-msg user"><div class="agent-bubble">${esc(e.text)}</div></div>`;
+    if (e.kind === "sys") return `<div class="agent-msg sys"><span class="agent-sysline${e.live ? " live" : ""}"><span class="dot"></span>${esc(e.text)}</span></div>`;
+    if (e.kind === "confirm") return agentConfirmHtml(e);
+    if (e.kind === "result") return agentResultHtml(e);
+    if (e.kind === "error") return agentErrorHtml(e);
+    return "";
+  }).join("");
+  box.scrollTop = box.scrollHeight;
+}
+function agentConfirmHtml(e) {
+  const p = e.pending || {};
+  /* 只有当前 run 的等待确认卡片可点；历史卡片渲染即冻结（防重渲染冲掉冻结态） */
+  const active = AGENT.state === "waiting_user" && e.tid && e.tid === AGENT.taskId;
+  const dis = active ? "" : " disabled";
+  return `<div class="agent-msg assistant"><div class="agent-confirm">
+    <h4><span class="pill amber">等待确认</span> 步骤 ${(p.step_idx || 0) + 1} 需要你的确认</h4>
+    <p>将执行「${esc(agentToolLabel(p.tool_id))}」。${p.optional ? "这是一个可选步骤。" : ""}确认后才会真正执行，你可以先看清再决定。</p>
+    <div class="row">
+      <button class="btn primary sm" data-act="confirm-yes" data-idx="${p.step_idx || 0}" data-tid="${esc(e.tid || "")}"${dis}>同意执行</button>
+      <button class="btn ghost sm" data-act="confirm-no" data-idx="${p.step_idx || 0}" data-tid="${esc(e.tid || "")}"${dis}>拒绝</button>
+    </div></div></div>`;
+}
+function agentResultHtml(e) {
+  const st = e.state || {};
+  const sum = st.summary || {};
+  const disp = agentDisplayState(st);
+  const label = (AGENT_STATE_META[disp] || [])[0] || "已完成";
+  const rows = [];
+  if (sum.step_count != null) rows.push(["执行步骤", sum.step_count + " 个"]);
+  if (sum.dedup_skipped) rows.push(["去重跳过", sum.dedup_skipped + " 个"]);
+  if ((st.confirmed_steps || []).length) rows.push(["你确认的步骤", st.confirmed_steps.length + " 个"]);
+  if (st.work_id) rows.push(["关联作品", st.work_id]);
+  const hasJump = !!(st.work_id || (AGENT.ctx && (AGENT.ctx.product_id || AGENT.ctx.work_id)));
+  return `<div class="agent-msg assistant"><div class="agent-result">
+    <h4><span class="pill ${disp === "partial" ? "amber" : "green"}">${esc(label)}</span> 本次任务${disp === "partial" ? "部分步骤未成功，其余已完成" : "已完成，结果已保存"}</h4>
+    ${rows.map(([k, v]) => `<div class="kv"><b>${esc(k)}</b><span>${esc(String(v))}</span></div>`).join("")}
+    <div class="row">
+      ${hasJump ? `<button class="btn primary sm" data-act="goto-result">去继续编辑 →</button>` : ""}
+      <button class="btn ghost sm" data-act="new-run">开始新的需求</button>
+    </div></div></div>`;
+}
+function agentErrorHtml(e) {
+  const st = e.state || {};
+  const sum = st.summary || {};
+  const errMsg = sum.error || st.error || "未知错误";
+  return `<div class="agent-msg assistant"><div class="agent-error">
+    <h4>任务失败</h4>
+    <p>${esc(sum.failed_step != null ? `第 ${sum.failed_step + 1} 个步骤失败：` : "")}${esc(errMsg)}</p>
+    <div class="row">
+      <button class="btn ghost sm" data-act="err-detail">查看错误详情</button>
+      <button class="btn ghost sm" data-act="retry">重新发起</button>
+    </div>
+    <pre data-errbox style="display:none">${esc(JSON.stringify({ task_id: st.task_id, run_status: st.run_status, failed_step: sum.failed_step, error: errMsg, summary: sum }, null, 2))}</pre>
+  </div></div>`;
+}
+
+/* ---------- 上下文 chip ---------- */
+function renderAgentCtx() {
+  const host = $("agent_ctx");
+  if (!host) return;
+  const c = AGENT.ctx;
+  if (!c) { host.innerHTML = ""; return; }
+  const parts = [`<span>来源：${esc(AGENT_SRC_LABEL[c.source] || c.source)}</span>`];
+  if (c.work_id) parts.push(`<span>作品 <code>${esc(c.work_id)}</code></span>`);
+  if (c.product_id) parts.push(`<span>产品档案 <code>${esc(c.product_id)}</code></span>`);
+  if (c.shot_id != null) parts.push(`<span>镜头 <code>${esc(String(c.shot_id))}</code></span>`);
+  parts.push(`<span style="color:var(--muted)">只传 ID，不复制整份资料</span>`);
+  host.innerHTML = `<span class="agent-ctx-chip">📎 ${parts.join("")}<button data-act="ctx-clear" aria-label="清除上下文">×</button></span>`;
+}
+
+/* ---------- 计划侧栏 ---------- */
+function renderAgentPlan(st) {
+  const body = $("agent_plan_body");
+  if (!body) return;
+  if (!st || !AGENT.taskId) {
+    body.innerHTML = `<div class="agent-plan-empty">暂无执行计划。<br>在左侧说一句话发送需求，AI 的执行步骤会实时显示在这里，关键步骤会先请你确认。</div>`;
+    return;
+  }
+  const disp = agentDisplayState(st);
+  const meta = AGENT_STATE_META[disp] || AGENT_STATE_META.idle;
+  const prog = Math.max(0, Math.min(100, st.progress || 0));
+  const pend = st.pending_step;
+  const steps = st.steps || [];
+  let html = `<div class="agent-progress"><div class="meta"><span><span class="pill ${meta[1]}" style="margin-right:6px">${esc(meta[0])}</span></span><span>${prog}%</span></div>
+    <div class="progress"><i style="width:${prog}%"></i></div></div>`;
+  if (pend) {
+    html += `<div class="agent-step cur"><span class="n">!</span><div class="tx"><b>${esc(agentToolLabel(pend.tool_id))}</b><span>步骤 ${(pend.step_idx || 0) + 1} · 等待你在左侧确认${pend.optional ? "（可选）" : ""}</span></div><span class="pill amber">待确认</span></div>`;
+  }
+  if (steps.length) {
+    html += steps.map((s, i) => {
+      const sm = AGENT_STEP_META[s.status] || AGENT_STEP_META.pending;
+      return `<div class="agent-step${s.status === "running" || s.status === "waiting_user" ? " cur" : ""}">
+        <span class="n">${i + 1}</span>
+        <div class="tx"><b>${esc(agentToolLabel(s.tool_id))}</b>
+        ${s.error ? `<span>✕ ${esc(String(s.error).slice(0, 120))}</span>` : (s.duration_ms != null ? `<span>用时 ${s.duration_ms}ms</span>` : `<span>${esc(s.tool_id)}</span>`)}</div>
+        <span class="pill ${sm[1]}">${sm[0]}</span></div>`;
+    }).join("");
+  } else if (!pend) {
+    html += `<div class="agent-plan-empty">计划生成中…步骤出现后会列在这里。</div>`;
+  }
+  if ((st.confirmed_steps || []).length) html += `<div class="agent-plan-empty" style="padding-top:8px">已确认 ${st.confirmed_steps.length} 个步骤</div>`;
+  if (st.error && agentNormStatus(st) === "failed") html += `<div class="agent-plan-empty" style="color:#B03232">✕ ${esc(String(st.error).slice(0, 160))}</div>`;
+  body.innerHTML = html;
+}
+
+/* ---------- 轮询（2.5s，复用 pollAiTask 模式） ---------- */
+function startAgentPoll() {
+  stopAgentPoll();
+  AGENT.timer = setInterval(agentPollTick, 2500);
+  agentPollTick();
+}
+function stopAgentPoll() {
+  if (AGENT.timer) { clearInterval(AGENT.timer); AGENT.timer = null; }
+}
+async function agentPollTick() {
+  if (!AGENT.taskId) return;
+  let st = null;
+  try {
+    st = V1(await ApiClient.get("/api/v1/agent/runs/" + encodeURIComponent(AGENT.taskId)));
+    AGENT.pollFails = 0;
+  } catch (e) {
+    AGENT.pollFails++;
+    if (AGENT.pollFails === 3) agentLog("sys", { text: "网络波动，正在重试轮询…", id: "poll-warn" });
+    return;
+  }
+  if (!st) return;
+  AGENT.lastState = st;
+  const norm = agentNormStatus(st);
+  const disp = agentDisplayState(st);
+  if (disp !== AGENT.state) {
+    AGENT.state = disp;
+    agentLog("sys", { text: "状态更新：" + (AGENT_STATE_META[disp] || [])[0], live: !AGENT_TERMINAL.includes(norm), id: "run-lifecycle" });
+  }
+  renderAgentPill(disp); setAgentButtons(disp); renderAgentPlan(st);
+  if (norm === "waiting_user" && st.pending_step) agentMaybeConfirm(st);
+  if (AGENT_TERMINAL.includes(norm)) { stopAgentPoll(); agentOnTerminal(st); }
+}
+function agentMaybeConfirm(st) {
+  if (AGENT.renderedConfirmFor === AGENT.taskId) return;
+  AGENT.renderedConfirmFor = AGENT.taskId;
+  agentLog("confirm", { pending: st.pending_step, tid: AGENT.taskId });
+}
+function agentOnTerminal(st) {
+  if (AGENT.renderedResultFor === AGENT.taskId) return;
+  AGENT.renderedResultFor = AGENT.taskId;
+  const norm = agentNormStatus(st);
+  agentLog("sys", { text: "状态更新：" + (AGENT_STATE_META[agentDisplayState(st)] || [])[0], id: "run-lifecycle" });
+  if (norm === "failed") agentLog("error", { state: st });
+  else if (norm === "cancelled") agentLog("sys", { text: "任务已取消" });
+  else agentLog("result", { state: st });
+}
+
+/* ---------- 发送 / 确认 / 取消 / 重试 ---------- */
+async function agentSend() {
+  const ta = $("agent_input");
+  const text = (ta.value || "").trim();
+  if (AGENT.state === "sending" || (AGENT.timer && AGENT.state !== "idle")) { toast("当前任务还在执行，稍后再发"); return; }
+  if (!loggedIn()) { toast("请先登录"); go("v-login"); return; }
+  if (!S.org) { toast("尚未加入组织，请先完成注册"); return; }
+  if (!text) { toast("先说一句话，描述你想让 AI 做什么"); ta.focus(); return; }
+  AGENT.state = "sending";
+  AGENT.lastBriefText = text;
+  agentLog("user", { text });
+  renderAgentPill("sending"); setAgentButtons("sending");
+  $("btn_agent_send").disabled = true;
+  const ctx = AGENT.ctx || {};
+  const brief = { text, source: ctx.source || "chat",
+    product_id: ctx.product_id || null, work_id: ctx.work_id || null,
+    shot_id: ctx.shot_id == null ? null : ctx.shot_id };
+  try {
+    const body = { org_id: S.org.id, brief };
+    if (brief.work_id) body.work_id = brief.work_id;
+    const r = V1(await ApiClient.post("/api/v1/agent/runs", body));
+    AGENT.taskId = r.task_id;
+    AGENT.convId = r.conversation_id || null;
+    AGENT.renderedConfirmFor = null; AGENT.renderedResultFor = null; AGENT.pollFails = 0;
+    AGENT.state = agentNormStatus(r);
+    agentLog("sys", { text: "任务已创建（" + AGENT.taskId.slice(0, 8) + "…），等待执行", live: true, id: "run-lifecycle" });
+    renderAgentPill(AGENT.state); setAgentButtons(AGENT.state); renderAgentPlan(AGENT.lastState);
+    ta.value = "";
+    startAgentPoll();
+  } catch (e) {
+    AGENT.state = "idle";
+    renderAgentPill("idle"); setAgentButtons("idle");
+    agentLog("sys", { text: "发送失败：" + (e.message || e) });
+    toast("创建任务失败：" + (e.message || e));
+  } finally {
+    $("btn_agent_send").disabled = false;
+  }
+}
+async function agentConfirm(stepIdx, approved, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    await ApiClient.post("/api/v1/agent/runs/" + encodeURIComponent(AGENT.taskId) + "/confirm",
+      { step_idx: stepIdx, approved });
+    if (approved) {
+      agentLog("sys", { text: "已确认，继续执行…", live: true, id: "run-lifecycle" });
+      AGENT.state = "running"; renderAgentPill("running"); setAgentButtons("running");
+      if (!AGENT.timer) startAgentPoll(); else agentPollTick();
+    } else {
+      agentLog("sys", { text: "已拒绝该步骤", id: "run-lifecycle" });
+      if (!AGENT.timer) startAgentPoll(); else agentPollTick();
+    }
+  } catch (e) {
+    toast("确认失败：" + (e.message || e));
+    if (btn) btn.disabled = false;
+  }
+}
+async function agentCancel() {
+  if (!AGENT.taskId) return;
+  try {
+    await ApiClient.post("/api/v1/agent/runs/" + encodeURIComponent(AGENT.taskId) + "/cancel", {});
+    toast("取消请求已提交");
+    agentLog("sys", { text: "正在取消…", live: true, id: "run-lifecycle" });
+    if (!AGENT.timer) startAgentPoll(); else agentPollTick();
+  } catch (e) { toast("取消失败：" + (e.message || e)); }
+}
+function agentRetry() {
+  const t = AGENT.lastBriefText;
+  if (!t) { toast("没有可重试的内容"); return; }
+  stopAgentPoll();
+  AGENT.taskId = null; AGENT.convId = null; AGENT.state = "idle";
+  AGENT.lastState = null; AGENT.renderedConfirmFor = null; AGENT.renderedResultFor = null;
+  $("agent_input").value = t;
+  renderAgentPill("idle"); setAgentButtons("idle");
+  agentSend();
+}
+async function agentGotoResult() {
+  const st = AGENT.lastState || {};
+  const ctx = AGENT.ctx || {};
+  const workId = st.work_id || ctx.work_id;
+  if (ctx.product_id) S.selectedProductId = ctx.product_id;
+  const view = AGENT_SRC_VIEW[ctx.source] || "v1";
+  if (workId) {
+    try { await openWork(workId, view); }
+    catch (e) { toast("打开作品失败：" + (e.message || e)); go(view); }
+  } else go(view);
+}
+/* 从会话消息恢复（刷新恢复用：后端 conversation 已持久化） */
+async function agentRebuildFromMessages() {
+  if (!AGENT.convId || AGENT.log.length) return;
+  try {
+    const r = V1(await ApiClient.get("/api/v1/agent/conversations/" + encodeURIComponent(AGENT.convId) + "/messages?limit=50"));
+    const items = (r && r.items) || [];
+    for (const m of items) {
+      const c = m.content || {};
+      if (m.role === "user" && c.type === "brief" && c.brief && c.brief.text) agentLog("user", { text: c.brief.text });
+      else if (m.role === "assistant" && c.type === "run_cancelled") agentLog("sys", { text: "任务已取消" });
+    }
+  } catch (e) { /* 恢复失败不阻断，轮询仍会拿到最新状态 */ }
+}
+
+/* ---------- 入口 ---------- */
+function openAgent(src) {
+  if (!loggedIn()) { toast("请先登录"); go("v-login"); return; }
+  const workId = (S.activeWork && S.activeWork.id) || null;
+  const productId = S.selectedProductId || S.genProductId || null;
+  let shotId = null;
+  if (src === "v3_storyboard") {
+    const sh = ((S.data && S.data.storyboard && S.data.storyboard.shots) || [])[0];
+    if (sh && sh.shot_number != null) shotId = sh.shot_number;
+  }
+  AGENT.ctx = { source: src, product_id: productId, work_id: workId, shot_id: shotId };
+  const ta = $("agent_input");
+  if (ta && !ta.value.trim()) ta.value = AGENT_SRC_HINT[src] || "";
+  renderAgentCtx();
+  go("agent");
+  setTimeout(() => { const t = $("agent_input"); if (t) t.focus(); }, 350);
+}
+function enterAgentView() {
+  renderAgentCtx();
+  renderAgentPill(AGENT.state); setAgentButtons(AGENT.state);
+  renderAgentLog(); renderAgentPlan(AGENT.lastState);
+  const narrow = window.matchMedia && window.matchMedia("(max-width:960px)").matches;
+  const plan = $("agent_plan");
+  if (plan) { plan.classList.toggle("open", !narrow); $("btn_agent_plan_toggle").setAttribute("aria-expanded", String(!narrow)); $("btn_agent_plan_toggle").textContent = narrow ? "展开" : "收起"; }
+  if (AGENT.pendingSend) { const t = AGENT.pendingSend; AGENT.pendingSend = ""; $("agent_input").value = t; agentSend(); return; }
+  if (AGENT.taskId && AGENT.lastState && !AGENT_TERMINAL.includes(agentNormStatus(AGENT.lastState)) && !AGENT.timer) startAgentPoll();
+  if (AGENT.convId && !AGENT.log.length) agentRebuildFromMessages();
+}
+function initAgentBindings() {
+  $("btn_agent_send").addEventListener("click", agentSend);
+  $("agent_input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); agentSend(); }
+  });
+  $("btn_agent_cancel").addEventListener("click", agentCancel);
+  $("btn_agent_retry").addEventListener("click", agentRetry);
+  $("btn_agent_plan_toggle").addEventListener("click", () => {
+    const plan = $("agent_plan");
+    const open = plan.classList.toggle("open");
+    const t = $("btn_agent_plan_toggle");
+    t.setAttribute("aria-expanded", String(open));
+    t.textContent = open ? "收起" : "展开";
+  });
+  $("btn_v0_agent_go").addEventListener("click", () => {
+    if (!loggedIn()) { toast("请先登录"); go("v-login"); return; }
+    const text = ($("v0_agent_brief").value || "").trim();
+    const workId = (S.activeWork && S.activeWork.id) || null;
+    AGENT.ctx = { source: "v0_home", product_id: null, work_id: workId, shot_id: null };
+    renderAgentCtx();
+    go("agent");
+    if (text) AGENT.pendingSend = text;
+    else setTimeout(() => { const t = $("agent_input"); if (t) t.focus(); }, 350);
+  });
+  $("v0_agent_brief").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); $("btn_v0_agent_go").click(); }
+  });
+  document.querySelectorAll("[data-agent-src]").forEach((b) =>
+    b.addEventListener("click", () => openAgent(b.dataset.agentSrc)));
+  $("agent_ctx").addEventListener("click", (e) => {
+    if (e.target.closest('[data-act="ctx-clear"]')) { AGENT.ctx = null; renderAgentCtx(); }
+  });
+  $("agent_msgs").addEventListener("click", (e) => {
+    const el = e.target.closest("[data-act]");
+    if (!el) return;
+    const act = el.dataset.act;
+    if (act === "suggest") { $("agent_input").value = el.dataset.text || ""; $("agent_input").focus(); }
+    else if (act === "confirm-yes") { if (el.dataset.tid && el.dataset.tid !== AGENT.taskId) { toast("该确认已过期"); } else agentConfirm(parseInt(el.dataset.idx || "0", 10), true, el); }
+    else if (act === "confirm-no") { if (el.dataset.tid && el.dataset.tid !== AGENT.taskId) { toast("该确认已过期"); } else agentConfirm(parseInt(el.dataset.idx || "0", 10), false, el); }
+    else if (act === "err-detail") {
+      const pre = el.closest(".agent-error").querySelector("[data-errbox]");
+      const show = pre.style.display === "none";
+      pre.style.display = show ? "" : "none";
+      el.textContent = show ? "收起错误详情" : "查看错误详情";
+    }
+    else if (act === "retry") agentRetry();
+    else if (act === "goto-result") agentGotoResult();
+    else if (act === "new-run") { $("agent_input").value = ""; $("agent_input").focus(); }
+  });
+}
+
+/* V4B-TEST-MARKER: 只读测试钩子（供 Playwright 验证读取内部状态，不写生产逻辑） */
+window.__agentProbe = function () {
+  return { taskId: AGENT.taskId, state: AGENT.state, polling: !!AGENT.timer,
+           fails: AGENT.pollFails, logLen: AGENT.log.length };
+};
 /* ---------- 认证 ---------- */
 function setAuthMode(mode) {
   S.authMode = mode;
@@ -3030,6 +3461,7 @@ initCopyOptView(); // V3.0 D：注入文案优化器导航与视图（零 HTML �
 initPlanSection(); // V3.0 C：注入内容策划面板（零 HTML 改动）
 initPublishView(); // V3.0 F：注入发布中心导航与视图（零 HTML 改动）
 initLibView(); // V3.0 G：注入素材库导航与视图（零 HTML 改动）
+initAgentBindings(); // Phase 4b：AI 创作助手事件绑定
 document.querySelectorAll(".nav-item[data-v]").forEach((b) => b.addEventListener("click", () => go(b.dataset.v)));
 document.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => go(b.dataset.goto)));
 document.querySelectorAll("[data-todo]").forEach((b) => b.addEventListener("click", () => todo(b.dataset.todo)));

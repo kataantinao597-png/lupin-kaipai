@@ -80,4 +80,26 @@
 - 教训：迁移类操作一律走 DATABASE_URL 环境变量定向；已记入 KNOWN_ISSUES.md
 - Phase 3 Gate：**PASS**（进入 Phase 4）
 
-## Phase 4 — AI 创作助手 UI（待派发，拆 4a 路由 + 4b 前端）
+## Phase 4 — AI 创作助手（4a 路由已完成，commit e79246b）
+
+### 4a 改动文件
+- `backend/api/v1/agent.py`（新建 ~290 行）：6 端点（runs 创建 202/查询/plan/confirm/cancel/messages 分页），全部委托 services 层；成功标准信封，错误按 error_codes.py（4002/1001/4040/4000/4010）
+- `backend/app.py`：_mount(agent_router, prefix="/api/v1")（+2 行）
+- `tests/test_agent_api_phase4a.py`（新建，23 用例）
+
+### 4a 测试结果
+- 新测试 23/23；回归 phase3 25/25、phase2 38/38；业务库零写入（integrity ok，mtime 早于本任务）
+- 遗留：confirm approved 同步执行剩余步骤（HTTP 可能阻塞，Phase 5 改异步）；创建 run 未接 Idempotency-Key（Phase 7 补）
+- Phase 4a Gate：**PASS**
+
+### 4b 前端 UI（子代理已完工，待 Gate）
+- 范围：侧边栏「AI 创作助手」+ 首页「AI 一句话创作」+ 对话视图/计划侧栏 + 专业页轻量入口 + Playwright 三视口截图
+- 改动文件：
+  - `frontend/app.html`：侧边栏新增 `data-v="agent"` 导航项（复用 .nav-item，置工作台之后）；v0 新增「AI 一句话创作」入口卡片（`#agent_entry`，原「新建作品」保留）；新增 `#agent` 视图（对话区左/主 + 执行计划侧栏右，输入栏底部固定 + safe-area）；v2/v3（创意/分镜/风险）/v5 各加一个 `data-agent-src`「✦ 让 AI 处理当前内容」轻量按钮；新增 agent 专属 CSS（复用现有色板/组件类，无新框架）
+  - `frontend/js/app.js`：新增 Phase 4b 模块（~430 行）：NEED_AUTH 加 `agent`、`go("agent")` 走现有路由；真实状态机 idle/发送中/排队中/运行中/等待确认/部分完成/失败/已取消/已保存（完成且 summary 持久化）全部来自 2.5s 轮询 `GET /api/v1/agent/runs/{id}`，无固定延迟模拟；waiting_user 渲染确认卡片（步骤说明 + 同意/拒绝 → POST confirm）；取消/重新发起/查看错误详情（可展开 JSON）均接真实接口；成果卡片「去继续编辑」经 `openWork(work_id, view)` 跳回专业页；五处入口经 `openAgent(src)` 带真实 product_id/work_id/shot_id（仅传 ID）；`V4B-TEST-MARKER` 只读探针 `window.__agentProbe` 供 Playwright 读取（无写逻辑）
+- 验证（Playwright + Firefox，三视口，scratch DB `/tmp/lupin_4b_scratch.db`，业务库零触碰：2197 ai_calls、版本 0019）：
+  - 42/42 通过（连续两次全绿）：导航回归 v0–v9+agent（active 高亮正确、无重复菜单 11 项）；v0 入口卡片 + 新建作品保留；五处入口均落地助手视图且上下文 chip 含真实 work_id；发送→排队中（真实轮询）；waiting_user 确认卡片（真实 plan + 真实 execute_run_steps 挂起）；同意→已保存（patch_work 真实执行）；成果卡片跳转 v2；失败态（parse_brief 需模型真实失败）+ 错误详情展开；取消按钮调真实 cancel API（4a 语义：未入队 run 只打协作式标记，状态保持排队）；拒绝确认→已取消（真实 confirm 路径）；1440/768/390 零横向溢出；768/390 计划区默认折叠可展开；390 输入栏在视口内、抽屉含 AI 助手入口；全程零页面 JS 错误
+  - 截图：`docs/agent-upgrade/screenshots/phase4b/`（1440: idle/queued/waiting-user/saved/failed/cancelled；768/390: idle）
+  - 修过的真 bug：① 空闲态误显示「取消任务」（setAgentButtons 把未知态归一化成 queued）；② 历史确认卡片按钮在重渲染后被冲掉冻结态（改为渲染时按 `AGENT.state`/`tid` 直接决定 disabled，旧卡片默认冻结；点击旧卡片另有 tid 校验挡下）
+- 遗留（非阻塞，Phase 5/后续）：① 顶栏「取消任务」对排队中 run 调 cancel API 后状态保持排队（4a 测试 `test_cancel_pending` 已将此定为预期语义：未入队只打标记，Phase 5 入队后协作式取消）；② confirm approved 仍同步执行剩余步骤（4a 遗留，HTTP 可能阻塞，Phase 5 改异步）；③ 每次发送新建 conversation（多轮连续对话的上下文串联待 Phase 5 规划器）
+- Phase 4b Gate：**PASS**（进入 Phase 5）
