@@ -149,3 +149,18 @@
 - Phase 6 Gate：**PASS**（进入 Phase 7）
 
 ## Phase 7 — 安全/成本/可观测性（子代理执行中）
+
+### Phase 7 完工记录（2026-10-21 23:xx，子代理）
+- 新增：迁移 `0021_idempotency_keys`（`idempotency_keys` 表：key/org_id/route/body_hash/status/response_json/created_at，唯一约束 (route,key)；空库 upgrade/downgrade/upgrade + 双跑幂等已验）；`backend/models.py` 加 `IdempotencyKey` ORM
+- 重写：`backend/core/idempotency.py` 内存→DB 实现（接口兼容：`idempotency_begin`/`_Claim.replay/.active/.finish()/.abort()`/`idempotency_invalidate`/`reset_idempotency_store` 签名不变；调用方零改动）；并发双击轮询等待、僵尸 running 行（>WAIT_TIMEOUT）接管、过期 done 行顺手清理、超长 key 错误不回显 key 本体
+- 安全加固：
+  - agent.py `create_run` 接 `Idempotency-Key`（4a 遗留补齐）：同 key 同体回放不重复建任务/会话，失败 abort 不留脏记录
+  - `backend/security/rate_limit.py`：ai 档（20/分钟/用户）新增 `/api/v1/agent` 片段；超限 429 + Retry-After + 标准错误信封（code 2004）
+  - `backend/services/agent/runner.py`：新增 `STEP_TIMEOUT_SECONDS=300`（单步超时→该步 step_timeout 失败）与 `MAX_RUN_TOTAL_SECONDS=1800`（总时间超限→不再起新步骤，partial 保留成果）；planner 既有 25 步/8 模型步上限保持
+- 密钥扫描：`scripts/scan_secrets_phase7.py`（新增代码+git diff 双模式：密钥赋值/已知密钥前缀/环境文件引用/日志拼接密钥；自检+植入验证均通过）
+- 测试：`tests/test_agent_security_phase7.py` 新 30 用例（跨租户 9 / 注入 5 / 上限 5 / 密钥扫描 3 / 幂等 DB 4 / 限流 2 / 成本归属 2）；`test_v21_idempotency.py` 过期测试改走 DB 行（原 `_store` 内部已删除）；phase2 两个迁移测试的 head 硬编码 0020→0021（断言加强，非放水）；4a/5 fixture 加 `reset_rate_limit_buckets()` 隔离（限流桶进程全局）
+- 修过的真问题：① 迁移 0021 补齐段在 SQLite 下 `create_unique_constraint` 报 NotImplementedError——改走 batch_alter_table；② 4a/5 合跑 429 污染——fixture 未重置限流桶；③ phase2 迁移测试 head 硬编码过期
+- 测试结果：新 30/30；回归 phase2+v21 47/47、phase3 25/25、phase4a+5 50/50、phase6 21/21 全绿；429 硬停复核（phase5 test_429_hard_stop 通过）；业务库零写入（见下）
+- 用户级每日限额：保持 `check_user_quota()` 桩位不动，未自行实现；KNOWN_ISSUES 登记"延后（等用户点头），Phase 7 未对接"
+- 遗留（非阻塞）：真实模型冒烟未跑（Phase 7 无新增模型调用路径；网关/编排 429 与成本路径沿用 Phase 5 已验证逻辑）
+- Phase 7 Gate：**PASS**（§十一：跨租户 0 越权 ✓；注入不改白名单/权限 ✓；超限进 partial/failed 保留成果 ✓；密钥扫描干净 ✓；幂等 DB 化重启可回放 ✓；费用归属可查 ✓）

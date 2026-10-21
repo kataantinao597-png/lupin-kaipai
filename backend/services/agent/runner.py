@@ -78,6 +78,8 @@ __all__ = [
     "execute_run_steps",
     "confirm_step",
     "step_params_digest",
+    "STEP_TIMEOUT_SECONDS",
+    "MAX_RUN_TOTAL_SECONDS",
 ]
 
 TASK_TYPE_AGENT_RUN = "agent_run"
@@ -106,6 +108,14 @@ STEP_SKIPPED = "skipped"
 
 # 挂起信号：queue._execute 见到此 run_status 保持 running，不落终态
 _SUSPENDED = RUN_STATUS_WAITING_USER
+
+#: Phase 7 上限 enforcement（任务书 §7.2 / §十一）：
+#: - 单步执行超时（秒）：一步工具调用超过此时长 → 该步记 step_timeout 失败
+#:   （可选步骤 → partial；必需步骤 → failed；已有成果保留）
+#: - run 总执行时间上限（秒）：超时后不再启动新步骤 → partial 并保留成果
+#: run 级步数/模型步数上限见 planner.MAX_PLAN_STEPS / MAX_MODEL_STEPS_PER_RUN
+STEP_TIMEOUT_SECONDS = 5 * 60
+MAX_RUN_TOTAL_SECONDS = 30 * 60
 
 
 def _utcnow() -> datetime:
@@ -378,6 +388,8 @@ def execute_run_steps(db: Session, task_id: str,
     dedup_skipped = 0
     failed_idx: Optional[int] = None
     failed_error: Optional[str] = None
+    succeeded_steps = 0
+    t_run_start = _utcnow()
 
     def _check_cancel() -> None:
         if is_cancelled():
@@ -389,11 +401,42 @@ def execute_run_steps(db: Session, task_id: str,
                                 "task_id": task_id})
             raise _TaskCancelled()
 
+    def _land_time_budget_partial() -> dict[str, Any]:
+        """总执行时间超限：保留已有成果进 partial，不再启动新步骤。"""
+        fresh = _load_task_fresh(db, task_id)
+        p = dict(fresh.payload_json or {})
+        p["run_status"] = RUN_STATUS_PARTIAL
+        p["summary"] = {"partial": True,
+                        "time_budget_exceeded": True,
+                        "budget_seconds": MAX_RUN_TOTAL_SECONDS,
+                        "succeeded_steps": succeeded_steps,
+                        "dedup_skipped": dedup_skipped,
+                        "step_count": n}
+        repo.update_payload(task_id, p)
+        repo.set_status(task_id, "succeeded", progress=100,
+                        result={"run_status": RUN_STATUS_PARTIAL,
+                                "summary": p["summary"]})
+        if conv_id:
+            append_message(db, conv_id, org_id, "assistant",
+                           {"type": "run_done", "task_id": task_id,
+                            "run_status": RUN_STATUS_PARTIAL,
+                            "summary": p["summary"]})
+        logger.warning("agent_run %s 总执行时间超限（>%ss）：%d/%d 步完成，"
+                       "进 partial 保留成果",
+                       task_id, MAX_RUN_TOTAL_SECONDS, succeeded_steps, n)
+        return {"run_status": RUN_STATUS_PARTIAL, "task_id": task_id,
+                "summary": p["summary"]}
+
     for s in v.steps:
         raw = raw_steps[s.index] if s.index < len(raw_steps) else {}
         optional = bool(raw.get("optional", False))
         digest = step_params_digest(s.params)
         _check_cancel()
+
+        # Phase 7：总执行时间上限——超时后不再启动新步骤
+        elapsed = (_utcnow() - t_run_start).total_seconds()
+        if elapsed > MAX_RUN_TOTAL_SECONDS:
+            return _land_time_budget_partial()
 
         # 去重：已成功执行过的不重复执行（重复提交/恢复幂等）
         if _already_succeeded(db, task_id, s.tool_id, digest):
@@ -441,6 +484,12 @@ def execute_run_steps(db: Session, task_id: str,
             result = ToolResult(status="failed", error_code="internal",
                                 error_message=f"{type(e).__name__}: {e}")
         dt_ms = int((_utcnow() - t0).total_seconds() * 1000)
+        # Phase 7：单步超时——超过 STEP_TIMEOUT_SECONDS 的一步记失败，
+        # 即使工具本身返回了 ok（防单个工具拖住整个 run）
+        if dt_ms > STEP_TIMEOUT_SECONDS * 1000:
+            result = ToolResult(
+                status="failed", error_code="step_timeout",
+                error_message=f"单步执行超时（>{STEP_TIMEOUT_SECONDS}s）")
         ok = result.status == "ok"
         row.status = STEP_SUCCEEDED if ok else STEP_FAILED
         row.output_ref = result.artifact_ref
@@ -467,6 +516,7 @@ def execute_run_steps(db: Session, task_id: str,
                 continue
             failed_idx, failed_error = s.index, row.error
             break
+        succeeded_steps += 1
         repo.update_progress(task_id, int((s.index + 1) / n * 100))
 
     # 收尾

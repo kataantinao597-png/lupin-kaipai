@@ -110,9 +110,14 @@ def api_client(tmp_path, monkeypatch):
     app.dependency_overrides[get_current_user] = _override_user
     app.dependency_overrides[get_db] = _override_db
     client = TestClient(app, raise_server_exceptions=False)
+    # Phase 7：agent 路由纳入 ai 档限流（20/分钟/用户）；限流桶是进程全局，
+    # 每用例重置隔离（沿用 test_v21_idempotency.py 做法）
+    from backend.security.rate_limit import reset_rate_limit_buckets
+    reset_rate_limit_buckets()
     yield client, ids, ctx
     app.dependency_overrides.clear()
     reset_engine()
+    reset_rate_limit_buckets()
 
 
 def _data(resp):

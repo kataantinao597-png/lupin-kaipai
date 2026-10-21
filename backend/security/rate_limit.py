@@ -31,7 +31,7 @@ _TIERS: list[tuple[str, int, tuple[str, ...]]] = [
     ("ai", 20, (
         "/api/ideas", "/api/storyboard", "/api/regenerate-shot",
         "/api/risk-check", "/api/feasibility-check", "/api/validate",
-        "/api/v1/ai-tasks", "/api/v1/ai/",
+        "/api/v1/ai-tasks", "/api/v1/ai/", "/api/v1/agent",
     )),
     ("default", 100, ("/api/",)),
 ]

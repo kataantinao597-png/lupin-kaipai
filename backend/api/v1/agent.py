@@ -15,12 +15,17 @@ set_run_plan / confirm_step / list_messages 等）。
 响应：统一标准信封（core/response.success → {code:0, data, request_id}）；
 错误抛 BusinessError，由 app.py 全局 handler 转标准错误信封，
 业务码见 core/error_codes.py。
+
+创建 run 支持 `Idempotency-Key` 请求头（Phase 4a 遗留，Phase 7 补齐）：
+同 key + 同请求体 → 直接回放首次创建结果（不重复建任务/会话/扣费）；
+同 key + 不同请求体 → 400 幂等键冲突。幂等键走 DB 表（迁移 0021），
+多 worker/重启后依然有效。
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -32,6 +37,7 @@ from ...auth.deps import get_current_user
 from ...auth.models import User
 from ...core import error_codes
 from ...core.exceptions import BusinessError
+from ...core.idempotency import idempotency_begin
 from ...core.response import ApiResponse, success
 from ...rbac import get_membership
 from ...repositories.base import EntityNotFound
@@ -146,30 +152,44 @@ def _enqueue_run_resume(task) -> None:
 
 @router.post("/runs", response_model=ApiResponse[dict], status_code=202)
 def create_run(req: AgentRunCreate,
+               request: Request,
                user: User = Depends(get_current_user),
                db: Session = Depends(get_db)):
     """创建 Agent run：建 AITask(task_type=agent_run) + conversation，202 返回。
 
     - 须登录；调用者须为 org_id 的成员，否则 404（防枚举）；
     - work_id 非空时必须属于该组织，否则 404；
-    - created_by 取服务端登录用户，不信任客户端传入。
+    - created_by 取服务端登录用户，不信任客户端传入；
+    - 支持 `Idempotency-Key`（Phase 7 DB 版）：同 key 同体直接回放首次
+      创建结果（不重复建任务/会话），同 key 不同体 → 400 幂等键冲突。
     """
-    _require_org_member(db, user.id, req.org_id)
+    idem = idempotency_begin("agent-runs", request,
+                            req.model_dump(mode="json"),
+                            scope=req.org_id, org_id=req.org_id)
+    if idem.replay is not None:
+        return success(dict(idem.replay))
     try:
-        task_id = create_agent_run(db, user, req.org_id,
-                                   work_id=req.work_id,
-                                   brief_json=dict(req.brief or {}),
-                                   conversation_id=req.conversation_id)
-    except EntityNotFound as e:
-        raise _entity_404(e) from e
-    state = get_run_state(db, task_id, req.org_id)
-    return success({
+        _require_org_member(db, user.id, req.org_id)
+        try:
+            task_id = create_agent_run(db, user, req.org_id,
+                                       work_id=req.work_id,
+                                       brief_json=dict(req.brief or {}),
+                                       conversation_id=req.conversation_id)
+        except EntityNotFound as e:
+            raise _entity_404(e) from e
+        state = get_run_state(db, task_id, req.org_id)
+    except Exception:
+        # 失败不留脏记录：等待者/重试可重新执行
+        idem.abort()
+        raise
+    data = {
         "task_id": task_id,
         "status": state.get("status"),
         "run_status": state.get("run_status"),
         "conversation_id": state.get("conversation_id"),
         "work_id": state.get("work_id"),
-    })
+    }
+    return success(idem.finish(data))
 
 
 @router.get("/runs/{task_id}", response_model=ApiResponse[dict])

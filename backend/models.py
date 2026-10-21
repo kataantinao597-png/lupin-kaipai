@@ -1510,3 +1510,32 @@ class ReviewSuggestion(Base):
     ai_meta = Column(JSON, nullable=False, default=dict)
     created_by = Column(String(64), nullable=False, default="")
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class IdempotencyKey(Base):
+    """Phase 7：DB 级幂等键表（替换 core/idempotency.py 的进程内存实现）。
+
+    - key 语义：客户端在 Idempotency-Key 头携带的用户意图唯一键；
+      同 (route, key) + 同 body_hash → 回放首次成功结果，不重复调模型/
+      不重复扣费/不重复建任务；同 key 不同体 → 400 幂等键冲突。
+    - scope 折叠进 body_hash（沿用内存版口径）；org_id 仅作归属审计列。
+    - status：running（执行中）| done（已完成，可回放）。
+    - running 行超过 WAIT_TIMEOUT 视为僵尸，可被接管（见 core/idempotency.py）。
+    """
+    __tablename__ = "idempotency_keys"
+    __table_args__ = (
+        Index("ix_idem_route_key", "route", "key", unique=True),
+        Index("ix_idem_org", "org_id"),
+        Index("ix_idem_created", "created_at"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    key = Column(String(128), nullable=False)
+    org_id = Column(String(32), nullable=True)
+    route = Column(String(128), nullable=False)
+    body_hash = Column(String(64), nullable=False)
+    status = Column(String(16), nullable=False, default="running",
+                    server_default="running")
+    # 首次成功结果的 JSON 快照（回放用；脱敏后存，绝不存 API Key）
+    response_json = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)

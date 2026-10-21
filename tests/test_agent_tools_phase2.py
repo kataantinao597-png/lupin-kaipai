@@ -564,11 +564,12 @@ class TestMigration0020:
                     assert raised, "role CHECK 约束未生效"
             finally:
                 eng.dispose()
-            command.downgrade(cfg, "-1")
+            command.downgrade(cfg, "0019_ai_call_org")
             eng = create_engine(url)
             try:
                 assert not ({"conversations", "conversation_messages",
-                             "agent_steps"} & _tables(eng))
+                             "agent_steps", "idempotency_keys"}
+                            & _tables(eng))
                 from sqlalchemy import text
                 with eng.connect() as conn:
                     ver = conn.execute(
@@ -581,7 +582,7 @@ class TestMigration0020:
             eng = create_engine(url)
             try:
                 assert {"conversations", "conversation_messages",
-                        "agent_steps"} <= _tables(eng)
+                        "agent_steps", "idempotency_keys"} <= _tables(eng)
             finally:
                 eng.dispose()
         finally:
@@ -619,11 +620,11 @@ class TestMigration0020:
             from alembic import command
             from sqlalchemy import create_engine
             command.upgrade(_alembic_cfg(), "head")
-            assert _version(scratch) == "0020_agent_tables"
+            assert _version(scratch) == "0021_idempotency_keys"
             eng = create_engine(f"sqlite:///{scratch}")
             try:
                 assert {"conversations", "conversation_messages",
-                        "agent_steps"} <= _tables(eng)
+                        "agent_steps", "idempotency_keys"} <= _tables(eng)
             finally:
                 eng.dispose()
         finally:

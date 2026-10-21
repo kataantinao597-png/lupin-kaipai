@@ -136,15 +136,24 @@ class TestReplay:
         assert "idempotent_replay" not in r2.json()
 
     def test_expired_key_reexecutes(self, api_client, fake_gw):
-        from backend.core.idempotency import (
-            _store, _store_key, TTL_SECONDS)
+        # Phase 7：幂等改走 DB 表——把 DB 行调成 25 小时前（超过 24h TTL）
+        from backend.models import IdempotencyKey
+        from backend.auth.database import get_session_factory
+        from datetime import datetime, timedelta, timezone
         h = {"Idempotency-Key": "k-expire-1"}
         r1 = api_client.post("/api/colloquial-rewrite", json=BODY, headers=h)
         assert r1.status_code == 200
         assert fake_gw.calls == 1
-        # 把记录调成 25 小时前（超过 24h TTL）
-        key = _store_key("colloquial-rewrite", "k-expire-1")
-        _store[key].created_at -= (TTL_SECONDS + 3600)
+        db = get_session_factory()()
+        try:
+            row = (db.query(IdempotencyKey)
+                     .filter_by(route="colloquial-rewrite",
+                                key="k-expire-1").one())
+            row.created_at = (datetime.now(timezone.utc)
+                              - timedelta(hours=25))
+            db.commit()
+        finally:
+            db.close()
         r2 = api_client.post("/api/colloquial-rewrite", json=BODY, headers=h)
         assert r2.status_code == 200
         assert fake_gw.calls == 2  # 过期 → 重新执行

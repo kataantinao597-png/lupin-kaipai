@@ -8,4 +8,9 @@
 ## 长期已知（基线遗留）
 - 6 个陈旧 pytest 用例失败（test_delivery_check×2、test_feasibility_fallback、test_handover_regressions×2、test_srt_route），基线即如此，与本次改动无关。
 - `backend.models` 循环导入坑：不能作为进程内第一个 backend.* 导入，须先 import backend.auth.*。
-- `core/idempotency.py` 内存版幂等：多 worker/重启失效，Phase 7 补 DB 表。
+- ~~`core/idempotency.py` 内存版幂等：多 worker/重启失效，Phase 7 补 DB 表。~~（2026-10-21 Phase 7 已修复：迁移 0021 `idempotency_keys` + `core/idempotency.py` 改 DB 实现，接口兼容）
+
+## 2026-10-21：用户级每日限额延后（Phase 7 未对接）
+- 现状：`quota_service` 只有组织维度；用户级每日限额（普通用户每天 5 次，2026-10-21 用户拍板）由另一 agent 实现，本分支未见真实实现。
+- Phase 7 动作：保持 `backend/services/agent/context.py::check_user_quota()` 桩位不动（返回 `enforced=False`），**未自行实现限额功能**（那是另一个任务，见 PHASE1_DESIGN.md §1.3(4)/§7）。
+- 待办：另一 agent 的限额实现落地后，在桩位处联调对接（返回口径 `{enforced, allowed, remaining, ...}` 保持不变）。

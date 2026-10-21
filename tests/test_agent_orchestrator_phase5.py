@@ -722,9 +722,13 @@ class TestConversationHttp:
         app.dependency_overrides[get_current_user] = _override_user
         app.dependency_overrides[get_db] = _override_db
         client = TestClient(app, raise_server_exceptions=False)
+        # Phase 7：agent 路由纳入 ai 档限流；限流桶进程全局，每用例重置隔离
+        from backend.security.rate_limit import reset_rate_limit_buckets
+        reset_rate_limit_buckets()
         yield client, ids
         app.dependency_overrides.clear()
         reset_engine()
+        reset_rate_limit_buckets()
 
     def test_create_run_reuses_conversation(self, api_client):
         client, ids = api_client
