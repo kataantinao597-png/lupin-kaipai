@@ -374,22 +374,41 @@ class TestConfirm:
         return calls
 
     def test_confirm_approve_resumes(self, api_client, monkeypatch):
-        """waiting_user → 批准 → 恢复执行完成（HTTP 全链路）。"""
+        """waiting_user → 批准 → 只落确认态并入队（Phase 5 异步化）；
+        HTTP 内不再同步执行，worker 恢复执行后完成（HTTP 全链路）。"""
         client, ids, _ = api_client
         task_id = self._run_with_confirm_plan(client, ids)
         calls = self._drive_to_waiting(task_id, monkeypatch)
 
+        enqueued = []
+        monkeypatch.setattr(
+            "backend.api.v1.agent._enqueue_run_resume",
+            lambda task: enqueued.append(task.id))
+
         r = client.post(f"/api/v1/agent/runs/{task_id}/confirm",
                         json={"step_idx": 0, "approved": True})
         out = _data(r)
-        assert out["run_status"] == "completed", out
-        assert len(calls) == 1
-        assert calls[0]["confirmed"] is True
+        # 异步化断言：HTTP 直接返回 running，工具在请求内未执行，但已入队
+        assert out["run_status"] == "running", out
+        assert out["resumed"] is False
+        assert calls == []
+        assert enqueued == [task_id]
 
         r = client.get(f"/api/v1/agent/runs/{task_id}")
         state = _data(r)
         assert state["confirmed_steps"] == [0]
         assert state["pending_step"] is None
+        assert state["run_status"] == "running"
+
+        # 模拟 worker 恢复执行（队列 runner 入口）
+        from backend.services.agent import run_agent_run
+        out2 = run_agent_run(task_id, lambda: False, {})
+        assert out2["run_status"] == "completed", out2
+        assert len(calls) == 1
+        assert calls[0]["confirmed"] is True
+
+        r = client.get(f"/api/v1/agent/runs/{task_id}")
+        assert _data(r)["run_status"] == "completed"
 
     def test_confirm_reject_cancels(self, api_client, monkeypatch):
         """waiting_user → 拒绝 → 任务 cancelled，工具绝不执行。"""

@@ -602,6 +602,8 @@ async function agentSend() {
   try {
     const body = { org_id: S.org.id, brief };
     if (brief.work_id) body.work_id = brief.work_id;
+    // Phase 5 多轮串联：同一会话内后续消息复用 conversation（brief 增量更新）
+    if (AGENT.convId) body.conversation_id = AGENT.convId;
     const r = V1(await ApiClient.post("/api/v1/agent/runs", body));
     AGENT.taskId = r.task_id;
     AGENT.convId = r.conversation_id || null;

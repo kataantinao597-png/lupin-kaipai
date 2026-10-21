@@ -26,7 +26,9 @@ payload_json 布局::
 - run_agent_run(task_id, is_cancelled, payload)：queue runner 签名，
   由 ai_tasks RUNNERS 注册；waiting_user 时返回挂起信号，
   queue._execute 识别后保持 running 不落终态；
-- confirm_step(...)：用户确认后恢复执行（刷新页面后重读 task 即恢复）。
+- confirm_step(...)：用户确认后**只落确认态**（Phase 5 改异步），
+  由路由层重新入队、worker（run_agent_run）异步恢复执行；
+  刷新页面后重读 task 即恢复。
 """
 from __future__ import annotations
 
@@ -46,11 +48,13 @@ from ...models import AITask, Membership, Work
 from ...repositories.base import EntityNotFound
 from ...ai_tasks.repository import AITaskRepository
 from .adapters import ToolDeps, ToolResult, run_tool
+from .brief import merge_brief_dict
 from .context import AgentIdentity
 from .conversations import (
     AgentStep,
     append_message,
     create_conversation,
+    get_conversation,
 )
 from .planner import PlanStep, PlanValidation, validate_plan
 from .tools import ToolTier, get_tool
@@ -137,11 +141,15 @@ def _resolve_role(db: Session, user_id: str, org_id: str) -> str:
 
 def create_agent_run(db: Session, user: Any, org_id: str,
                      work_id: Optional[str] = None,
-                     brief_json: Optional[dict[str, Any]] = None) -> str:
+                     brief_json: Optional[dict[str, Any]] = None,
+                     conversation_id: Optional[str] = None) -> str:
     """创建 Agent run：AITask(task_type="agent_run") + conversation 行。
 
     - 用户须是 org 成员，否则 EntityNotFound（404 防枚举）；
     - work_id 非空时必须属于该 org，否则 EntityNotFound（防跨作品）；
+    - conversation_id 非空时复用同一会话（多轮对话串联，4b 遗留③）：
+      会话不存在/不属于该 org → EntityNotFound；复用时把新 brief 增量合并
+      进会话 brief_json，不新建 conversation；
     - payload.run_status 初始为 queued；plan 为 None（Phase 5 前由
       set_run_plan 写入，或测试直接写）。
     返回 task_id。202 语义由路由层（Phase 4）接。
@@ -159,11 +167,22 @@ def create_agent_run(db: Session, user: Any, org_id: str,
         if work is None:
             raise EntityNotFound("Work", work_id)
 
-    conv = create_conversation(
-        db, org_id, user_id, work_id=work_id,
-        brief={"brief": dict(brief_json or {}),
-               "work_title": work.title if work else None},
-    )
+    if conversation_id:
+        conv = get_conversation(db, conversation_id, org_id)
+        if conv is None:
+            raise EntityNotFound("Conversation", conversation_id)
+        # brief 增量更新：新值补齐/覆盖旧值，不丢历史上下文
+        conv.brief_json = merge_brief_dict(
+            dict(conv.brief_json or {}),
+            {"brief": dict(brief_json or {}),
+             "work_title": work.title if work else None})
+        db.commit()
+    else:
+        conv = create_conversation(
+            db, org_id, user_id, work_id=work_id,
+            brief={"brief": dict(brief_json or {}),
+                   "work_title": work.title if work else None},
+        )
     if brief_json:
         append_message(db, conv.id, org_id, "user",
                        {"type": "brief", "brief": dict(brief_json)})
@@ -519,15 +538,16 @@ def run_agent_run(task_id: str, is_cancelled: Callable[[], bool],
 def confirm_step(db: Session, task_id: str, step_idx: int,
                  approved: bool,
                  org_id: Optional[str] = None) -> dict[str, Any]:
-    """确认等待中的步骤并恢复执行。
+    """确认等待中的步骤。
 
     - org_id 非空时校验归属，不匹配抛 EntityNotFound；
     - 非 waiting_user 状态或 step_idx 对不上 → ValueError；
     - approved=False → 任务 cancelled（用户拒绝）；
-    - approved=True → 记录确认，继续执行剩余步骤（刷新后重读即恢复）。
+    - approved=True → **只落确认态**（confirmed_steps / pending_step=None /
+      run_status=running），不直接执行剩余步骤；调用方（路由层）负责把任务
+      重新入队，由 worker（run_agent_run）异步恢复执行（4a 遗留修复：
+      不在 HTTP 请求内同步跑完剩余步骤，避免请求阻塞/超时）。
     """
-    from ...ai_tasks.queue import _TaskCancelled
-
     repo = AITaskRepository(db)
     task = _load_task_fresh(db, task_id, org_id)
     payload = dict(task.payload_json or {})
@@ -572,12 +592,9 @@ def confirm_step(db: Session, task_id: str, step_idx: int,
         append_message(db, conv_id, org, "user",
                        {"type": "confirm_step", "task_id": task_id,
                         "step_idx": step_idx, "approved": True})
-    logger.info("agent_run %s 步骤 %d 已确认，恢复执行", task_id, step_idx)
-
-    def _is_cancelled() -> bool:
-        return repo.is_cancel_requested(task_id)
-
-    try:
-        return execute_run_steps(db, task_id, _is_cancelled)
-    except _TaskCancelled:
-        return {"run_status": RUN_STATUS_CANCELLED, "task_id": task_id}
+    logger.info("agent_run %s 步骤 %d 已确认（仅落确认态，等待 worker 恢复）",
+                task_id, step_idx)
+    return {"run_status": RUN_STATUS_RUNNING, "task_id": task_id,
+            "resumed": False,
+            "note": "已确认；剩余步骤由 worker 异步恢复执行，"
+                    "请轮询 GET /api/v1/agent/runs/{task_id}"}

@@ -167,7 +167,11 @@ class _PriorityDispatcher:
                     repo.set_status(task_id, "cancelled",
                                     error="排队期间被取消")
                 return
-            repo.set_status(task_id, "running", model_used=model_used)
+            # Phase 5：confirm approved 后任务被重新入队恢复执行，此时状态
+            # 已是 running（waiting_user 期间保持 running）。running→running
+            # 不是合法流转，跳过重复置位，直接进 runner（幂等，不误标）。
+            if task.status != "running":
+                repo.set_status(task_id, "running", model_used=model_used)
 
             def is_cancelled() -> bool:
                 # 独立短查询，避免长会话缓存

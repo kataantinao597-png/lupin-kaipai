@@ -51,6 +51,25 @@ RESULT_PARTIAL = "partial"
 RESULT_FAILED = "failed"
 
 
+class ModelStepsExceeded(RuntimeError):
+    """控制流异常：run 级模型步数超限。
+
+    必须穿透 adapter/run_tool 的结构化错误包装，直达编排层做 partial
+    处理；run_tool 见到此类异常直接 re-raise，不转 ToolResult。
+    """
+
+
+class RateLimitedStop(RuntimeError):
+    """控制流异常：撞 429 硬停止。
+
+    必须穿透 adapter/run_tool 的结构化错误包装，直达编排层：立刻停止
+    该服务商后续调用、上报，不重试不换端点。
+    """
+
+
+_CONTROL_FLOW_EXCEPTIONS = (ModelStepsExceeded, RateLimitedStop)
+
+
 # ---------------------------------------------------------------------------
 # 结果信封 / 异常
 # ---------------------------------------------------------------------------
@@ -235,6 +254,8 @@ def _adapt_generate_ideas(deps: ToolDeps, p) -> ToolResult:
     )
     try:
         result = ai(prompt)
+    except _CONTROL_FLOW_EXCEPTIONS:
+        raise
     except Exception as e:
         return _fail("model_error", f"创意生成模型调用失败: {e}")
     ideas = result.get("ideas") if isinstance(result, dict) else None
@@ -258,6 +279,8 @@ def _adapt_generate_storyboard(deps: ToolDeps, p) -> ToolResult:
     )
     try:
         result = ai(prompt)
+    except _CONTROL_FLOW_EXCEPTIONS:
+        raise
     except Exception as e:
         return _fail("model_error", f"分镜生成模型调用失败: {e}")
     shots = result.get("shots") if isinstance(result, dict) else None
@@ -301,10 +324,70 @@ def _adapt_check_risk(deps: ToolDeps, p) -> ToolResult:
                warnings=warnings)
 
 
+# ---------------------------------------------------------------------------
+# 分镜格式归一化（Phase 5 修复：工具链内部格式 vs validator 完整 schema）
+# ---------------------------------------------------------------------------
+
+#: validator Shot.shot_type 的枚举值
+_SHOT_TYPE_ENUM = ("特写", "近景", "中景", "中远景", "全景", "远景")
+
+
+def _normalize_storyboard_for_validation(sb: Any) -> Any:
+    """把 generate_storyboard 工具的简化分镜格式归一化为 validator 完整 schema。
+
+    背景：``backend.validator.Storyboard`` 要求 product_summary /
+    target_audience / creative_direction / target_duration_seconds / shoot /
+    shot_number / duration_seconds 等完整字段，而工具链产出的是简化格式
+    （shot_no / duration_sec / scene）。直接校验会误报"结构非法"。
+    本函数只做字段映射与兜底填充，不改变镜头实质内容；checklist 条目仍按
+    原始简化数据组装。已是完整 schema 的输入原样返回（幂等）。
+    非法输入（非 dict / shots 非 list）原样返回，让 validator 按原逻辑报错。
+    """
+    if not isinstance(sb, dict):
+        return sb
+    shots = sb.get("shots")
+    if not isinstance(shots, list):
+        return sb
+    if shots and isinstance(shots[0], dict) and "shot_number" in shots[0]:
+        return sb  # 已是完整 schema，幂等返回
+    norm_shots = []
+    for i, s in enumerate(shots):
+        if not isinstance(s, dict):
+            norm_shots.append(s)
+            continue
+        st = s.get("shot_type")
+        norm_shots.append({
+            "shot_number": s.get("shot_no", i + 1),
+            "duration_seconds": s.get("duration_sec", 0),
+            "shot_type": st if st in _SHOT_TYPE_ENUM else "中景",
+            "scene_description": s.get("scene") or "",
+            "shooting_action": s.get("shoot_notes") or s.get("scene") or "",
+            "voiceover": s.get("voiceover") or "",
+            "subtitle": s.get("subtitle") or "",
+            "camera_movement": "固定机位",
+        })
+    total = sum(float(x.get("duration_seconds") or 0) for x in norm_shots
+                if isinstance(x, dict))
+    normalized = {
+        "product_summary": "AI 助手生成",
+        "target_audience": "目标用户",
+        "creative_direction": "AI 创意",
+        "target_duration_seconds": total if total > 0 else 1,
+        "shoot": {"device": "手机", "people": 1},
+    }
+    for k, v in sb.items():
+        if k != "shots":
+            normalized[k] = v
+    normalized["shots"] = norm_shots
+    return normalized
+
+
 def _adapt_shooting_checklist(deps: ToolDeps, p) -> ToolResult:
     _require_action(deps.db, deps.identity, "work:read")
     from ...validator import validate_dict
-    errors, _ = validate_dict(p.storyboard)
+    # Phase 5：先归一化为 validator 完整 schema 再校验（工具链简化格式直
+    # 接校验会误报结构非法）；checklist 条目仍按原始简化数据组装。
+    errors, _ = validate_dict(_normalize_storyboard_for_validation(p.storyboard))
     if errors:
         return _fail("validation",
                      "分镜未通过校验: " + "; ".join(errors[:5]),
@@ -340,6 +423,8 @@ def _adapt_rewrite_copy(deps: ToolDeps, p) -> ToolResult:
     )
     try:
         result = ai(prompt)
+    except _CONTROL_FLOW_EXCEPTIONS:
+        raise
     except Exception as e:
         return _fail("model_error", f"文案改写模型调用失败: {e}")
     if not isinstance(result, dict) or not (result.get("rewritten") or "").strip():
@@ -359,7 +444,8 @@ def _adapt_check_delivery(deps: ToolDeps, p) -> ToolResult:
             storyboard = None
     facts = FactRepository(deps.db).list_usable(deps.identity.org_id, limit=200)
     result = delivery_service.check_delivery(
-        storyboard=storyboard or {},
+        # Phase 5：归一化后再做交付检查，避免简化格式被误判"时长与校验"阻断
+        storyboard=_normalize_storyboard_for_validation(storyboard or {}),
         facts=[{"id": f.id, "content": f.content, "status": f.status,
                 "allow_use": f.allow_use} for f in facts],
         check_type=p.check_type,
@@ -368,21 +454,90 @@ def _adapt_check_delivery(deps: ToolDeps, p) -> ToolResult:
 
 
 def _adapt_parse_brief(deps: ToolDeps, p) -> ToolResult:
+    """对话理解/brief 解析 → Phase 5 brief.py（任务书 §5.1 完整 schema）。
+
+    关键事实不明绝不臆造 → items_to_verify（待核实）；缺失一般字段用
+    透明默认值并在 confirmed_defaults 标出。
+    """
     _require_action(deps.db, deps.identity, "org:read")
     ai = _require_ai(deps, "parse_brief")
+    from .brief import BriefParseError, parse_brief_from_text
+
+    def _generate(prompt: str, feedback=None) -> dict:
+        # ToolDeps.ai_generate 是 prompt→dict 单轮协议；修复轮把 feedback
+        # 拼进 prompt（brief.py 的受控修复语义保持不变）
+        if feedback:
+            prompt = f"{prompt}\n\n修正要求：{feedback}"
+        return ai(prompt)
+
+    try:
+        brief = parse_brief_from_text(p.user_text, _generate)
+    except _CONTROL_FLOW_EXCEPTIONS:
+        raise
+    except BriefParseError as e:
+        return _fail("model_error", str(e))
+    except Exception as e:  # noqa: BLE001
+        return _fail("model_error", f"brief 解析模型调用失败: {e}")
+    return _ok({"brief": brief.model_dump()})
+
+
+def _adapt_generate_strategy(deps: ToolDeps, p) -> ToolResult:
+    _require_action(deps.db, deps.identity, "work:read")
+    ai = _require_ai(deps, "generate_strategy")
+    facts_text = ""
+    if p.inject_confirmed_facts:
+        facts = FactRepository(deps.db).list_usable(
+            deps.identity.org_id, product_id=p.product_id, limit=20)
+        facts_text = "\n".join(f"- {f.content}" for f in facts)
     prompt = (
-        "把用户的一句话解析为结构化 brief，返回 JSON："
-        "{\"intent\": str, \"product_hint\": str, \"work_hint\": str, "
-        "\"deliverable\": str, \"constraints\": [str]}。"
-        f"\n用户原话：{p.user_text}"
+        "你是农产品短视频营销策略师。根据以下 brief 制定营销策略与内容目标，"
+        "返回 JSON：{\"strategy\": {\"goals\": [str], "
+        "\"target_audience\": str, \"content_pillars\": [str], "
+        "\"key_messages\": [str]}}。"
+        "要求：目标可衡量、支柱 2-4 个、关键信息紧扣已确认事实，"
+        "禁止编造产地/认证/功效等关键事实。"
+        f"\nbrief：{p.brief}"
+        + (f"\n已确认事实（只能引用这些，禁止编造）：\n{facts_text}" if facts_text else "")
     )
     try:
         result = ai(prompt)
+    except _CONTROL_FLOW_EXCEPTIONS:
+        raise
     except Exception as e:
-        return _fail("model_error", f"brief 解析模型调用失败: {e}")
-    if not isinstance(result, dict) or "intent" not in result:
-        return _fail("model_error", "模型返回结构非法：缺少 intent 字段")
-    return _ok({"brief": result})
+        return _fail("model_error", f"策略生成模型调用失败: {e}")
+    strategy = result.get("strategy") if isinstance(result, dict) else None
+    if not isinstance(strategy, dict) or not strategy.get("goals"):
+        return _fail("model_error", "模型返回结构非法：缺少 strategy.goals")
+    return _ok({"strategy": strategy},
+               warnings=["结果未落盘：如需保存，请用 patch_work 写回作品"])
+
+
+def _adapt_generate_platform_copy(deps: ToolDeps, p) -> ToolResult:
+    _require_action(deps.db, deps.identity, "copy:create")
+    ai = _require_ai(deps, "generate_platform_copy")
+    prompt = (
+        f"你是农产品短视频平台文案写手。为【{p.platform}】平台撰写发布文案，"
+        "返回 JSON：{\"copy\": {\"platform\": str, \"title\": str, "
+        "\"text\": str, \"hashtags\": [str]}}。"
+        "要求：标题抓人、正文口语化带卖点、3-8 个话题标签；"
+        "禁止编造产地/认证/功效等关键事实；不确定的写成\"待核实\"。"
+        f"\nbrief：{p.brief}"
+        + (f"\n创意方向：{p.creative}" if p.creative else "")
+        + (f"\n口播文案：{p.voiceover}" if p.voiceover else "")
+        + (f"\n产品名：{p.product_name}" if p.product_name else "")
+    )
+    try:
+        result = ai(prompt)
+    except _CONTROL_FLOW_EXCEPTIONS:
+        raise
+    except Exception as e:
+        return _fail("model_error", f"平台文案生成模型调用失败: {e}")
+    copy = result.get("copy") if isinstance(result, dict) else None
+    if not isinstance(copy, dict) or not (copy.get("text") or "").strip():
+        return _fail("model_error", "模型返回结构非法：缺少 copy.text")
+    copy["platform"] = p.platform
+    return _ok({"copy": copy},
+               warnings=["结果未落盘：如需保存，请用 patch_work 写回作品"])
 
 
 def _adapt_patch_work(deps: ToolDeps, p) -> ToolResult:
@@ -481,6 +636,8 @@ def _adapt_regenerate_shot(deps: ToolDeps, p) -> ToolResult:
     )
     try:
         result = ai(prompt)
+    except _CONTROL_FLOW_EXCEPTIONS:
+        raise
     except Exception as e:
         return _fail("model_error", f"镜头重生成模型调用失败: {e}")
     if not isinstance(result, dict) or not result.get("scene"):
@@ -504,6 +661,8 @@ _ADAPTERS: dict[str, Callable[[ToolDeps, Any], ToolResult]] = {
     "query_products": _adapt_query_products,
     "generate_ideas": _adapt_generate_ideas,
     "generate_storyboard": _adapt_generate_storyboard,
+    "generate_strategy": _adapt_generate_strategy,
+    "generate_platform_copy": _adapt_generate_platform_copy,
     "check_risk": _adapt_check_risk,
     "shooting_checklist": _adapt_shooting_checklist,
     "rewrite_copy": _adapt_rewrite_copy,
@@ -537,6 +696,9 @@ def run_tool(deps: ToolDeps, tool_id: str, params: dict[str, Any],
         return _fail("internal", f"工具 {tool_id} 已注册但无适配器实现")
     try:
         result = adapter(deps, validated)
+    except _CONTROL_FLOW_EXCEPTIONS:
+        # 控制流异常（模型步数超限 / 429 硬停）必须穿透，不转结构化错误
+        raise
     except _ToolNeedsModel as e:
         return _fail("needs_model", str(e))
     except _Forbidden as e:

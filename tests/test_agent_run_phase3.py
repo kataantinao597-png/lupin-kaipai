@@ -393,6 +393,7 @@ def _confirm_plan(work_id):
 
 class TestWaitingUser:
     def test_wait_confirm_resume(self, db, monkeypatch):
+        """waiting_user → 确认只落确认态（Phase 5 改异步）；worker 恢复执行后完成。"""
         org = _org(db)
         work = _work(db, org.id)
         task_id = _make_run(db, org, work=work,
@@ -410,11 +411,21 @@ class TestWaitingUser:
         assert task.payload_json["run_status"] == "waiting_user"
         # 未确认前工具未执行
         assert calls == []
-        # 用户确认 → 恢复执行并完成
+        # 用户确认 → 只落确认态（Phase 5 异步化：HTTP 内不再同步执行）
         out2 = confirm_step(db, task_id, 0, True)
-        assert out2["run_status"] == "completed"
+        assert out2["run_status"] == "running"
+        assert out2["resumed"] is False
+        assert calls == []  # 确认时工具仍未执行
+        task = AITaskRepository(db).get(task_id)
+        assert task.status == "running"  # 仍是 running，未被误标终态
+        assert task.payload_json["confirmed_steps"] == [0]
+        assert task.payload_json["pending_step"] is None
+        # worker 恢复执行（模拟队列 worker 调 run_agent_run）
+        out3 = run_agent_run(task_id, lambda: False, {"_org_id": org.id})
+        assert out3["run_status"] == "completed"
         assert len(calls) == 1
         assert calls[0]["confirmed"] is True
+        db.expire_all()  # worker 用独立会话落库，本会话需失效重读
         task = AITaskRepository(db).get(task_id)
         assert task.status == "succeeded"
         assert task.payload_json["confirmed_steps"] == [0]
@@ -476,9 +487,12 @@ class TestWaitingUser:
             assert state["conversation_id"] == conv_id
             assert any(s["status"] == "waiting_user"
                        for s in state["steps"])
-            # 确认后恢复执行
+            # 确认后只落确认态（Phase 5 异步化），worker 恢复执行才完成
             out = confirm_step(db2, task_id, 0, True)
-            assert out["run_status"] == "completed"
+            assert out["run_status"] == "running"
+            assert out["resumed"] is False
+            out2 = run_agent_run(task_id, lambda: False, {"_org_id": org.id})
+            assert out2["run_status"] == "completed"
         finally:
             db2.close()
 
@@ -531,10 +545,30 @@ class TestRegistrationAndQueue:
             f"任务未进入 waiting_user：{seen}"
         # 关键断言：仍是 running，没有被 queue 误标 succeeded
         assert seen[0] == "running", f"queue 误标了终态：{seen}"
-        # 确认后完成
+        # 确认只落确认态（Phase 5 异步化）；重新入队后 worker 恢复执行完成
         out = confirm_step(db, task_id, 0, True)
-        assert out["run_status"] == "completed"
-        assert AITaskRepository(db).get(task_id).status == "succeeded"
+        assert out["run_status"] == "running"
+        assert out["resumed"] is False
+
+        def _resume(tid, is_cancelled):
+            return RUNNERS["agent_run"](tid, is_cancelled, dict(payload))
+
+        TaskQueue(get_session_factory()).submit(task_id, _resume)
+        deadline = time.time() + 15
+        final = None
+        while time.time() < deadline:
+            s = get_session_factory()()
+            try:
+                t = AITaskRepository(s).get(task_id)
+                rs = (t.payload_json or {}).get("run_status")
+                if t.status == "succeeded" and rs == "completed":
+                    final = (t.status, rs)
+                    break
+            finally:
+                s.close()
+            time.sleep(0.2)
+        assert final == ("succeeded", "completed"), \
+            f"worker 恢复执行未完成：{final}"
 
     def test_run_agent_run_entry(self, db, monkeypatch):
         """run_agent_run 入口：自建会话执行（queue runner 签名）。"""

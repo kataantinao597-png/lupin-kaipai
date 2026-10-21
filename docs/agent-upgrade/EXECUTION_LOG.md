@@ -103,3 +103,19 @@
   - 修过的真 bug：① 空闲态误显示「取消任务」（setAgentButtons 把未知态归一化成 queued）；② 历史确认卡片按钮在重渲染后被冲掉冻结态（改为渲染时按 `AGENT.state`/`tid` 直接决定 disabled，旧卡片默认冻结；点击旧卡片另有 tid 校验挡下）
 - 遗留（非阻塞，Phase 5/后续）：① 顶栏「取消任务」对排队中 run 调 cancel API 后状态保持排队（4a 测试 `test_cancel_pending` 已将此定为预期语义：未入队只打标记，Phase 5 入队后协作式取消）；② confirm approved 仍同步执行剩余步骤（4a 遗留，HTTP 可能阻塞，Phase 5 改异步）；③ 每次发送新建 conversation（多轮连续对话的上下文串联待 Phase 5 规划器）
 - Phase 4b Gate：**PASS**（进入 Phase 5）
+
+## Phase 5 — 一句话生成编排（子代理执行中，2026-10-21 22:50）
+- 范围：brief 解析器（自然语言→结构化 Brief，网关真实模型调用）+ orchestrator.py（11 步典型流程编排）+ 质量门禁（artifact schema/一致性/风险引用/保存后重读）+ confirm 改异步 + 10+ 场景测试
+- 红线：vault luna/gpt 可调用（429 硬停），视频 key 禁用，scratch DB
+
+### Phase 5 完工记录（2026-10-21 23:xx，子代理）
+- 新增：`backend/services/agent/brief.py`（Brief schema/透明默认值/待核实/≤2 次修复/merge_brief）、`orchestrator.py`（run_one_shot_brief 11 步：brief→产品/事实→策略→创意→分镜→拍摄清单→风险→有限修复→文案/交付→写回作品→摘要；每步 run_tool 白名单分派；只读可并行/写串行；task_id 成本归属；25 步/8 模型步上限；429 硬停）、`quality_gates.py`（artifact schema/一致性/风险引用/保存后重读）
+- 新增工具：`generate_strategy`、`generate_platform_copy`（白名单 14→16；test_agent_tools_phase2.py 断言已同步更新，非放水）
+- 修复 4a 遗留：`confirm_step` approved 只落确认态，路由层 `_enqueue_run_resume` 重新入队、worker（run_agent_run）异步恢复；`queue._execute` 容忍已 running 任务重入（跳过 running→running 非法流转）
+- 修复 4b 遗留③：`create_agent_run(conversation_id=...)` 复用会话 + brief 增量合并；路由新增 `conversation_id` 参数；前端 `agentSend` 回传 `AGENT.convId`
+- 修过的真 bug：① shooting_checklist/check_delivery 用 validator 完整 schema 校验工具链简化分镜（shot_no/duration_sec）必报"结构非法"——adapters 新增 `_normalize_storyboard_for_validation` 归一化（幂等）；② patch_work 白名单缺 Phase 5 artifact 键（strategy/creative/shooting_list/risk_report/copy）——已补；③ quality_gates `_issue` 把 detail 双重嵌套导致修复定位不到句子——已修；④ brief 透明默认标记在 Pydantic 填充后无法区分"未指定"——改为按模型原始输出判定
+- 控制流异常穿透：`ModelStepsExceeded`/`RateLimitedStop` 在 adapters 定义，run_tool 与各 adapter 的 `except Exception` 一律 re-raise，不被转成 ToolResult 吞掉
+- 测试：`tests/test_agent_orchestrator_phase5.py` 27/27 通过（正常/缺失字段/无效 JSON 修复+超限/单工具失败/风险拦截标待核实/低预算单人/重读一致/可选失败→partial/模型步上限→partial/429 硬停/confirm 异步/service+HTTP/多轮复用/brief 单元/门禁单元/HTTP 接线）；回归 test_agent_api_phase4a.py + test_agent_run_phase3.py + test_agent_tools_phase2.py 86/86，test_async_tasks_phase4.py + test_db_phase3.py 36/36；业务库零写入（全程 scratch）
+- 真实冒烟（luna key 经保险箱 surrogate，走 backend/ai/gateway.py；key 未入代码/日志）：brief 解析 1 次，模型 gpt-6-luna，耗时 19248ms，attempts=1，prompt 4694 / completion 323 / total 5017 tokens，费用约 6 分；产地/认证/功效/价格/销量均正确标"待核实"，未臆造；无 429
+- 遗留（非阻塞）：① orchestrator 目前是同步 service 函数，HTTP 一句话入口路由未建（Phase 6/后续按需加，前端 4b 对话流已可经 run/create+plan 调用）；② check_delivery 的"产品资料/风险审核"阻断项沿用旧语义（orchestrator 只记录不强拦）；③ 4b 遗留①（排队中 run 取消语义）未动
+- Phase 5 Gate：**PASS**（§5.4 十场景全覆盖：正常/缺失字段/无效 JSON/单工具失败/风险内容/低预算单人/重读一致/可选失败→partial/confirm 异步/多轮串联）

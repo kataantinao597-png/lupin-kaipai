@@ -107,11 +107,13 @@ def _deps(db, identity, **kw):
 # ---------------------------------------------------------------------------
 
 class TestToolSchemas:
-    def test_registry_has_14_tools(self):
-        assert len(TOOLS_REGISTRY) == 14
+    def test_registry_has_16_tools(self):
+        assert len(TOOLS_REGISTRY) == 16
         assert set(TOOLS_REGISTRY) == {
             "query_facts", "query_products", "generate_ideas",
-            "generate_storyboard", "check_risk", "shooting_checklist",
+            "generate_storyboard", "generate_strategy",
+            "generate_platform_copy",
+            "check_risk", "shooting_checklist",
             "rewrite_copy", "check_delivery", "parse_brief", "patch_work",
             "get_task_status", "query_usage", "regenerate_shot",
             "delete_work",
@@ -125,7 +127,8 @@ class TestToolSchemas:
                                                        "delete_work"}
         assert set(tools_needing_model()) == {
             "generate_ideas", "generate_storyboard", "regenerate_shot",
-            "rewrite_copy", "parse_brief",
+            "rewrite_copy", "parse_brief", "generate_strategy",
+            "generate_platform_copy",
         }
 
     def test_valid_params_pass(self):
@@ -134,6 +137,9 @@ class TestToolSchemas:
             "query_products": {"keyword": "苹果"},
             "generate_ideas": {"brief": "给烟台苹果做一条短视频"},
             "generate_storyboard": {"brief": "苹果短视频", "shot_count": 5},
+            "generate_strategy": {"brief": "给烟台苹果做一条短视频"},
+            "generate_platform_copy": {"brief": "苹果短视频",
+                                       "platform": "抖音"},
             "check_risk": {"storyboard": {"shots": []}},
             "shooting_checklist": {"storyboard": {"shots": []}},
             "rewrite_copy": {"text": "苹果很好吃"},

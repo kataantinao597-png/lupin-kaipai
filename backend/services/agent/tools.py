@@ -66,6 +66,28 @@ class GenerateIdeasParams(_Strict):
         default=True, description="是否把已确认事实注入 prompt（保真）")
 
 
+class GenerateStrategyParams(_Strict):
+    """营销策略/内容目标 → 需模型；Phase 5 §5.2 步骤 3。"""
+    brief: str = Field(min_length=1, max_length=4000)
+    work_id: Optional[str] = Field(default=None, max_length=64)
+    product_id: Optional[str] = Field(default=None, max_length=64)
+    inject_confirmed_facts: bool = Field(
+        default=True, description="是否把已确认事实注入 prompt（保真）")
+
+
+class GeneratePlatformCopyParams(_Strict):
+    """平台文案 → 需模型；Phase 5 §5.2 步骤 9（可选步骤）。"""
+    brief: str = Field(min_length=1, max_length=4000)
+    platform: str = Field(min_length=1, max_length=64,
+                          description="目标平台，如 抖音/视频号")
+    creative: str = Field(default="", max_length=4000,
+                          description="选定的创意方向摘要")
+    voiceover: str = Field(default="", max_length=4000,
+                           description="口播文案（供文案提炼卖点）")
+    product_name: str = Field(default="", max_length=100)
+    work_id: Optional[str] = Field(default=None, max_length=64)
+
+
 class GenerateStoryboardParams(_Strict):
     """分镜生成 → 需模型。"""
     work_id: Optional[str] = Field(default=None, max_length=64)
@@ -143,6 +165,8 @@ class PatchWorkParams(_Strict):
 PATCHABLE_DATA_KEYS = frozenset({
     "brief", "idea", "storyboard", "voiceover", "subtitle",
     "shoot_notes", "cover", "tags",
+    # Phase 5：一句话生成编排写回的 artifact 键（§5.2 步骤 10）
+    "strategy", "creative", "shooting_list", "risk_report", "copy",
 })
 
 
@@ -224,6 +248,20 @@ _register(ToolDefinition(
     params_model=GenerateStoryboardParams, rbac_action="work:read",
     needs_model=True,
     source="backend/api/v1/ideas.py:290 POST /api/storyboard（_validate_shot 141 行）",
+))
+_register(ToolDefinition(
+    tool_id="generate_strategy", tier=ToolTier.OPTIONAL,
+    description="营销策略/内容目标生成（需模型调用；Phase 5 §5.2 步骤 3）",
+    params_model=GenerateStrategyParams, rbac_action="work:read",
+    needs_model=True,
+    source="Phase 5 新增：backend/services/agent/adapters.py:_adapt_generate_strategy",
+))
+_register(ToolDefinition(
+    tool_id="generate_platform_copy", tier=ToolTier.OPTIONAL,
+    description="平台文案生成（需模型调用；Phase 5 §5.2 步骤 9，可选）",
+    params_model=GeneratePlatformCopyParams, rbac_action="copy:create",
+    needs_model=True,
+    source="Phase 5 新增：backend/services/agent/adapters.py:_adapt_generate_platform_copy",
 ))
 _register(ToolDefinition(
     tool_id="check_risk", tier=ToolTier.CORE_REQUIRED,

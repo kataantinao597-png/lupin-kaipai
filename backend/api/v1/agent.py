@@ -60,6 +60,9 @@ class AgentRunCreate(BaseModel):
     org_id: str = Field(min_length=1, description="组织 id（调用者须为成员）")
     work_id: Optional[str] = Field(default=None, description="关联作品 id（可选，须属该组织）")
     brief: Dict[str, Any] = Field(default_factory=dict)
+    conversation_id: Optional[str] = Field(
+        default=None,
+        description="复用的会话 id（多轮对话串联；不传则新建会话）")
 
 
 class AgentRunPlanStep(BaseModel):
@@ -112,8 +115,29 @@ def _entity_404(exc: EntityNotFound) -> BusinessError:
     if exc.entity == "Work":
         return BusinessError("作品不存在", code=error_codes.WORK_NOT_FOUND,
                              http_status=404)
+    if exc.entity == "Conversation":
+        return BusinessError("会话不存在",
+                             code=error_codes.RESOURCE_NOT_FOUND,
+                             http_status=404)
     return BusinessError("资源不存在", code=error_codes.RESOURCE_NOT_FOUND,
                          http_status=404)
+
+
+def _enqueue_run_resume(task) -> None:
+    """confirm approved 后：把 run 重新入队，由 worker 异步恢复执行。
+
+    Phase 5（4a 遗留修复）：不在 HTTP 请求内同步跑完剩余步骤。
+    模块级函数，便于测试 monkeypatch 拦截入队行为。
+    """
+    # 函数内导入：避免 api.v1.agent ↔ ai_tasks.runners 顶层循环导入
+    from ...ai_tasks.runners import RUNNERS
+    runner = RUNNERS[TASK_TYPE_AGENT_RUN]
+
+    def _runner(task_id: str, is_cancelled):
+        return runner(task_id, is_cancelled, {})
+
+    TaskQueue(get_session_factory()).submit(
+        task.id, _runner, priority=task.priority or "high")
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +158,8 @@ def create_run(req: AgentRunCreate,
     try:
         task_id = create_agent_run(db, user, req.org_id,
                                    work_id=req.work_id,
-                                   brief_json=dict(req.brief or {}))
+                                   brief_json=dict(req.brief or {}),
+                                   conversation_id=req.conversation_id)
     except EntityNotFound as e:
         raise _entity_404(e) from e
     state = get_run_state(db, task_id, req.org_id)
@@ -195,10 +220,12 @@ def confirm(task_id: str,
             req: AgentRunConfirm,
             user: User = Depends(get_current_user),
             db: Session = Depends(get_db)):
-    """确认等待中的步骤（waiting_user → 批准后恢复执行 / 拒绝则取消任务）。
+    """确认等待中的步骤（waiting_user → 批准/拒绝）。
 
     - 非 waiting_user 状态或 step_idx 对不上 → 400；
-    - approved=False → 任务 cancelled（用户拒绝）。
+    - approved=False → 任务 cancelled（用户拒绝）；
+    - approved=True → 只落确认态（Phase 5 改异步），随后把任务重新入队，
+      由 worker 异步恢复执行；HTTP 直接返回 running，前端轮询真实进度。
     """
     task = _get_agent_task_or_404(db, task_id, user.id)
     try:
@@ -209,6 +236,9 @@ def confirm(task_id: str,
     except ValueError as e:
         raise BusinessError(str(e), code=error_codes.INVALID_PARAM,
                             http_status=400) from e
+    if req.approved and out.get("run_status") == "running":
+        # 4a 遗留修复：批准后只入队，不在请求内同步执行剩余步骤
+        _enqueue_run_resume(task)
     return success(dict(out))
 
 
