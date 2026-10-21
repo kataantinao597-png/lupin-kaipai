@@ -116,6 +116,22 @@ class AITaskRepository:
         self.db.flush()
 
     @transactional_method
+    def update_payload(self, task_id: str,
+                       payload: dict[str, Any]) -> AITask:
+        """Phase 3：整体替换 payload_json（run_status/pending_step 等扩展
+        字段），不改变任务状态。"""
+        task = self.get(task_id)
+        if task is None:
+            raise EntityNotFound("AITask", task_id)
+        self.db.execute(
+            update(AITask).where(AITask.id == task_id).values(
+                payload_json=payload, updated_at=_utcnow()))
+        self.db.flush()
+        task = self.get(task_id)
+        assert task is not None
+        return task
+
+    @transactional_method
     def request_cancel(self, task_id: str) -> AITask:
         """038：请求取消——只打标记，由队列/工作线程执行实际取消。
 

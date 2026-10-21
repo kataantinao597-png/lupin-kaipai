@@ -4,6 +4,8 @@
 - context：上下文装配 + check_user_quota() 桩位
 - adapters：工具适配器（只调既有 service/repository）+ 统一分派 run_tool
 - planner：结构化 JSON 计划生成与校验（白名单分派路线）
+- conversations（Phase 3）：对话持久化 ORM + CRUD（org 归属校验）
+- runner（Phase 3）：agent_run 生命周期（AITask task_type="agent_run"）
 """
 # 导入顺序约定（仓库既有坑，非本 Phase 引入）：
 # backend.models 不能作为进程内第一个 backend.* 导入——models.py:35 的
@@ -14,6 +16,20 @@ import backend.auth.database  # noqa: F401  (只为触发安全的导入顺序)
 
 from .adapters import ToolDeps, ToolResult, run_tool
 from .context import AgentIdentity, assemble_agent_context, check_user_quota
+from .conversations import (
+    MESSAGE_ROLES,
+    AgentStep,
+    Conversation,
+    ConversationMessage,
+    append_message,
+    count_messages,
+    create_conversation,
+    get_conversation,
+    get_conversation_or_404,
+    list_conversations,
+    list_messages,
+    set_conversation_status,
+)
 from .planner import (
     MAX_MODEL_STEPS_PER_RUN,
     MAX_PLAN_STEPS,
@@ -21,6 +37,24 @@ from .planner import (
     PlanValidation,
     summarize_plan,
     validate_plan,
+)
+from .runner import (
+    RUN_STATUSES,
+    RUN_STATUS_CANCELLED,
+    RUN_STATUS_COMPLETED,
+    RUN_STATUS_FAILED,
+    RUN_STATUS_PARTIAL,
+    RUN_STATUS_QUEUED,
+    RUN_STATUS_RUNNING,
+    RUN_STATUS_WAITING_USER,
+    TASK_TYPE_AGENT_RUN,
+    confirm_step,
+    create_agent_run,
+    execute_run_steps,
+    get_run_state,
+    run_agent_run,
+    set_run_plan,
+    step_params_digest,
 )
 from .tools import (
     PATCHABLE_DATA_KEYS,
@@ -37,9 +71,22 @@ from .tools import (
 
 __all__ = [
     "AgentIdentity",
+    "AgentStep",
+    "Conversation",
+    "ConversationMessage",
     "MAX_MODEL_STEPS_PER_RUN",
     "MAX_PLAN_STEPS",
+    "MESSAGE_ROLES",
     "PATCHABLE_DATA_KEYS",
+    "RUN_STATUSES",
+    "RUN_STATUS_CANCELLED",
+    "RUN_STATUS_COMPLETED",
+    "RUN_STATUS_FAILED",
+    "RUN_STATUS_PARTIAL",
+    "RUN_STATUS_QUEUED",
+    "RUN_STATUS_RUNNING",
+    "RUN_STATUS_WAITING_USER",
+    "TASK_TYPE_AGENT_RUN",
     "TOOLS_REGISTRY",
     "PlanStep",
     "PlanValidation",
@@ -48,11 +95,26 @@ __all__ = [
     "ToolParamError",
     "ToolResult",
     "ToolTier",
+    "append_message",
     "assemble_agent_context",
     "check_user_quota",
+    "confirm_step",
+    "count_messages",
+    "create_agent_run",
+    "create_conversation",
+    "execute_run_steps",
+    "get_conversation",
+    "get_conversation_or_404",
+    "get_run_state",
     "get_tool",
     "is_tool_allowed",
+    "list_conversations",
+    "list_messages",
+    "run_agent_run",
     "run_tool",
+    "set_conversation_status",
+    "set_run_plan",
+    "step_params_digest",
     "summarize_plan",
     "tools_needing_model",
     "tools_requiring_confirmation",

@@ -60,6 +60,12 @@ def sweep_timed_out(session_factory: Callable[[], Any]) -> int:
         n = 0
         for t in tasks:
             try:
+                # Phase 3：等待用户确认的 agent run 不计超时
+                # （用户确认无时限要求，不能按 running 超时失败）。
+                if (t.task_type == "agent_run"
+                        and (t.payload_json or {}).get("run_status")
+                        == "waiting_user"):
+                    continue
                 if t.status == TASK_STATUS_PENDING:
                     repo.set_status(
                         t.id, TASK_STATUS_CANCELLED,
@@ -175,6 +181,12 @@ class _PriorityDispatcher:
                 result = runner(task_id, is_cancelled)
             except _TaskCancelled:
                 repo.set_status(task_id, "cancelled", error="任务被取消")
+                return
+            # Phase 3：agent_run 挂起等待用户确认 —— 保持 running，
+            # 不落终态（确认后由 confirm_step 恢复执行）。
+            if (isinstance(result, dict)
+                    and result.get("run_status") == "waiting_user"):
+                logger.info("任务 %s 等待用户确认，保持 running", task_id)
                 return
             # V3.1 P1-4：写结果前复查——任务可能已被超时扫描/取消标记为终态，
             # 此时不再覆盖为 succeeded（防"超时后又报成功"的误报）

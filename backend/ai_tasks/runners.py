@@ -384,9 +384,20 @@ def run_livestream_regen_segment(task_id: str,
 
 
 # 034：task_type → runner 映射
+# Phase 3：agent_run 转调 services.agent.runner（函数内延迟导入，
+# 避免 ai_tasks ↔ services.agent 顶层循环导入）。
+def run_agent_run(task_id: str, is_cancelled: Callable[[], bool],
+                  payload: dict[str, Any]) -> dict[str, Any]:
+    """Phase 3 agent run 入口：建模为 AITask(task_type="agent_run") 的
+    对话式 Agent 执行。payload 仅用于定位 org；plan 等一律重读 DB。"""
+    from ..services.agent.runner import run_agent_run as _impl
+    return _impl(task_id, is_cancelled, payload)
+
+
 RUNNERS: dict[str, Callable] = {
     "ideas": run_ideas,
     "storyboard": run_storyboard,
     "livestream_script": run_livestream_script,
     "livestream_regen_segment": run_livestream_regen_segment,  # V3.1 §3.3
+    "agent_run": run_agent_run,  # Phase 3
 }
