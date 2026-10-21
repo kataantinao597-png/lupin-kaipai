@@ -129,3 +129,14 @@
 - Phase 5 Gate：**PASS**（进入 Phase 6）
 
 ## Phase 6 — 连续对话与局部修改（子代理执行中）
+
+### Phase 6 完工记录（2026-10-21 23:xx，子代理）
+- 新增：`backend/services/agent/modify.py`（~1190 行）：ModificationPlan（意图解析：网关模型 + Pydantic schema + ≤2 次受控修复，沿用 brief.py 模式；429 穿透硬停）/ analyze_impact（影响 artifact/镜头/检查项，写 agent_steps）/ protection_reason（锁定镜头/人工确认事实/大范围>3 artifact/高风险变化 → waiting_user，确认复用 runner.confirm_step）/ _snapshot_work_version（语义复用 works.py::_snapshot_work 091，service 层镜像实现避反向依赖）/ _compute_data_patch（只写目标 artifact 键，白名单 PATCHABLE_DATA_KEYS）/ 改后重检（时长/可行性/事实引用/风险/交付，调既有 service：rule_scan 分级 + check_fact_grounding + delivery_service）/ 修改摘要 + restore_modification 一键恢复（恢复前先存档，操作可撤销）/ 跨作品拒绝（conversation.work_id 不一致 → EntityNotFound 404，零写操作）
+- 修改：`backend/services/agent/__init__.py`（导出 Phase 6 符号 + 模块说明）
+- 测试：`tests/test_agent_modify_phase6.py`（21 用例）：6 个典型请求固定用例（改风格/改预算人数/换设备镜头/压缩口播30秒/只重做第3镜/解释风险给稳妥文案；每个断言无关 artifact 零变化）+ 保护规则（锁定镜头 waiting_user→确认执行/拒绝取消、人工确认事实、大范围覆盖、高风险拦截；挂起期间作品零变化零快照）+ 版本恢复（一键恢复回修改前，恢复本身可撤销）+ 跨作品/跨组织拒绝 + 解析修复上限/429穿透 + 影响分析单元
+- 修过的真 bug：① waiting_user 路径跳过内容生成导致 _compute_data_patch 报"不支持的操作组合"——改为无论静态保护是否命中都先生成（确认后直接用）；② 高风险预检走 check_risk 工具的确定性层只打"中"、永远判不出"高"——改走 backend/risk.py rule_scan（RISK_WORDS 分级口径）；③ 测试 fake 脑缺 shot contents / dict 未转 ModificationPlan（测试 bug）
+- 工具链教训：muse.write 写长中文 Python 文件会丢块首行缩进（已验证小文件/探针正常，属内容相关损坏），改走 exec+stdin 字节精确写入；`from ...` 后的空格同理被吞一并修复
+- 测试结果：新 21/21；回归 test_agent_orchestrator_phase5.py + test_agent_api_phase4a.py 50/50 全绿；业务库零写入（integrity ok，ai_calls 2197、works 16 与基线一致）
+- 真实冒烟（luna key 经保险箱 surrogate，走 backend/ai/gateway.py；key 未入代码/日志）：意图解析 1 次，模型 gpt-6-luna，耗时 18686ms，attempts=1，prompt 5046 / completion 163 / total 5209 tokens；请求"我没有稳定器，把相关镜头换掉"一次解析正确（target_kind=shot，shot_nos=[2]，instruction 去掉稳定器）；无 429。冒烟脚本 /tmp/smoke_phase6.py（只解析不执行）；首次误连业务库的一次 INSERT 因外键失败回滚、零写入（已验证行数与基线一致）
+- 遗留（非阻塞）：① HTTP 修改入口路由未建（service 层已完备，confirm_modification 为同步语义，HTTP 层如需异步可自行入队；前端 4b 对话流可后续按需接入）；② 生成内容在 waiting_user 前即生成（用户拒绝时多耗一次模型调用，换取确认路径无需模型）；③ rule_scan 的"最"等短词子串匹配是仓库既有口径（误伤 profile 未动）
+- Phase 6 Gate：**PASS**（§十：无关 artifact 零变化 ✓；锁定镜头保持不变 ✓；任务状态和版本正确 ✓；跨作品拒绝 ✓）

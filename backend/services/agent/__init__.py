@@ -9,6 +9,8 @@
 - brief（Phase 5）：自然语言 → 结构化 Brief（§5.1 schema + 透明默认 + 待核实）
 - orchestrator（Phase 5）：一句话生成完整项目（§5.2 11 步编排）
 - quality_gates（Phase 5）：artifact schema / 一致性 / 风险引用 / 持久化门禁
+- modify（Phase 6）：连续对话局部修改（意图解析/影响分析/保护规则/
+  版本快照与一键恢复/patch 语义执行/改后重检/修改摘要）
 """
 # 导入顺序约定（仓库既有坑，非本 Phase 引入）：
 # backend.models 不能作为进程内第一个 backend.* 导入——models.py:35 的
@@ -50,6 +52,21 @@ from .planner import (
     PlanValidation,
     summarize_plan,
     validate_plan,
+)
+from .modify import (
+    MAX_AUTO_ARTIFACTS,
+    MAX_MODIFY_REPAIRS,
+    MAX_VERSIONS_PER_WORK,
+    ModificationImpact,
+    ModificationPlan,
+    ModifyExecutionError,
+    ModifyParseError,
+    analyze_impact,
+    apply_modification,
+    confirm_modification,
+    parse_modification_from_text,
+    protection_reason,
+    restore_modification,
 )
 from .orchestrator import (
     ModelStepsExceeded,
@@ -116,11 +133,18 @@ __all__ = [
     "GateIssue",
     "GateResult",
     "HIGH_RISK_KEYWORDS",
+    "MAX_AUTO_ARTIFACTS",
     "MAX_BRIEF_REPAIRS",
     "MAX_MODEL_STEPS_PER_RUN",
+    "MAX_MODIFY_REPAIRS",
     "MAX_PLAN_STEPS",
+    "MAX_VERSIONS_PER_WORK",
     "MESSAGE_ROLES",
+    "ModificationImpact",
+    "ModificationPlan",
     "ModelStepsExceeded",
+    "ModifyExecutionError",
+    "ModifyParseError",
     "PATCHABLE_DATA_KEYS",
     "QualityReport",
     "RUN_STATUSES",
@@ -144,12 +168,15 @@ __all__ = [
     "ToolParamError",
     "ToolResult",
     "ToolTier",
+    "analyze_impact",
     "append_message",
+    "apply_modification",
     "assemble_agent_context",
     "brief_to_prompt_text",
     "check_consistency",
     "check_fact_grounding",
     "check_user_quota",
+    "confirm_modification",
     "confirm_step",
     "count_messages",
     "create_agent_run",
@@ -165,6 +192,9 @@ __all__ = [
     "merge_brief",
     "merge_brief_dict",
     "parse_brief_from_text",
+    "parse_modification_from_text",
+    "protection_reason",
+    "restore_modification",
     "run_agent_run",
     "run_one_shot_brief",
     "run_quality_gates",
