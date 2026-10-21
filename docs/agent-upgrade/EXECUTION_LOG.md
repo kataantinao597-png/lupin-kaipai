@@ -140,3 +140,12 @@
 - 真实冒烟（luna key 经保险箱 surrogate，走 backend/ai/gateway.py；key 未入代码/日志）：意图解析 1 次，模型 gpt-6-luna，耗时 18686ms，attempts=1，prompt 5046 / completion 163 / total 5209 tokens；请求"我没有稳定器，把相关镜头换掉"一次解析正确（target_kind=shot，shot_nos=[2]，instruction 去掉稳定器）；无 429。冒烟脚本 /tmp/smoke_phase6.py（只解析不执行）；首次误连业务库的一次 INSERT 因外键失败回滚、零写入（已验证行数与基线一致）
 - 遗留（非阻塞）：① HTTP 修改入口路由未建（service 层已完备，confirm_modification 为同步语义，HTTP 层如需异步可自行入队；前端 4b 对话流可后续按需接入）；② 生成内容在 waiting_user 前即生成（用户拒绝时多耗一次模型调用，换取确认路径无需模型）；③ rule_scan 的"最"等短词子串匹配是仓库既有口径（误伤 profile 未动）
 - Phase 6 Gate：**PASS**（§十：无关 artifact 零变化 ✓；锁定镜头保持不变 ✓；任务状态和版本正确 ✓；跨作品拒绝 ✓）
+
+## Phase 6 — 连续对话与局部修改（子代理执行，commit bdc8b39）
+- 新增 backend/services/agent/modify.py（~1190 行）：意图解析（6 类典型请求）/影响分析/保护规则（锁定镜头/确认事实/大改>3 artifact/高风险→waiting_user）/patch 执行（白名单+乐观锁+修改前快照）/改后重检/修改摘要/一键恢复/跨作品拒绝
+- 修真 bug：waiting_user 先生成再挂起；高风险预检改走 risk.py rule_scan 分级口径
+- 测试：新 21/21；回归 71/71 全绿；真实冒烟 gpt-6-luna 意图解析一次成功（5209 tokens，无 429）；业务库零写入（误连 INSERT 外键失败已回滚，行数验证无变化）
+- 遗留：HTTP 修改入口路由未建（service 完备，按需接）；waiting_user 前已生成内容（拒绝时多耗一次调用，语义换取）
+- Phase 6 Gate：**PASS**（进入 Phase 7）
+
+## Phase 7 — 安全/成本/可观测性（子代理执行中）
