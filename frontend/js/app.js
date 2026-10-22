@@ -607,11 +607,12 @@ async function agentSend() {
     product_id: ctx.product_id || null, work_id: ctx.work_id || null,
     shot_id: ctx.shot_id == null ? null : ctx.shot_id };
   try {
-    const body = { org_id: S.org.id, brief };
+    // 一句话生成：调 /one-shot（建 run + 入队异步执行），不再只建不执行
+    const body = { org_id: S.org.id, brief_text: text.slice(0, 2000) };
     if (brief.work_id) body.work_id = brief.work_id;
     // Phase 5 多轮串联：同一会话内后续消息复用 conversation（brief 增量更新）
     if (AGENT.convId) body.conversation_id = AGENT.convId;
-    const r = V1(await ApiClient.post("/api/v1/agent/runs", body));
+    const r = V1(await ApiClient.post("/api/v1/agent/one-shot", body));
     AGENT.taskId = r.task_id;
     AGENT.convId = r.conversation_id || null;
     AGENT.renderedConfirmFor = null; AGENT.renderedResultFor = null; AGENT.pollFails = 0;

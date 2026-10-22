@@ -58,7 +58,7 @@ from .brief import (
     parse_brief_from_text,
 )
 from .context import AgentIdentity
-from .conversations import AgentStep, append_message
+from .conversations import AgentStep, Conversation, append_message
 from .planner import MAX_MODEL_STEPS_PER_RUN, MAX_PLAN_STEPS
 from .quality_gates import (
     check_fact_grounding,
@@ -577,6 +577,13 @@ def run_one_shot_brief(
             db.commit()
             final_work_id = w.id
             summary["work_created"] = True
+            # 回填会话绑定的作品：否则后续 /modify 因 conv.work_id 为空而 404
+            if conv_id:
+                conv = db.query(Conversation).filter_by(
+                    id=conv_id, org_id=org_id).first()
+                if conv is not None and not conv.work_id:
+                    conv.work_id = final_work_id
+                    db.commit()
         # 写前重读拿最新版本号（乐观锁）
         w = WorkRepository(db).get(final_work_id, org_id)
         if w is None:

@@ -459,8 +459,12 @@ class TestConfirm:
 
 class TestCancel:
     def test_cancel_pending(self, api_client):
-        """pending 且未入队的 run：复用 ai-tasks 取消语义——只打取消标记，
-        状态保持 pending（cancelled=False），执行启动时协作式取消。"""
+        """pending 且未入队的 run：取消直接生效（cancelled=True）。
+
+        2026-10-22 验收修复（8b4e79a）：此前 TaskQueue.cancel 对未入
+        dispatcher 的 pending 任务取消无效，只打标记不改状态；现已修复，
+        取消 pending 任务直接落终态。
+        """
         from backend.ai_tasks.repository import AITaskRepository
         from backend.auth.database import get_session_factory
         client, ids, _ = api_client
@@ -470,14 +474,12 @@ class TestCancel:
         task_id = _data(r)["task_id"]
         r = client.post(f"/api/v1/agent/runs/{task_id}/cancel")
         out = _data(r)
-        assert out["cancelled"] is False
-        assert out["status"] == "pending"
-        assert "检查点" in out["message"]
+        assert out["cancelled"] is True
+        assert out["status"] == "cancelled"
         db = get_session_factory()()
         try:
             t = AITaskRepository(db).get(task_id)
-            assert t.cancel_requested is True
-            assert t.status == "pending"
+            assert t.status == "cancelled"
         finally:
             db.close()
 

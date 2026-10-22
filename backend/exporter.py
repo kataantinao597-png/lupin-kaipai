@@ -43,10 +43,13 @@ def _g(d, key, default=""):
 
 
 def _shot_final_seconds(s: dict) -> float:
-    """成片使用时长：优先 final_duration_seconds，缺省回退 duration_seconds（v1 兼容）。"""
+    """成片使用时长：优先 final_duration_seconds，缺省回退 duration_seconds（v1 兼容），
+    再回退 duration_sec（Agent 工具链简化格式）。"""
     v = _g(s, "final_duration_seconds", None)
     if v is None:
-        v = _g(s, "duration_seconds", 0)
+        v = _g(s, "duration_seconds", None)
+    if v is None:
+        v = _g(s, "duration_sec", 0)
     try:
         return float(v)
     except (TypeError, ValueError):
@@ -54,10 +57,13 @@ def _shot_final_seconds(s: dict) -> float:
 
 
 def _shot_record_seconds(s: dict) -> float:
-    """建议录制时长：优先 record_duration_seconds，缺省回退 duration_seconds（v1 兼容）。"""
+    """建议录制时长：优先 record_duration_seconds，缺省回退 duration_seconds（v1 兼容），
+    再回退 duration_sec（Agent 工具链简化格式）。"""
     v = _g(s, "record_duration_seconds", None)
     if v is None:
-        v = _g(s, "duration_seconds", 0)
+        v = _g(s, "duration_seconds", None)
+    if v is None:
+        v = _g(s, "duration_sec", 0)
     try:
         return float(v)
     except (TypeError, ValueError):
@@ -177,7 +183,8 @@ def build_doc(data: dict) -> Document:
     # ---------- 二、分镜表（每镜头独立小节） ----------
     heading(doc, "二、分镜表", level=1)
     for s in shots:
-        num = _g(s, "shot_number", "?")
+        # 兼容 Agent 工具链简化格式（shot_no）
+        num = _g(s, "shot_number", None) or _g(s, "shot_no", "?")
         heading(doc, "镜头 %s" % num, level=2)
 
         _label_para(doc, "镜头目的", _g(s, "shot_purpose"))
@@ -383,7 +390,9 @@ def storyboard_to_srt(storyboard: dict) -> str:
     entries = []
     cursor = 0.0
     for index, shot in enumerate(storyboard.get("shots", []), start=1):
-        duration = float(shot.get("duration_seconds", 0))
+        # 兼容 Agent 工具链简化格式（duration_sec）
+        duration = float(shot.get("duration_seconds",
+                                 shot.get("duration_sec", 0)))
         subtitle = str(shot.get("subtitle", "")).strip()
         if duration <= 0:
             raise ValueError(f"shot {index} duration must be positive")
