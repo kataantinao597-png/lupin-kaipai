@@ -468,6 +468,8 @@ function agentResultHtml(e) {
     ${rows.map(([k, v]) => `<div class="kv"><b>${esc(k)}</b><span>${esc(String(v))}</span></div>`).join("")}
     <div class="row">
       ${hasJump ? `<button class="btn primary sm" data-act="goto-result">去继续编辑 →</button>` : ""}
+      <button class="btn ghost sm" data-act="copy-result">复制结果</button>
+      <button class="btn ghost sm" data-act="regen">重新生成</button>
       <button class="btn ghost sm" data-act="new-run">开始新的需求</button>
     </div></div></div>`;
 }
@@ -659,6 +661,31 @@ function agentRetry() {
   renderAgentPill("idle"); setAgentButtons("idle");
   agentSend();
 }
+function agentCopyResult(btn) {
+  const card = btn ? btn.closest(".agent-result") : null;
+  if (!card) { toast("没有可复制的内容"); return; }
+  // 取卡片纯文本（去掉按钮行）
+  const clone = card.cloneNode(true);
+  clone.querySelectorAll(".row").forEach((r) => r.remove());
+  const text = (clone.innerText || "").trim();
+  if (!text) { toast("没有可复制的内容"); return; }
+  const done = () => toast("结果已复制");
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); done(); }
+  catch (e) { toast("复制失败，请手动选择复制"); }
+  document.body.removeChild(ta);
+}
 async function agentGotoResult() {
   const st = AGENT.lastState || {};
   const ctx = AGENT.ctx || {};
@@ -758,6 +785,8 @@ function initAgentBindings() {
       el.textContent = show ? "收起错误详情" : "查看错误详情";
     }
     else if (act === "retry") agentRetry();
+    else if (act === "regen") agentRetry();
+    else if (act === "copy-result") agentCopyResult(el);
     else if (act === "goto-result") agentGotoResult();
     else if (act === "new-run") { $("agent_input").value = ""; $("agent_input").focus(); }
   });
