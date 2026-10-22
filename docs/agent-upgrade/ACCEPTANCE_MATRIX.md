@@ -42,3 +42,62 @@
 - 评测发现 2 个真实缺陷已修复（快照淘汰方向、高风险关键词漏检），均有回归测试锁定。
 - WARN 项：全量回归时既有噪音测试往业务库写 16 行 ai_calls（已知问题，非本次引入；Phase 8 自身测试零写入）。
 - 遗留：评测为 mock 驱动（非生产流量）；用户级每日限额仍延后（Phase 7 已登记）；modify 未暴露 HTTP 路由，前端无新增用例。
+
+
+---
+
+## AI.md 端到端验收（2026-10-22，真机真模型）
+
+> 按 `~/workspace/user/files/AI.md` 第 0–6 步执行。
+> 环境：scratch 库 `~/workspace/accept-work/lupin_accept.db`（WAL），后端 127.0.0.1:8933，
+> 模型 deepkey luna `gpt-6-luna`（保险箱 surrogate，用户授权本次验收使用），5 次真实调用无 429。
+> 基线 `feat/agent-workspace-commercial` @ `961f501` + 验收修复 `8b4e79a`。
+> 业务库 `backend/data/lupin.db` 只读，验收前后 ai_calls 均为 2197 行，零写入。
+
+### 第 0 步：准备测试环境 — PASS
+
+测试 org `acceptorg…000001` + editor/admin/隔离用户；真实产品章丘大葱（ZH-DC-2026，业务库只读复制）；
+前端 /app 加载，左侧 12 个入口齐全（截图 `~/workspace/accept-shots/stage1-agent.png`）。
+
+### 第 1 步：一句话生成完整项目
+
+| 检查项 | 状态 | 证据 |
+|---|---|---|
+| 1A 任务计划来自真实后端（UI 路径） | **FAIL** | 前端 `agentSend()` 只调 POST /runs 建任务不触发执行；run `fe2b224f…` 卡死 pending/queued。**缺口**：前端未接入 `/one-shot`（后端 2bd2fd9 已补路由） |
+| 1A（API 路径） | PASS | POST /api/v1/agent/one-shot → task `96703e6a…`；11 步落盘 agent_steps 全 succeeded，run completed |
+| 1B 真实业务工具被调用 | PASS | parse_brief/query_products/query_facts/generate_strategy/generate_ideas/generate_storyboard/shooting_checklist/check_risk/generate_platform_copy/check_delivery/patch_work；日志无密钥 |
+
+### 第 2 步：成果完整性 — PASS
+
+作品 `2dc2db9b…`「章丘大葱·AI 创作」v2：strategy/creative/storyboard(5 镜)/shooting_list/risk_report(passed)/copy 齐全；
+约束一致（500 元/2 人/手机/无稳定器）；未核实事项标待核实 9 项，无编造。
+
+### 第 3 步：保存与刷新恢复 — PASS
+
+GET /api/v1/works/{id} 重读：title/version=2，全量 data keys 一致。
+
+### 第 4 步：只改第 3 镜 — PASS
+
+POST /api/v1/agent/modify 200；impacted_shots=[3]；shot1/2/4/5 逐字不变；version 2→3；rechecks_passed=true。
+注：one-shot 未回填 conversation.work_id 致初调 404，测试库手动绑定后通过（生产缺口，建议修复）。
+
+### 第 5 步：导出与回归 — WARN
+
+DOCX 可导出（38KB，22 段+1 表）但「成片总时长 0s」「镜None」— 导出模板与 storyboard 结构映射错位。
+原入口回归：产品资料 200、作品列表正常、左侧入口无覆盖。
+
+### 第 6 步：异常 — PASS
+
+幂等（同 key 同 task_id）、越权（跨组织 404）、取消（pending→cancelled，修复后）、日志无密钥均通过。
+
+### 验收修复（commit 8b4e79a，3 项真实缺陷）
+
+1. `run_one_shot_brief` 复用已 running 任务时重复置状态 → 非法转换 failed。修：仅 pending 才置 running。
+2. `_parallel_read_steps` 误把 sessionmaker 当 Session → 11 步中断。修：lambda 包一层拿 Session。
+3. `TaskQueue.cancel` 对未入队 pending 任务无效。修：pending 直接置 cancelled。
+回归：orchestrator_phase5 27/27，e2e_phase8 8/8。
+
+### 结论：FAIL
+
+UI 路径「AI 创作助手输入框发需求」建出的 run 永不执行——阻断用户使用的核心链路缺陷。
+API 路径全通。待前端接入 `/one-shot` 后重验第 1 步 UI 项即可转 PASS。
