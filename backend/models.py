@@ -669,6 +669,23 @@ class AICall(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
+class PosterImageUsage(Base):
+    """0022：海报 AI 生图用量台账。成功调用一次记一条。
+
+    普通用户每天限 5 次（admin/owner 豁免），按 user_id + created_at 当天计数。
+    """
+    __tablename__ = "poster_image_usage"
+    __table_args__ = (
+        Index("ix_poster_usage_user_created", "user_id", "created_at"),
+        Index("ix_poster_usage_org", "org_id"),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    user_id = Column(String(32), nullable=False)
+    org_id = Column(String(32), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
 class ModelPrice(Base):
     """132：模型价格表。每 1k token 的输入/输出价格，用于成本估算。
 

@@ -3378,16 +3378,28 @@ Object.assign(POSTER_TPLS, {
 
 /* ---------- #5 海报 AI 生图 ---------- */
 let IMG_CONFIGURED = null;
+let IMG_QUOTA = null;
 async function checkImageStatus() {
   try {
     const d = V1(await ApiClient.get("/api/v1/poster/image/status"));
     IMG_CONFIGURED = !!(d && d.configured);
   } catch (e) { IMG_CONFIGURED = false; }
+  IMG_QUOTA = null;
+  if (IMG_CONFIGURED && S.org) {
+    try {
+      IMG_QUOTA = V1(await ApiClient.get(
+        "/api/v1/poster/image/quota?org_id=" + encodeURIComponent(S.org.id)));
+    } catch (e) { /* 额度查询失败不挡生图，后端会再校验 */ }
+  }
   const btn = $("btn_gen_poster"), hint = $("ai_img_status");
   if (!btn || !hint) return;
   if (IMG_CONFIGURED) {
     btn.disabled = false; btn.classList.remove("qa-disabled");
-    hint.textContent = "AI 配图服务可用：输入提示词生成海报背景图。";
+    let t = "AI 配图服务可用：输入提示词生成海报背景图。";
+    if (IMG_QUOTA && IMG_QUOTA.limited) {
+      t += `（今日剩余 ${IMG_QUOTA.remaining} 次）`;
+    }
+    hint.textContent = t;
   } else {
     btn.disabled = true; btn.classList.add("qa-disabled");
     hint.textContent = "未配置图片生成服务（需配置 LUPIN_IMAGE_API_KEY），可先手动排版导出 PNG。";
@@ -3414,7 +3426,15 @@ async function genPosterImage() {
       toast("已插入为海报背景");
     };
     toast("配图已生成，可插入为海报背景");
-  } catch (e) { toast(e.message || "生成失败"); }
+    IMG_QUOTA = IMG_QUOTA && IMG_QUOTA.limited
+      ? { ...IMG_QUOTA, remaining: Math.max(0, IMG_QUOTA.remaining - 1), used: IMG_QUOTA.used + 1 }
+      : IMG_QUOTA;
+    checkImageStatus();
+  } catch (e) {
+    const msg = String(e.message || "生成失败");
+    toast(e.status === 429 || /已用完/.test(msg)
+      ? "今日海报生成次数已用完（普通用户每天 5 次），明天再来" : msg);
+  }
   finally { aiLoadingDone(); }
 }
 function drawCoverImage(ctx, dataUrl, W, H) {

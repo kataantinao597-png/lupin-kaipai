@@ -1,6 +1,7 @@
 """海报 AI 生图 API（v4 海报制作「AI 生成海报」）。
 
 - GET  /api/v1/poster/image/status   图片生成服务是否已配置（前端据此置灰按钮）
+- GET  /api/v1/poster/image/quota    当前用户今日生图剩余额度
 - POST /api/v1/poster/image          转发 OpenAI 兼容的 /v1/images/generations
 
 配置（环境变量）：
@@ -9,15 +10,19 @@
 - LUPIN_IMAGE_MODEL     默认 gpt-image-1
 - LUPIN_HTTP_PROXY      出站代理（本地开发经 hatch-egress-proxy 时设置）
 
+限额：普通用户每天 5 次（admin/owner 豁免），超限 429；用量记 poster_image_usage 表。
+
 安全：base URL 走 SSRF 校验；key 只走服务端，不落库、不打日志。
 """
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ...auth.deps import get_current_user
@@ -26,13 +31,17 @@ from ...auth.database import get_db
 from ...core import error_codes
 from ...core.exceptions import BusinessError
 from ...core.response import ApiResponse, success
-from ...rbac import get_membership
+from ...models import PosterImageUsage
+from ...rbac import ROLE_ADMIN, ROLE_RANK, get_membership
 from ...security.ssrf import validate_outbound_url, SSRFError
 
 router = APIRouter(prefix="/poster", tags=["v1-poster-image"])
 
 DEFAULT_BASE = "https://api.openai.com"
 REQUEST_TIMEOUT = 120.0
+
+#: 普通用户海报生图每日限额（2026-10-22 用户拍板）；admin/owner 豁免
+POSTER_IMAGE_DAILY_LIMIT = 5
 
 
 def _image_conf() -> tuple[str, str, str]:
@@ -44,11 +53,59 @@ def _image_conf() -> tuple[str, str, str]:
     return base, key, model
 
 
+def _is_quota_exempt(role: Optional[str]) -> bool:
+    """admin/owner 豁免每日限额。"""
+    return bool(role) and ROLE_RANK.get(role, 0) >= ROLE_RANK[ROLE_ADMIN]
+
+
+def _today_start_utc() -> datetime:
+    now = datetime.now(timezone.utc)
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def get_poster_quota(db: Session, user_id: str, org_id: str,
+                     role: Optional[str]) -> dict:
+    """当前用户今日海报生图额度。返回 {limited, limit, used, remaining}。"""
+    if _is_quota_exempt(role):
+        return {"limited": False, "limit": None, "used": None,
+                "remaining": None}
+    used = (db.query(func.count(PosterImageUsage.id))
+              .filter(PosterImageUsage.user_id == user_id,
+                      PosterImageUsage.created_at >= _today_start_utc())
+              .scalar() or 0)
+    return {"limited": True, "limit": POSTER_IMAGE_DAILY_LIMIT,
+            "used": used,
+            "remaining": max(0, POSTER_IMAGE_DAILY_LIMIT - used)}
+
+
+def _check_poster_quota(db: Session, user_id: str, org_id: str,
+                        role: Optional[str]) -> None:
+    """超限则抛 429（AI_RATE_LIMITED）。豁免角色直接过。"""
+    q = get_poster_quota(db, user_id, org_id, role)
+    if q["limited"] and q["remaining"] <= 0:
+        raise BusinessError(
+            f"今日海报生成次数已用完（普通用户每天 {POSTER_IMAGE_DAILY_LIMIT} 次）",
+            code=error_codes.AI_RATE_LIMITED,
+            http_status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+
 @router.get("/image/status", response_model=ApiResponse[dict])
 def image_status(user: User = Depends(get_current_user)):
     """图片生成服务是否已配置。未配置 → 前端置灰按钮。"""
     base, key, _model = _image_conf()
     return success({"configured": bool(key), "base": base})
+
+
+@router.get("/image/quota", response_model=ApiResponse[dict])
+def image_quota(org_id: str = Query(...),
+                user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    """当前用户今日海报生图剩余额度（前端展示用）。"""
+    ms = get_membership(db, user.id, org_id)
+    if ms is None:
+        raise BusinessError("组织不存在",
+                            code=error_codes.ORG_NOT_FOUND, http_status=404)
+    return success(get_poster_quota(db, user.id, org_id, ms.role))
 
 
 class ImageGenReq(BaseModel):
@@ -122,7 +179,11 @@ def generate_poster_image(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """AI 生成海报配图。未配置 key 时 503（前端置灰，不伪造）。"""
+    """AI 生成海报配图。
+
+    未配置 key 时 503（前端置灰，不伪造）；普通用户每天限 5 次，超限 429；
+    admin/owner 豁免。成功一次记一条用量。
+    """
     base, key, model = _image_conf()
     if not key:
         raise BusinessError("未配置图片生成服务（LUPIN_IMAGE_API_KEY）",
@@ -132,7 +193,10 @@ def generate_poster_image(
     if ms is None:
         raise BusinessError("组织不存在",
                             code=error_codes.ORG_NOT_FOUND, http_status=404)
+    _check_poster_quota(db, user.id, req.org_id, ms.role)
     first = _call_image_api(base, key, model, req.prompt.strip(), req.size)
+    db.add(PosterImageUsage(user_id=user.id, org_id=req.org_id))
+    db.commit()
     return success(ImageGenOut(
         image_b64=first.get("b64_json"),
         image_url=first.get("url"),
