@@ -8,6 +8,9 @@
 - LUPIN_IMAGE_API_BASE  默认 https://api.openai.com
 - LUPIN_IMAGE_API_KEY   未配置时接口 503，前端按钮置灰并提示，绝不伪造图片
 - LUPIN_IMAGE_MODEL     默认 gpt-image-1
+- LUPIN_IMAGE_API_BASE_FALLBACK / LUPIN_IMAGE_API_KEY_FALLBACK /
+  LUPIN_IMAGE_MODEL_FALLBACK  备选通道（2026-10-22 用户拍板：主 luna 超时/429/5xx/
+  连接失败时自动切备选，不配备选 key 则无备选）
 - LUPIN_HTTP_PROXY      出站代理（本地开发经 hatch-egress-proxy 时设置）
 
 限额：普通用户每天 5 次（admin/owner 豁免），超限 429；用量记 poster_image_usage 表。
@@ -16,6 +19,7 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Optional
@@ -36,21 +40,40 @@ from ...rbac import ROLE_ADMIN, ROLE_RANK, get_membership
 from ...security.ssrf import validate_outbound_url, SSRFError
 
 router = APIRouter(prefix="/poster", tags=["v1-poster-image"])
+logger = logging.getLogger(__name__)
 
 DEFAULT_BASE = "https://api.openai.com"
+DEFAULT_MODEL = "gpt-image-1"
+DEFAULT_FALLBACK_MODEL = "gpt-image-2"
 REQUEST_TIMEOUT = 120.0
 
 #: 普通用户海报生图每日限额（2026-10-22 用户拍板）；admin/owner 豁免
 POSTER_IMAGE_DAILY_LIMIT = 5
 
 
+class _RetryableUpstreamError(Exception):
+    """上游可重试错误（超时/连接失败/429/5xx）：触发备选通道。"""
+
+
 def _image_conf() -> tuple[str, str, str]:
     base = os.environ.get("LUPIN_IMAGE_API_BASE", DEFAULT_BASE).strip().rstrip("/") \
         or DEFAULT_BASE
     key = os.environ.get("LUPIN_IMAGE_API_KEY", "").strip()
-    model = os.environ.get("LUPIN_IMAGE_MODEL", "gpt-image-1").strip() \
-        or "gpt-image-1"
+    model = os.environ.get("LUPIN_IMAGE_MODEL", DEFAULT_MODEL).strip() \
+        or DEFAULT_MODEL
     return base, key, model
+
+
+def _image_fallback_conf() -> tuple[str, str, str]:
+    """备选通道配置。未配 LUPIN_IMAGE_API_KEY_FALLBACK 时 key 为空 = 无备选。"""
+    base, _key, _model = _image_conf()
+    fb_base = os.environ.get("LUPIN_IMAGE_API_BASE_FALLBACK",
+                             "").strip().rstrip("/") or base
+    fb_key = os.environ.get("LUPIN_IMAGE_API_KEY_FALLBACK", "").strip()
+    fb_model = os.environ.get("LUPIN_IMAGE_MODEL_FALLBACK",
+                              DEFAULT_FALLBACK_MODEL).strip() \
+        or DEFAULT_FALLBACK_MODEL
+    return fb_base, fb_key, fb_model
 
 
 def _is_quota_exempt(role: Optional[str]) -> bool:
@@ -93,7 +116,9 @@ def _check_poster_quota(db: Session, user_id: str, org_id: str,
 def image_status(user: User = Depends(get_current_user)):
     """图片生成服务是否已配置。未配置 → 前端置灰按钮。"""
     base, key, _model = _image_conf()
-    return success({"configured": bool(key), "base": base})
+    _fb_base, fb_key, _fb_model = _image_fallback_conf()
+    return success({"configured": bool(key), "base": base,
+                    "fallback_configured": bool(fb_key)})
 
 
 @router.get("/image/quota", response_model=ApiResponse[dict])
@@ -121,9 +146,14 @@ class ImageGenOut(BaseModel):
     mime: str = "image/png"
 
 
-def _call_image_api(base: str, key: str, model: str,
-                    prompt: str, size: str) -> dict:
-    """调用 OpenAI 兼容 images 接口。返回原始 data[0]。"""
+def _call_image_api_once(base: str, key: str, model: str,
+                         prompt: str, size: str) -> dict:
+    """单通道调用 OpenAI 兼容 images 接口。返回原始 data[0]。
+
+    可重试类失败（超时/连接失败/429/5xx）抛 _RetryableUpstreamError（外层切备选）；
+    400（提示词等客户端问题）/401/403（key 配置问题）/SSRF 校验失败直接抛
+    BusinessError，不切备选——配置错误不应被备选掩盖。
+    """
     import httpx
     proxy = os.environ.get("LUPIN_HTTP_PROXY", "").strip() or None
     # base 可能带 /v1（如 https://deepkey.top/v1）也可能不带（如 https://api.openai.com），
@@ -150,11 +180,12 @@ def _call_image_api(base: str, key: str, model: str,
                       "n": 1, "response_format": "b64_json"},
             )
     except Exception as e:  # 连接/超时/DNS 等
-        raise BusinessError(f"图片服务调用失败：{type(e).__name__}",
-                            code=error_codes.AI_PROVIDER_ERROR,
-                            http_status=502) from e
-    if r.status_code >= 400:
+        raise _RetryableUpstreamError(
+            f"图片服务调用失败：{type(e).__name__}") from e
+    if r.status_code == 429 or r.status_code >= 500:
         # 不回传上游原文（可能含敏感信息），只给状态码
+        raise _RetryableUpstreamError(f"图片服务返回 {r.status_code}")
+    if r.status_code >= 400:
         raise BusinessError(f"图片服务返回 {r.status_code}，请检查配置",
                             code=error_codes.AI_PROVIDER_ERROR,
                             http_status=502)
@@ -162,15 +193,43 @@ def _call_image_api(base: str, key: str, model: str,
         data = r.json().get("data", [])
         first = data[0] if data else {}
     except Exception as e:
-        raise BusinessError("图片服务返回无法解析",
-                            code=error_codes.AI_PROVIDER_ERROR,
-                            http_status=502) from e
+        raise _RetryableUpstreamError("图片服务返回无法解析") from e
     if not isinstance(first, dict) or \
             not (first.get("b64_json") or first.get("url")):
-        raise BusinessError("图片服务未返回图片数据",
-                            code=error_codes.AI_PROVIDER_ERROR,
-                            http_status=502)
+        raise _RetryableUpstreamError("图片服务未返回图片数据")
     return first
+
+
+def _call_image_api(prompt: str, size: str) -> dict:
+    """主通道失败（超时/429/5xx/连接失败）时自动切备选通道。
+
+    未配主 key 时 503；主备都失败时抛备选通道的错误（BusinessError）。
+    """
+    base, key, model = _image_conf()
+    if not key:
+        raise BusinessError("未配置图片生成服务（LUPIN_IMAGE_API_KEY）",
+                            code=error_codes.SERVICE_UNAVAILABLE,
+                            http_status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    try:
+        return _call_image_api_once(base, key, model, prompt, size)
+    except _RetryableUpstreamError as primary_err:
+        fb_base, fb_key, fb_model = _image_fallback_conf()
+        if not fb_key:
+            raise BusinessError(f"图片服务调用失败：{primary_err}",
+                                code=error_codes.AI_PROVIDER_ERROR,
+                                http_status=502) from primary_err
+        # key 不打日志，只记通道名
+        logger.warning("海报生图主通道失败（%s），自动切备选通道",
+                       primary_err)
+        try:
+            first = _call_image_api_once(fb_base, fb_key, fb_model,
+                                         prompt, size)
+        except _RetryableUpstreamError as fb_err:
+            raise BusinessError(f"图片服务主备通道均失败：{fb_err}",
+                                code=error_codes.AI_PROVIDER_ERROR,
+                                http_status=502) from fb_err
+        logger.info("海报生图已走备选通道出图")
+        return first
 
 
 @router.post("/image", response_model=ApiResponse[ImageGenOut])
@@ -183,18 +242,15 @@ def generate_poster_image(
 
     未配置 key 时 503（前端置灰，不伪造）；普通用户每天限 5 次，超限 429；
     admin/owner 豁免。成功一次记一条用量。
+    主通道（LUPIN_IMAGE_API_KEY）超时/429/5xx/连接失败时自动切备选通道
+    （LUPIN_IMAGE_API_KEY_FALLBACK）。
     """
-    base, key, model = _image_conf()
-    if not key:
-        raise BusinessError("未配置图片生成服务（LUPIN_IMAGE_API_KEY）",
-                            code=error_codes.SERVICE_UNAVAILABLE,
-                            http_status=status.HTTP_503_SERVICE_UNAVAILABLE)
     ms = get_membership(db, user.id, req.org_id)
     if ms is None:
         raise BusinessError("组织不存在",
                             code=error_codes.ORG_NOT_FOUND, http_status=404)
     _check_poster_quota(db, user.id, req.org_id, ms.role)
-    first = _call_image_api(base, key, model, req.prompt.strip(), req.size)
+    first = _call_image_api(req.prompt.strip(), req.size)
     db.add(PosterImageUsage(user_id=user.id, org_id=req.org_id))
     db.commit()
     return success(ImageGenOut(
