@@ -304,7 +304,9 @@ def run_one_shot_brief(
     "quality",...}。业务库只读 + 经 adapter 的受控写；测试一律用 scratch 库。
     """
     from ...auth.database import get_session_factory as _gsf
-    sf = session_factory or _gsf
+    # _Ctx 要的是 Callable[[], Session]；get_session_factory 本体返回 sessionmaker，
+    # 需再包一层才能拿到 Session
+    sf = session_factory or (lambda: _gsf()())
 
     user_id = user if isinstance(user, str) else (
         getattr(user, "user_id", None) or getattr(user, "id", None))
@@ -324,7 +326,10 @@ def run_one_shot_brief(
             brief_json={"text": (brief_text or "")[:2000]},
             conversation_id=conversation_id)
     repo = AITaskRepository(db)
-    repo.set_status(task_id, "running")
+    # 队列 _execute 已置 running（/one-shot 入队路径）；直接调用时才需 pending→running
+    _cur = repo.get(task_id)
+    if _cur is not None and _cur.status == "pending":
+        repo.set_status(task_id, "running")
     conv_id = (repo.get(task_id).payload_json or {}).get("conversation_id")
 
     caller = _ModelCaller(task_id, org_id, model=model, fake=ai_generate)

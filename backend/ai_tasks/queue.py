@@ -299,8 +299,8 @@ class TaskQueue:
             if task.status in ("succeeded", "failed", "cancelled"):
                 return task.status  # 幂等
             dispatcher = get_dispatcher()
-            if task.status == "pending" and dispatcher.is_pending(task_id):
-                # 排队中：从待执行集合移除，工作线程取到时会跳过
+            if task.status == "pending":
+                # 排队中或从未入队：直接置 cancelled（dispatcher 中有则同步移除）
                 with dispatcher._lock:
                     dispatcher._pending.discard(task_id)
                     dispatcher._jobs.pop(task_id, None)
