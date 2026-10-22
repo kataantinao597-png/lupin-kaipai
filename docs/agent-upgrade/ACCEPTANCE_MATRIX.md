@@ -101,3 +101,16 @@ DOCX 可导出（38KB，22 段+1 表）但「成片总时长 0s」「镜None」�
 
 UI 路径「AI 创作助手输入框发需求」建出的 run 永不执行——阻断用户使用的核心链路缺陷。
 API 路径全通。待前端接入 `/one-shot` 后重验第 1 步 UI 项即可转 PASS。
+
+### 验收后修复（commit be0b7d6，2026-10-22，用户指令"修复完善"）
+
+1. **前端接入 `/one-shot`**（FAIL→PASS）：`agentSend()` 改调 `POST /api/v1/agent/one-shot`（建 run + 入队异步执行），替代原先只建不执行的 `POST /api/v1/agent/runs`。node --check 语法通过。
+2. **`/modify` 首调 404**：`run_one_shot_brief` 步骤 10 新建作品后回填 `conversation.work_id`，后续局部修改不再因会话未绑定作品而 404。
+3. **DOCX 导出映射错位**（WARN→已修）：`backend/exporter.py` 兼容 Agent 工具链简化分镜格式——`shot_no`→镜号、`duration_sec`→时长（含 `storyboard_to_srt`）。不改 orchestrator 产物格式（quality_gates 仍要简化格式）。
+4. **测试跟随**：`test_cancel_pending` 按 8b4e79a 新行为更新断言（pending 取消直接落终态）。
+
+回归：e2e_phase8 8/8、agent_api_phase4a 全过；`test_srt_route` 失败为基线 6 个陈旧用例之一（改动前即失败），非本次引入。
+
+### 结论：PASS（待用户确认部署）
+
+UI 核心链路已接通。部署仍按用户要求排除，由用户转交其他 agent 执行。
