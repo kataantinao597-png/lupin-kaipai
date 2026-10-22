@@ -51,6 +51,8 @@ from ...services.agent import (
     create_agent_run,
     get_run_state,
     list_messages,
+    pause_run,
+    resume_run,
     set_run_plan,
     summarize_plan,
 )
@@ -318,6 +320,50 @@ def cancel_run(task_id: str,
         "message": "已取消" if final_status == "cancelled"
                    else "取消请求已提交，运行中的任务将在检查点停止",
     })
+
+
+@router.post("/runs/{task_id}/pause", response_model=ApiResponse[dict])
+def pause(task_id: str,
+          user: User = Depends(get_current_user),
+          db: Session = Depends(get_db)):
+    """暂停 run：只置 paused 标记（幂等），runner 在步骤边界协作式挂起。
+
+    - 终态任务或 run_status 非 queued/running/paused → 400；
+    - 暂停是协作式的：正在执行的步骤会跑完，在下个步骤边界挂起。
+    """
+    task = _get_agent_task_or_404(db, task_id, user.id)
+    try:
+        out = pause_run(db, task_id, org_id=task.org_id)
+    except EntityNotFound as e:
+        raise _entity_404(e) from e
+    except ValueError as e:
+        raise BusinessError(str(e), code=error_codes.INVALID_PARAM,
+                            http_status=400) from e
+    return success(dict(out))
+
+
+@router.post("/runs/{task_id}/resume", response_model=ApiResponse[dict])
+def resume(task_id: str,
+           user: User = Depends(get_current_user),
+           db: Session = Depends(get_db)):
+    """继续 run：清 paused 标记。
+
+    - 未暂停 → 400；
+    - runner 已在边界挂起（run_status=paused）→ 重新入队恢复执行；
+    - worker 还没走到暂停边界 → 只清标记，worker 自然继续（不重入队，
+      避免双 worker 并发）。
+    """
+    task = _get_agent_task_or_404(db, task_id, user.id)
+    try:
+        out = resume_run(db, task_id, org_id=task.org_id)
+    except EntityNotFound as e:
+        raise _entity_404(e) from e
+    except ValueError as e:
+        raise BusinessError(str(e), code=error_codes.INVALID_PARAM,
+                            http_status=400) from e
+    if out.get("requeue"):
+        _enqueue_run_resume(task)
+    return success(dict(out))
 
 
 # ---------------------------------------------------------------------------

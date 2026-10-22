@@ -366,7 +366,7 @@ const AGENT = {
 const AGENT_TERMINAL = ["completed", "partial", "failed", "cancelled"];
 const AGENT_STATE_META = {
   idle:["空闲","gray"], sending:["发送中","blue"], queued:["排队中","amber"],
-  running:["运行中","blue"], waiting_user:["等待确认","amber"], partial:["部分完成","amber"],
+  running:["运行中","blue"], waiting_user:["等待确认","amber"], paused:["已暂停","amber"], partial:["部分完成","amber"],
   failed:["失败","red"], cancelled:["已取消","gray"], completed:["已完成","green"], saved:["已保存","green"],
 };
 const AGENT_STEP_META = {
@@ -375,7 +375,7 @@ const AGENT_STEP_META = {
 };
 
 function agentNormStatus(st) {
-  const m = { queued:"queued", running:"running", waiting_user:"waiting_user", partial:"partial",
+  const m = { queued:"queued", running:"running", waiting_user:"waiting_user", paused:"paused", partial:"partial",
               completed:"completed", failed:"failed", cancelled:"cancelled" };
   if (st && m[st.run_status]) return m[st.run_status];
   const ts = st && st.status;
@@ -398,11 +398,16 @@ function renderAgentPill(disp) {
   if (el) { el.textContent = meta[0]; el.className = "pill " + meta[1]; }
 }
 function setAgentButtons(disp) {
-  const cancellable = ["queued", "running", "waiting_user"].includes(disp);
+  const cancellable = ["queued", "running", "waiting_user", "paused"].includes(disp);
   const retryable = ["failed", "cancelled"].includes(disp);
+  const pausable = ["queued", "running"].includes(disp);
+  const resumable = disp === "paused";
   const bc = $("btn_agent_cancel"), br = $("btn_agent_retry");
+  const bp = $("btn_agent_pause"), brs = $("btn_agent_resume");
   if (bc) bc.style.display = cancellable ? "" : "none";
   if (br) br.style.display = retryable ? "" : "none";
+  if (bp) bp.style.display = pausable ? "" : "none";
+  if (brs) brs.style.display = resumable ? "" : "none";
 }
 
 /* ---------- 对话区 ---------- */
@@ -642,6 +647,25 @@ async function agentConfirm(stepIdx, approved, btn) {
     if (btn) btn.disabled = false;
   }
 }
+async function agentPause() {
+  if (!AGENT.taskId) return;
+  try {
+    await ApiClient.post("/api/v1/agent/runs/" + encodeURIComponent(AGENT.taskId) + "/pause", {});
+    toast("已请求暂停，当前步骤完成后挂起");
+    agentLog("sys", { text: "已请求暂停…", live: true, id: "run-lifecycle" });
+    agentPollTick();
+  } catch (e) { toast("暂停失败：" + (e.message || e)); }
+}
+async function agentResume() {
+  if (!AGENT.taskId) return;
+  try {
+    await ApiClient.post("/api/v1/agent/runs/" + encodeURIComponent(AGENT.taskId) + "/resume", {});
+    toast("已继续执行");
+    agentLog("sys", { text: "已继续，恢复执行…", live: true, id: "run-lifecycle" });
+    AGENT.state = "running"; renderAgentPill("running"); setAgentButtons("running");
+    if (!AGENT.timer) startAgentPoll(); else agentPollTick();
+  } catch (e) { toast("继续失败：" + (e.message || e)); }
+}
 async function agentCancel() {
   if (!AGENT.taskId) return;
   try {
@@ -745,6 +769,8 @@ function initAgentBindings() {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); agentSend(); }
   });
   $("btn_agent_cancel").addEventListener("click", agentCancel);
+  $("btn_agent_pause").addEventListener("click", agentPause);
+  $("btn_agent_resume").addEventListener("click", agentResume);
   $("btn_agent_retry").addEventListener("click", agentRetry);
   $("btn_agent_plan_toggle").addEventListener("click", () => {
     const plan = $("agent_plan");

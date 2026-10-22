@@ -14,7 +14,7 @@ payload_json 布局::
     {
       "brief": {...},            # 用户目标结构化摘要（脱敏）
       "plan": {"steps": [...]},  # validate_plan 校验过的原始步骤
-      "run_status": "queued|running|waiting_user|partial|completed|failed|cancelled",
+      "run_status": "queued|running|waiting_user|paused|partial|completed|failed|cancelled",
       "work_id": ...,
       "conversation_id": ...,
       "pending_step": {"step_idx":..,"tool_id":..,"params_digest":..} | None,
@@ -87,12 +87,14 @@ TASK_TYPE_AGENT_RUN = "agent_run"
 RUN_STATUS_QUEUED = "queued"
 RUN_STATUS_RUNNING = "running"
 RUN_STATUS_WAITING_USER = "waiting_user"
+RUN_STATUS_PAUSED = "paused"
 RUN_STATUS_PARTIAL = "partial"
 RUN_STATUS_COMPLETED = "completed"
 RUN_STATUS_FAILED = "failed"
 RUN_STATUS_CANCELLED = "cancelled"
 RUN_STATUSES = (
     RUN_STATUS_QUEUED, RUN_STATUS_RUNNING, RUN_STATUS_WAITING_USER,
+    RUN_STATUS_PAUSED,
     RUN_STATUS_PARTIAL, RUN_STATUS_COMPLETED, RUN_STATUS_FAILED,
     RUN_STATUS_CANCELLED,
 )
@@ -401,6 +403,26 @@ def execute_run_steps(db: Session, task_id: str,
                                 "task_id": task_id})
             raise _TaskCancelled()
 
+    def _check_pause() -> Optional[dict[str, Any]]:
+        """用户暂停检查（步骤边界协作式）。
+
+        用 fresh 读 + fresh 写，避免覆盖 pause 接口并发写入的 paused 标记。
+        命中则落 run_status=paused 并返回挂起信号（queue 保持 running 不落终态，
+        与 waiting_user 同机制；resume 时由路由层重新入队恢复）。
+        """
+        fresh = _load_task_fresh(db, task_id)
+        p = dict(fresh.payload_json or {})
+        if not p.get("paused"):
+            return None
+        p["run_status"] = RUN_STATUS_PAUSED
+        repo.update_payload(task_id, p)
+        if conv_id:
+            append_message(db, conv_id, org_id, "assistant",
+                           {"type": "run_paused", "task_id": task_id})
+        logger.info("agent_run %s 用户暂停，在步骤边界挂起", task_id)
+        return {"run_status": RUN_STATUS_PAUSED, "task_id": task_id,
+                "note": "paused_by_user"}
+
     def _land_time_budget_partial() -> dict[str, Any]:
         """总执行时间超限：保留已有成果进 partial，不再启动新步骤。"""
         fresh = _load_task_fresh(db, task_id)
@@ -432,6 +454,9 @@ def execute_run_steps(db: Session, task_id: str,
         optional = bool(raw.get("optional", False))
         digest = step_params_digest(s.params)
         _check_cancel()
+        _suspended = _check_pause()
+        if _suspended is not None:
+            return _suspended
 
         # Phase 7：总执行时间上限——超时后不再启动新步骤
         elapsed = (_utcnow() - t_run_start).total_seconds()
@@ -648,3 +673,61 @@ def confirm_step(db: Session, task_id: str, step_idx: int,
             "resumed": False,
             "note": "已确认；剩余步骤由 worker 异步恢复执行，"
                     "请轮询 GET /api/v1/agent/runs/{task_id}"}
+
+
+_PAUSABLE_RUN_STATUSES = (RUN_STATUS_QUEUED, RUN_STATUS_RUNNING,
+                          RUN_STATUS_PAUSED)
+
+
+def pause_run(db: Session, task_id: str,
+              org_id: Optional[str] = None) -> dict[str, Any]:
+    """用户暂停 run。
+
+    - org_id 非空时校验归属，不匹配抛 EntityNotFound；
+    - 终态任务或非 queued/running/paused 的 run_status → ValueError；
+    - 只置 payload.paused=True（幂等）；runner 在步骤边界协作式挂起，
+      落 run_status=paused（queue 保持 task running，不落终态）。
+    """
+    repo = AITaskRepository(db)
+    task = _load_task_fresh(db, task_id, org_id)
+    if task.status in ("succeeded", "failed", "cancelled"):
+        raise ValueError(f"任务已终态（{task.status}），无需暂停")
+    payload = dict(task.payload_json or {})
+    rs = payload.get("run_status")
+    if rs not in _PAUSABLE_RUN_STATUSES:
+        raise ValueError(f"当前状态 {rs} 不支持暂停")
+    payload["paused"] = True
+    repo.update_payload(task_id, payload)
+    logger.info("agent_run %s 用户请求暂停（run_status=%s）", task_id, rs)
+    return {"run_status": rs, "task_id": task_id, "paused": True,
+            "note": "已请求暂停，当前步骤完成后挂起；"
+                    "请轮询 GET /api/v1/agent/runs/{task_id}"}
+
+
+def resume_run(db: Session, task_id: str,
+               org_id: Optional[str] = None) -> dict[str, Any]:
+    """用户继续 run。
+
+    - 未暂停（无 paused 标记且 run_status 不是 paused）→ ValueError；
+    - 清 paused 标记；若 runner 已在边界挂起（run_status=paused），
+      置回 running 并返回 requeue=True，由调用方（路由层）重新入队恢复执行；
+      若 worker 还没走到暂停边界（仍在执行某步骤），只清标记不重入队，
+      worker 在下个边界看到 paused=False 会自然继续，避免双 worker 并发。
+    """
+    repo = AITaskRepository(db)
+    task = _load_task_fresh(db, task_id, org_id)
+    payload = dict(task.payload_json or {})
+    was_paused = bool(payload.get("paused"))
+    was_suspended = payload.get("run_status") == RUN_STATUS_PAUSED
+    if not was_paused and not was_suspended:
+        raise ValueError("任务未处于暂停状态")
+    payload["paused"] = False
+    if was_suspended:
+        payload["run_status"] = RUN_STATUS_RUNNING
+    repo.update_payload(task_id, payload)
+    logger.info("agent_run %s 用户继续（was_suspended=%s）",
+                task_id, was_suspended)
+    return {"run_status": payload.get("run_status"), "task_id": task_id,
+            "paused": False, "requeue": was_suspended,
+            "note": "已继续" + ("；剩余步骤由 worker 异步恢复执行"
+                                if was_suspended else "")}
