@@ -28,6 +28,7 @@ from ...ai.prompts import (
 )
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError
 from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
+from ...ai.secure_messages import _secure_messages
 from ...auth.database import get_db
 from ...auth.deps import get_current_user
 from ...auth.models import User
@@ -267,18 +268,19 @@ def create_platform_version(doc_id: str, req: PlatformCreateRequest,
     _model = get_request_model(request)
     idem = idempotency_begin("platform_adapt", request,
                              {"doc_id": doc_id, **req.model_dump()},
-                             scope=_model or "")
+                             scope=_model or "", user_id=user.id)
     if idem.replay is not None:
         return idem.replay
 
     def make_messages(feedback):
         src_structured = src.structured if isinstance(src.structured, dict) else {}
-        return build_platform_messages(
+        # S-3 同类闭合：与 runner 同款隔离
+        return _secure_messages(build_platform_messages(
             source_text=src.text or "",
             source_structured=src_structured,
             platform=req.platform, rules=rules,
             facts=usable_facts, product_name=product_name,
-            no_expand_claims=no_expand)
+            no_expand_claims=no_expand))
 
     try:
         try:

@@ -75,7 +75,11 @@ class HandoverRegressionTests(unittest.TestCase):
             def json(self):
                 raise ValueError("invalid json")
 
-        with patch.object(service.session, "post", return_value=Response()):
+        # 轻微 #5：_post 现为每次调用新建独立 Session（DeepSeek 复查出的
+        # 线程安全修复），故 mock 点从实例 session 改为 Session 类本身；
+        # 断言意图不变：HTTP 200 但 body 非 JSON → AIFatalError 且文案含 JSON。
+        with patch("backend.ai_service.requests.Session") as MockSession:
+            MockSession.return_value.__enter__.return_value.post.return_value = Response()
             with self.assertRaises(AIFatalError) as ctx:
                 service.chat([{"role": "user", "content": "hi"}])
         self.assertIn("JSON", str(ctx.exception))

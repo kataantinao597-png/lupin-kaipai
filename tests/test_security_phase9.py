@@ -170,9 +170,14 @@ class TestRateLimit:
     def test_tier_matching(self):
         assert _tier_for("/api/v1/auth/login") == ("auth", 5)
         assert _tier_for("/api/v1/auth/register") == ("auth", 5)
-        assert _tier_for("/api/ideas") == ("ai", 20)
-        assert _tier_for("/api/v1/ai-tasks") == ("ai", 20)
-        assert _tier_for("/api/storyboard") == ("ai", 20)
+        # V3.2：ai 档只拦生成类 POST；GET 轮询/查询走 default 档
+        # （Agent 面板 2.5s 轮询若计入 ai 档 20/min 会自己打满限流）
+        assert _tier_for("/api/ideas", "POST") == ("ai", 20)
+        assert _tier_for("/api/v1/ai-tasks", "POST") == ("ai", 20)
+        assert _tier_for("/api/storyboard", "POST") == ("ai", 20)
+        assert _tier_for("/api/v1/agent/one-shot", "POST") == ("ai", 20)
+        assert _tier_for("/api/v1/agent/runs/t1", "GET") == ("default", 100)
+        assert _tier_for("/api/ideas", "GET") == ("default", 100)
         assert _tier_for("/api/v1/works") == ("default", 100)
         # 豁免路径
         assert _tier_for("/api/health") is None

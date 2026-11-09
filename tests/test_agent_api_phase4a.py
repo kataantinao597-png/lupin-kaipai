@@ -568,3 +568,56 @@ class TestMessages:
             f"/api/v1/agent/conversations/{conv_id}/messages"))
         assert data["total"] == 5
         assert data["limit"] == 50 and data["offset"] == 0
+
+
+# ================= 每日限额（2026-10-22 接入） =================
+
+class TestQuota:
+    """/agent/quota：与 POST /poster/image 同一口径（services/poster_quota）。"""
+
+    def test_owner_exempt(self, api_client):
+        client, ids, _ = api_client
+        data = _data(client.get("/api/v1/agent/quota",
+                                params={"org_id": ids["org_a"]}))
+        assert data["daily_limit"] == 5, data
+        assert data["enforced"] is False, data
+        assert data["allowed"] is True, data
+        assert data["remaining"] is None, data          # 不受限，不是 0 次
+
+    def test_editor_exhausted(self, api_client):
+        from datetime import datetime, timezone
+
+        from backend.auth.database import get_session_factory
+        from backend.auth.models import User as AuthUser
+        from backend.models import Membership, PosterImageUsage
+
+        client, ids, ctx = api_client
+        db = get_session_factory()()
+        try:
+            db.add(AuthUser(id="u_edit", email="edit@test.local",
+                            password_hash="x"))
+            db.flush()
+            db.add(Membership(user_id="u_edit", org_id=ids["org_a"],
+                              role="editor"))
+            now = datetime.now(timezone.utc)
+            for _ in range(5):
+                db.add(PosterImageUsage(user_id="u_edit",
+                                        org_id=ids["org_a"], created_at=now))
+            db.commit()
+        finally:
+            db.close()
+
+        ctx["user"] = AuthUser(id="u_edit", email="edit@test.local",
+                               password_hash="x")
+        data = _data(client.get("/api/v1/agent/quota",
+                                params={"org_id": ids["org_a"]}))
+        assert data["enforced"] is True, data
+        assert data["allowed"] is False, data
+        assert data["remaining"] == 0, data
+        assert data["used"] == 5, data
+
+    def test_nonmember_404(self, api_client):
+        client, ids, _ = api_client
+        r = client.get("/api/v1/agent/quota", params={"org_id": ids["org_b"]})
+        status, code, _msg = _err(r)
+        assert status == 404 and code == 4002, r.text

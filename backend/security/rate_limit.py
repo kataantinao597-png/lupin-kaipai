@@ -36,6 +36,18 @@ _TIERS: list[tuple[str, int, tuple[str, ...]]] = [
     ("default", 100, ("/api/",)),
 ]
 
+#: M-6：GET 轮询/状态/quota 单设轮询档（60/min/身份）。此前 ai 档只拦
+#: POST 后，GET 轮询全落 default 档（100/min/IP），配合 S-1/S-2 可做
+#: 任务存在性高频枚举与 DB 读放大。正常面板 2.5s 轮询约 24/min，
+#: 60 留有余量；POST 建任务仍走 ai 档（20/min）。
+_POLL_LIMIT = 60
+_POLL_FRAGMENTS = (
+    "/api/v1/ai-tasks",
+    "/api/v1/agent/quota",
+    "/api/v1/poster/image/quota",
+    "/api/v1/poster/image/jobs",
+)
+
 # 不限流的路径（健康检查/指标/静态/文档/CSP 上报）
 _SKIP_PREFIXES = (
     "/api/health", "/api/ready", "/api/v1/metrics",
@@ -49,15 +61,25 @@ _WINDOW = 60.0
 _instances: list = []
 
 
-def _tier_for(path: str) -> tuple[str, int] | None:
+def _tier_for(path: str, method: str = "GET") -> tuple[str, int] | None:
     for skip in _SKIP_PREFIXES:
         if path == skip or path.startswith(skip + "/") or path.startswith(skip + "?"):
             return None
     if path == "/":
         return None
+    # M-6：GET 轮询先于 ai/default 档匹配（POST 不进轮询档，继续走 ai 档）
+    if method.upper() == "GET":
+        for frag in _POLL_FRAGMENTS:
+            if frag in path:
+                return "poll", _POLL_LIMIT
     for name, limit, fragments in _TIERS:
         for frag in fragments:
             if frag in path:
+                # V3.2：ai 档只拦生成类写请求（POST）。GET 轮询/状态查询走
+                # default 档——否则 Agent 面板 2.5s 轮询自身就会打满 20/min，
+                # 把用户后续的发送/取消请求一起挤挂（表现为"点取消没反应"）。
+                if name == "ai" and method.upper() != "POST":
+                    break
                 return name, limit
     return None
 
@@ -107,7 +129,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                             headers=headers)
 
     async def dispatch(self, request, call_next):
-        tier = _tier_for(request.url.path)
+        tier = _tier_for(request.url.path, request.method)
         if tier is None:
             return await call_next(request)
         name, limit = tier

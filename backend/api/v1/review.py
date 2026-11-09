@@ -27,6 +27,7 @@ from ...ai.prompts.review_v1 import (
     validate_review_suggest_result,
 )
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError
+from ...ai.secure_messages import _secure_messages
 from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
 from ...auth.database import get_db
 from ...auth.deps import get_current_user
@@ -335,14 +336,16 @@ def suggest_improvements(rec_id: str,
 
     _model = get_request_model(request)
     idem = idempotency_begin("review_suggest", request,
-                             {"rec_id": rec_id}, scope=_model or "")
+                             {"rec_id": rec_id}, scope=_model or "",
+                             user_id=user.id)
     if idem.replay is not None:
         return idem.replay
 
     def make_messages(feedback):
-        return build_review_suggest_messages(
+        # S-3 同类闭合：与 runner 同款隔离
+        return _secure_messages(build_review_suggest_messages(
             record_title=rec.title, platform=rec.platform,
-            metrics_history=history, review_note=rec.review_note or "")
+            metrics_history=history, review_note=rec.review_note or ""))
 
     try:
         try:

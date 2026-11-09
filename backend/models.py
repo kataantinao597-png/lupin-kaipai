@@ -30,6 +30,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 
 from .auth.models import Base
@@ -1538,17 +1539,31 @@ class IdempotencyKey(Base):
     - scope 折叠进 body_hash（沿用内存版口径）；org_id 仅作归属审计列。
     - status：running（执行中）| done（已完成，可回放）。
     - running 行超过 WAIT_TIMEOUT 视为僵尸，可被接管（见 core/idempotency.py）。
+    - S-2（迁移 0023）：幂等键按用户隔离。SQLite/Postgres 的唯一索引
+      都把 NULL 视为互不相等，故用两条部分唯一索引：登录用户走
+      (route, key, user_id)，匿名走 (route, key)；user_id 列供查找与
+      归属校验用（旧行 user_id 为 NULL，靠 body_hash 过渡认领，见
+      core/idempotency.py 的 _try_adopt_legacy_row）。
     """
     __tablename__ = "idempotency_keys"
     __table_args__ = (
-        Index("ix_idem_route_key", "route", "key", unique=True),
+        Index("ix_idem_route_key_user", "route", "key", "user_id",
+              unique=True,
+              postgresql_where=text("user_id IS NOT NULL"),
+              sqlite_where=text("user_id IS NOT NULL")),
+        Index("ix_idem_route_key_anon", "route", "key",
+              unique=True,
+              postgresql_where=text("user_id IS NULL"),
+              sqlite_where=text("user_id IS NULL")),
         Index("ix_idem_org", "org_id"),
+        Index("ix_idem_user", "user_id"),
         Index("ix_idem_created", "created_at"),
     )
 
     id = Column(String(32), primary_key=True, default=_uuid)
     key = Column(String(128), nullable=False)
     org_id = Column(String(32), nullable=True)
+    user_id = Column(String(64), nullable=True)
     route = Column(String(128), nullable=False)
     body_hash = Column(String(64), nullable=False)
     status = Column(String(16), nullable=False, default="running",

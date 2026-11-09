@@ -11,10 +11,16 @@
   "use strict";
 
   var DEFAULT_TIMEOUT_MS = 30000;
-  var AI_TIMEOUT_MS = 120000;
+  // AI_TIMEOUT_MS 对齐后端单次调用墙钟（ai_service.SINGLE_CALL_TIMEOUT=300s）：
+  // 此前 120s 仍短于后端整任务 600s，且 /api/v1/plan 不在白名单里，
+  // 创意策划 POST /api/v1/plan/tasks/{id}/generate 只拿到 30s 就被前端 abort，
+  // 截图里的“请求超时”就是这么来的。超过 300s 仍超时时，靠后端幂等回放，
+  // 重试一次（同请求体、同幂等键）即可拿到已完成的结果，不要连续狂点。
+  var AI_TIMEOUT_MS = 300000;
   // AI 相关路径走更长的超时
   var AI_PATH_HINTS = ["/api/ideas", "/api/storyboard", "/api/regenerate-shot",
-    "/api/risk-check", "/api/feasibility-check", "/api/v1/ai-tasks"];
+    "/api/risk-check", "/api/feasibility-check", "/api/v1/ai-tasks",
+    "/api/v1/plan", "/api/colloquial-rewrite"];
 
   function ApiError(status, code, message, details, requestId) {
     this.name = "ApiError";

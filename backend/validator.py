@@ -1,6 +1,6 @@
 """鲁品开拍 - 分镜业务规则校验（由实验 validate.py 移植，逻辑一致）。"""
-from typing import List, Tuple
-from .schemas import Storyboard
+from typing import Any, List, Tuple
+from .schemas import SHOT_TYPES, Storyboard
 
 # 单人手机拍摄下不可用的拍摄方式关键词
 FORBIDDEN_SOLO_PHONE = ["航拍", "摇臂", "多机位", "轨道", "无人机", "斯坦尼康", "大摇臂", "稳定器", "滑轨"]
@@ -28,6 +28,93 @@ def _is_v2_storyboard(sb: "Storyboard") -> bool:
             return True
     return False
 
+
+def _normalize_storyboard_for_validation(sb: Any) -> Any:
+    """把简化分镜格式归一化为 validator 完整 schema（共享入口）。
+
+    原在 services/agent/adapters.py，2026-10-28 校验入口统一时迁到这里：
+    导出/可行性/单镜重生成与 Agent 清单路共用同一归一化，同一份分镜
+    不再在不同入口下得出不同结论。填充的默认值（中景/固定机位/
+    手机1人等）只是占位，不代表已核实，导出时用户仍可改。
+
+    背景：``backend.validator.Storyboard`` 要求 product_summary /
+    target_audience / creative_direction / target_duration_seconds / shoot /
+    shot_number / duration_seconds 等完整字段，而工具链产出的是简化格式
+    （shot_no / duration_sec / scene）。直接校验会误报"结构非法"。
+    本函数只做字段映射与兜底填充，不改变镜头实质内容；checklist 条目仍按
+    原始简化数据组装。已是完整 schema 的输入原样返回（幂等）。
+    非法输入（非 dict / shots 非 list）原样返回，让 validator 按原逻辑报错。
+    修复点：此前只看首镜有没有 shot_number 就原样返回，混格式
+    （首镜完整、其余简化）会原样进 validator 触发 v2 全量规则；
+    而简化路径映射时又把已有的 v2 字段丢掉，导致同一份分镜在
+    不同入口下校验结果不一致。现在改为：只有全部镜头都是完整
+    schema 时才原样返回，否则统一走映射，且映射时保留已有的 v2 字段。
+    """
+    if not isinstance(sb, dict):
+        return sb
+    shots = sb.get("shots")
+    if not isinstance(shots, list):
+        return sb
+    if shots and all(isinstance(s, dict) and "shot_number" in s for s in shots):
+        # 全部是完整 schema：补齐顶层默认值（已有则不动），否则只传
+        # {"shots": [...]} 进 validate_dict 会因缺 product_summary 等报结构错，
+        # 掩盖真正的 v2 字段问题——这正是第6步内部校验要避免的坑。
+        total = sum(float(s.get("duration_seconds") or 0) for s in shots
+                    if isinstance(s, dict))
+        normalized = {
+            "product_summary": "AI 助手生成",
+            "target_audience": "目标用户",
+            "creative_direction": "AI 创意",
+            "target_duration_seconds": total if total > 0 else 1,
+            "shoot": {"device": "手机", "people": 1},
+        }
+        normalized.update(sb)
+        normalized["shots"] = shots
+        return normalized
+    # 映射时保留的 v2 字段（缺了它们，validator 的 v2 全量规则会被误判）
+    _V2_SHOT_FIELDS = (
+        "shoot_steps", "acceptance_criteria", "failure_modes",
+        "reshoot_guide", "record_duration_seconds", "final_duration_seconds",
+        "usable_duration_seconds", "shot_purpose", "prerequisites",
+        "phone_setup", "alt_approach", "transition", "edit_notes",
+        "props", "required_assets",
+    )
+    norm_shots = []
+    for i, s in enumerate(shots):
+        if not isinstance(s, dict):
+            norm_shots.append(s)
+            continue
+        st = s.get("shot_type")
+        mapped = {
+            "shot_number": s.get("shot_number", s.get("shot_no", i + 1)),
+            "duration_seconds": s.get("duration_seconds",
+                                      s.get("duration_sec", 0)),
+            "shot_type": st if st in SHOT_TYPES else "中景",
+            "scene_description": s.get("scene_description") or s.get("scene") or "",
+            "shooting_action": (s.get("shooting_action")
+                                or s.get("shoot_notes") or s.get("scene") or ""),
+            "voiceover": s.get("voiceover") or "",
+            "subtitle": s.get("subtitle") or "",
+            "camera_movement": s.get("camera_movement") or "固定机位",
+        }
+        for f in _V2_SHOT_FIELDS:
+            if f in s and s[f] is not None:
+                mapped[f] = s[f]
+        norm_shots.append(mapped)
+    total = sum(float(x.get("duration_seconds") or 0) for x in norm_shots
+                if isinstance(x, dict))
+    normalized = {
+        "product_summary": "AI 助手生成",
+        "target_audience": "目标用户",
+        "creative_direction": "AI 创意",
+        "target_duration_seconds": total if total > 0 else 1,
+        "shoot": {"device": "手机", "people": 1},
+    }
+    for k, v in sb.items():
+        if k != "shots":
+            normalized[k] = v
+    normalized["shots"] = norm_shots
+    return normalized
 
 def rule_feasibility_scan(sb: "Storyboard") -> list:
     """规则层可行性预检：快速、确定性。返回 [(shot_number, status, reason, constraints)]。

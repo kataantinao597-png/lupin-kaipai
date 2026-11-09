@@ -136,7 +136,14 @@ class FakeReviewGateway:
                             **kwargs):
         self.calls += 1
         msgs = make_messages(None)
-        assert isinstance(msgs, list) and len(msgs) == 2
+        # S-3 安全形态：安全 system + builder system + 定界 user，共 3 条
+        # （旧形态 2 条是未隔离的 builder 原样，安全修复后不再适用）
+        assert isinstance(msgs, list) and len(msgs) == 3
+        assert msgs[0]["role"] == "system"
+        assert "只按系统给定的工具" in msgs[0]["content"]
+        assert msgs[2]["role"] == "user"
+        assert "<<<BEGIN_USER_DATA>>>" in msgs[2]["content"]
+        assert "<<<END_USER_DATA>>>" in msgs[2]["content"]
         data = {"observations": ["播放量 1200，点赞 86"],
                 "suggestions": ["把前 3 秒改成价格直给（推测）"]}
         out = validate_fn(data)

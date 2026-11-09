@@ -41,11 +41,12 @@ from ...core import error_codes
 from ...core.exceptions import BusinessError
 from ...core.idempotency import idempotency_begin
 from ...core.response import ApiResponse, success
-from ...rbac import get_membership
+from ...rbac import ROLE_ADMIN, ROLE_RANK, get_membership
 from ...repositories.base import EntityNotFound
 from ...services.agent import (
     TASK_TYPE_AGENT_RUN,
     Conversation,
+    check_user_quota,
     confirm_step,
     count_messages,
     create_agent_run,
@@ -56,6 +57,7 @@ from ...services.agent import (
     set_run_plan,
     summarize_plan,
 )
+from ...services.poster_quota import POSTER_IMAGE_DAILY_LIMIT
 
 router = APIRouter(prefix="/agent", tags=["v1-agent"])
 
@@ -138,8 +140,22 @@ def _require_org_member(db: Session, user_id: str,
     return ms.org_id
 
 
+def _is_org_admin(db: Session, user_id: str, org_id: str) -> bool:
+    """该用户在该组织是否为 admin/owner（S2 例外判定用）。"""
+    ms = get_membership(db, user_id, org_id)
+    return bool(ms) and ROLE_RANK.get(ms.role, 0) >= ROLE_RANK[ROLE_ADMIN]
+
+
 def _get_agent_task_or_404(db: Session, task_id: str, user_id: str):
-    """取 agent_run 任务：非 agent_run 类型 / 跨组织一律 404（防枚举）。"""
+    """取 agent_run 任务：非 agent_run 类型 / 跨组织一律 404（防枚举）。
+
+    S2 修复：同组织横向越权防护。仅验组织成员时，同组织任意成员可
+    改他人执行计划、批准他人待确认步骤、取消他人任务。现叠加
+    created_by 校验：非管理员只能操作自己创建的任务。
+    admin/owner 例外是明确设计（组织管理需要查看/管理全组织任务），
+    不是遗漏；created_by 为空的老任务（迁移前数据）沿用组织成员口径，
+    避免老任务突然不可访问。
+    """
     repo = AITaskRepository(db)
     task = repo.get(task_id)
     if task is None or task.task_type != TASK_TYPE_AGENT_RUN:
@@ -147,6 +163,11 @@ def _get_agent_task_or_404(db: Session, task_id: str, user_id: str):
                             code=error_codes.RESOURCE_NOT_FOUND,
                             http_status=404)
     _require_org_member(db, user_id, task.org_id)
+    if (getattr(task, "created_by", "") and task.created_by != user_id
+            and not _is_org_admin(db, user_id, task.org_id)):
+        raise BusinessError("任务不存在",
+                            code=error_codes.RESOURCE_NOT_FOUND,
+                            http_status=404)
     return task
 
 
@@ -187,6 +208,23 @@ def _enqueue_run_resume(task) -> None:
 # run 创建 / 查询
 # ---------------------------------------------------------------------------
 
+@router.get("/quota", response_model=ApiResponse[dict])
+def agent_quota(org_id: str = Query(...),
+                user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    """Agent 侧今日配图额度（与 POST /poster/image 同一口径）。
+
+    用途：Agent 面板/助手判断「今天还能不能出海报配图」，避免承诺做不到的图。
+    只读，不扣额度；真正拦截在生图端点（超限 429）。
+    """
+    org = _require_org_member(db, user.id, org_id)
+    ms = get_membership(db, user.id, org)
+    q = check_user_quota(user_id=user.id, org_id=org, db=db,
+                         role=ms.role if ms else None)
+    q["daily_limit"] = POSTER_IMAGE_DAILY_LIMIT
+    return success(q)
+
+
 @router.post("/runs", response_model=ApiResponse[dict], status_code=202)
 def create_run(req: AgentRunCreate,
                request: Request,
@@ -202,7 +240,8 @@ def create_run(req: AgentRunCreate,
     """
     idem = idempotency_begin("agent-runs", request,
                             req.model_dump(mode="json"),
-                            scope=req.org_id, org_id=req.org_id)
+                            scope=req.org_id, org_id=req.org_id,
+                            user_id=user.id)
     if idem.replay is not None:
         return success(dict(idem.replay))
     try:
@@ -388,7 +427,8 @@ def one_shot(req: AgentOneShot,
 
     idem = idempotency_begin("agent-one-shot", request,
                             req.model_dump(mode="json"),
-                            scope=req.org_id, org_id=req.org_id)
+                            scope=req.org_id, org_id=req.org_id,
+                            user_id=user.id)
     if idem.replay is not None:
         return success(dict(idem.replay))
     try:
@@ -480,13 +520,22 @@ def conv_messages(conv_id: str,
                                       description="偏移量"),
                   user: User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
-    """会话消息分页（时间正序）。会话必须属于调用者所在组织，否则 404。"""
+    """会话消息分页（时间正序）。会话必须属于调用者所在组织，否则 404。
+
+    S2 修复：叠加会话归属校验。仅验组织成员时，同组织成员可读他人
+    会话全文。现要求会话 user_id == 调用者，或调用者为 admin/owner。
+    """
     conv = db.get(Conversation, conv_id)
     if conv is None:
         raise BusinessError("会话不存在",
                             code=error_codes.RESOURCE_NOT_FOUND,
                             http_status=404)
     _require_org_member(db, user.id, conv.org_id)
+    if (conv.user_id != user.id
+            and not _is_org_admin(db, user.id, conv.org_id)):
+        raise BusinessError("会话不存在",
+                            code=error_codes.RESOURCE_NOT_FOUND,
+                            http_status=404)
     rows = list_messages(db, conv_id, conv.org_id,
                          limit=limit, offset=offset)
     total = count_messages(db, conv_id, conv.org_id)

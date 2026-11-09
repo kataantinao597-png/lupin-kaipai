@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError
 from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
+from ...ai.secure_messages import _secure_messages
 from ...auth.database import get_db
 from ...auth.deps import get_current_user
 from ...auth.models import User
@@ -95,16 +96,16 @@ def rewrite_colloquial(
             facts = []
     # V2.1 #3：Idempotency-Key 去重——同 key 同体直接回放，不重复调模型扣费
     idem = idempotency_begin("colloquial-rewrite", request, req.model_dump(),
-                             scope=_model or "")
+                             scope=_model or "", user_id=user.id)
     if idem.replay is not None:
         return idem.replay
 
     prompt_version = get_prompt_version("colloquial_rewrite")
 
     def make_messages(feedback):
-        return build_colloquial_messages(req.text.strip(),
-                                         req.product_name.strip(),
-                                         facts)
+        # S-3 同类闭合：与 runner 同款隔离（已登录接口的自注入面）
+        return _secure_messages(build_colloquial_messages(
+            req.text.strip(), req.product_name.strip(), facts))
 
     try:
         try:

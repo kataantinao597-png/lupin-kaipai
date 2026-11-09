@@ -183,6 +183,12 @@ def create_agent_run(db: Session, user: Any, org_id: str,
         conv = get_conversation(db, conversation_id, org_id)
         if conv is None:
             raise EntityNotFound("Conversation", conversation_id)
+        # S2 修复：复用会话须是自己的（admin/owner 例外），防跨用户挂载
+        # 他人会话后把新 brief 合并进他人会话、并借他人会话串联多轮。
+        from ...rbac import ROLE_ADMIN, ROLE_RANK
+        if (conv.user_id != user_id
+                and ROLE_RANK.get(ms.role, 0) < ROLE_RANK[ROLE_ADMIN]):
+            raise EntityNotFound("Conversation", conversation_id)
         # brief 增量更新：新值补齐/覆盖旧值，不丢历史上下文
         conv.brief_json = merge_brief_dict(
             dict(conv.brief_json or {}),
@@ -268,6 +274,7 @@ def get_run_state(db: Session, task_id: str,
         "confirmed_steps": payload.get("confirmed_steps") or [],
         "error": task.error,
         "summary": payload.get("summary"),
+        "events": payload.get("events") or [],
         "steps": [
             {"tool_id": s.tool_id, "status": s.status,
              "output_ref": s.output_ref, "error": s.error,

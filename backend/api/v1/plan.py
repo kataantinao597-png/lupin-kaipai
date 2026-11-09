@@ -24,6 +24,7 @@ from ... import models
 from ...ai.prompts import build_plan_messages, get_prompt_version
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError
 from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
+from ...ai.secure_messages import _secure_messages
 from ...auth.database import get_db
 from ...auth.deps import get_current_user
 from ...auth.models import User
@@ -308,7 +309,7 @@ def generate_candidates(task_id: str,
                               "goal": task.content_goal,
                               "updated_at": task.updated_at.isoformat()
                               if task.updated_at else ""},
-                             scope=_model or "")
+                             scope=_model or "", user_id=user.id)
     if idem.replay is not None:
         return idem.replay
     try:
@@ -327,7 +328,8 @@ def generate_candidates(task_id: str,
             msgs = build_plan_messages(params, facts)
             if feedback:
                 msgs.append({"role": "user", "content": feedback})
-            return msgs
+            # S-3 同类闭合：与 runner 同款隔离
+            return _secure_messages(msgs)
 
         try:
             ideas, meta = gw.generate_with_retry(

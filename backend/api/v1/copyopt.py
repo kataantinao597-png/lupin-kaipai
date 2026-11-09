@@ -34,6 +34,7 @@ from ...ai.prompts import (
 )
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError
 from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
+from ...ai.secure_messages import _secure_messages
 from ...auth.database import get_db
 from ...auth.deps import get_current_user
 from ...auth.models import User
@@ -404,12 +405,13 @@ def optimize(doc_id: str,
     _model = get_request_model(request)
     idem = idempotency_begin("copy_optimize", request,
                              {"doc_id": doc_id, **req.model_dump()},
-                             scope=_model or "")
+                             scope=_model or "", user_id=user.id)
     if idem.replay is not None:
         return idem.replay
 
     def make_messages(feedback):
-        return build_copyopt_messages(
+        # S-3 同类闭合：与 runner 同款隔离
+        return _secure_messages(build_copyopt_messages(
             kind, req.mode, source_text=source,
             goal=req.goal.strip(), style=req.style.strip(),
             audience=req.audience.strip(),
@@ -417,7 +419,7 @@ def optimize(doc_id: str,
             extra_requirements=req.extra_requirements.strip(),
             custom_instruction=req.custom_instruction.strip(),
             facts=usable_facts, product_name=product_name,
-            no_expand_claims=no_expand)
+            no_expand_claims=no_expand))
 
     # 4) 模型请求 → 响应解析 → 字段校验
     try:
@@ -578,14 +580,15 @@ def rewrite_paragraph(doc_id: str,
     _model = get_request_model(request)
     idem = idempotency_begin("copy_rewrite_paragraph", request,
                              {"doc_id": doc_id, **req.model_dump()},
-                             scope=_model or "")
+                             scope=_model or "", user_id=user.id)
     if idem.replay is not None:
         return idem.replay
 
     def make_messages(feedback):
-        return build_rewrite_paragraph_messages(
+        # S-3 同类闭合：与 runner 同款隔离
+        return _secure_messages(build_rewrite_paragraph_messages(
             src.text or "", paras[req.paragraph_index],
-            req.instruction.strip(), usable_facts)
+            req.instruction.strip(), usable_facts))
 
     try:
         try:

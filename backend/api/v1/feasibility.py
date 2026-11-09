@@ -21,7 +21,8 @@ from ...core.deps import get_ai_gateway, get_request_model
 from ...ai.prompts import get_prompt_version
 from ...prompts import build_feasibility_messages
 from ...schemas import FeasibilityReport
-from ...validator import rule_feasibility_scan, validate_dict
+from ...validator import (_normalize_storyboard_for_validation,
+                        rule_feasibility_scan, validate_dict)
 from ._ai_guard import bind_gateway_org, enforce_ai_org, optional_user
 
 router = APIRouter(tags=["feasibility"])
@@ -81,9 +82,12 @@ def check_feasibility(
     # P0：声称了 org_id 就必须登录且是该组织成员（否则可匿名替他人扣预算）
     _org = enforce_ai_org(request, None, user, db)
     bind_gateway_org(gw, _org)
-    errors, sb = validate_dict(req.storyboard)
+    # 与导出/清单路统一：先归一化再校验；归一化填充的拍摄条件（手机1人）
+    # 只是保守假设，模型分析时按此假设判断，缺失项仍需用户在分镜页补齐确认。
+    errors, sb = validate_dict(_normalize_storyboard_for_validation(req.storyboard))
     if errors:
-        raise HTTPException(status_code=400, detail="分镜未通过校验，无法检查：" + "; ".join(errors[:3]))
+        suffix = f"（等共 {len(errors)} 条，完整列表见 /api/validate）" if len(errors) > 3 else ""
+        raise HTTPException(status_code=400, detail="分镜未通过校验，无法检查：" + "; ".join(errors[:3]) + suffix)
     sb_dict = sb.model_dump()
     shot_numbers = [s.shot_number for s in sb.shots]
 

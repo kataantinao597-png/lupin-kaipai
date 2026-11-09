@@ -57,15 +57,15 @@
     transform:rotate(-4deg);box-shadow:inset 0 0 0 2px rgba(255,255,255,.28)}
   .nav-links{display:flex;gap:26px;font-size:15px;color:var(--lp-muted);align-items:center}
   .nav-links a{text-decoration:none;transition:color .15s;border-radius:6px}
-  .nav-links a:hover{color:var(--lp-forest)}
+  @media (hover:hover){.nav-links a:hover{color:var(--lp-forest)}}
   .nav-links a:focus-visible{outline:3px solid var(--lp-wheat);outline-offset:4px;color:var(--lp-forest)}
   .btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;font-weight:800;
     border-radius:999px;transition:transform .16s ease,background .16s ease,box-shadow .16s ease;cursor:pointer;border:none;font-family:var(--font)}
-  .btn:hover{transform:translateY(-1px)}
-  .btn:active{transform:translateY(0)}
+  @media (hover:hover){.btn:hover{transform:translateY(-1px)}}
+  .btn:active{transform:scale(.96);transition:transform 150ms ease-out}
   .btn:focus-visible{outline:3px solid var(--lp-wheat);outline-offset:2px}
   .btn-forest{background:var(--lp-vermilion);color:#fff}
-  .btn-forest:hover{background:#A31F1F;box-shadow:0 8px 20px rgba(198,40,40,.30)}
+  @media (hover:hover){.btn-forest:hover{background:#A31F1F;box-shadow:0 8px 20px rgba(198,40,40,.30)}}
   .btn-nav{font-size:15px;padding:10px 24px}
   .burger{display:none;background:none;border:none;cursor:pointer;padding:8px;margin-left:auto}
   .burger span{display:block;width:24px;height:2.5px;background:var(--lp-ink);border-radius:2px;margin:5px 0;transition:transform .2s,opacity .2s}
@@ -90,9 +90,9 @@
   .hero-ctas{display:flex;gap:14px;margin-top:36px;flex-wrap:wrap}
   .btn-hero{font-size:16px;padding:16px 40px}
   .btn-paper{background:#FBF8EE;color:var(--lp-forest)}
-  .btn-paper:hover{background:#fff;box-shadow:0 10px 26px rgba(0,0,0,.25)}
+  @media (hover:hover){.btn-paper:hover{background:#fff;box-shadow:0 10px 26px rgba(0,0,0,.25)}}
   .btn-outline{border:1.5px solid rgba(251,248,238,.65);color:#FBF8EE;background:transparent}
-  .btn-outline:hover{border-color:#FBF8EE;background:rgba(251,248,238,.12)}
+  @media (hover:hover){.btn-outline:hover{border-color:#FBF8EE;background:rgba(251,248,238,.12)}}
   .hero-note{margin-top:26px;font-size:13px;color:rgba(237,228,204,.75);letter-spacing:.04em}
   /* 入场动画：轻、短 */
   @keyframes fadeUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
@@ -123,7 +123,7 @@
   .feat-list{margin-top:52px;border-top:1px solid var(--lp-hair)}
   .feat-row{display:flex;gap:24px;align-items:flex-start;padding:26px 10px;
     border-bottom:1px solid var(--lp-hair);transition:background .15s ease}
-  .feat-row:hover{background:rgba(62,107,79,.05)}
+  @media (hover:hover){.feat-row:hover{background:rgba(62,107,79,.05)}}
   .feat-row .icon{flex:none;width:54px;height:54px;border-radius:15px;background:rgba(62,107,79,.09);
     display:flex;align-items:center;justify-content:center}
   .feat-row .icon svg{width:29px;height:29px}
@@ -139,11 +139,11 @@
   .case-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:52px}
   .case{background:var(--lp-card);border:1px solid var(--lp-hair);border-radius:18px;overflow:hidden;
     transition:transform .18s ease,box-shadow .18s ease;text-decoration:none;display:block}
-  .case:hover{transform:translateY(-4px);box-shadow:0 16px 36px rgba(37,35,30,.12)}
+  @media (hover:hover){.case:hover{transform:translateY(-4px);box-shadow:0 16px 36px rgba(37,35,30,.12)}}
   .case:focus-visible{outline:3px solid var(--lp-wheat);outline-offset:3px}
   .case .ph{aspect-ratio:16/9.2;overflow:hidden;background:#F0EBE0;position:relative}
   .case .ph img{width:100%;height:100%;object-fit:cover;transition:transform .5s ease}
-  .case:hover .ph img{transform:scale(1.045)}
+  @media (hover:hover){.case:hover .ph img{transform:scale(1.045)}}
   .case .tx{padding:26px 26px 28px}
   .case .tx .k{font-size:12.5px;font-weight:800;color:var(--lp-teal);letter-spacing:.22em}
   .region-tag{display:inline-flex;align-items:center;border:1.5px solid #C62828;color:#A31F1F;background:#FBF3E4;
@@ -152,7 +152,7 @@
   .case p{font-size:15px;color:var(--lp-muted)}
   .case .go{display:inline-flex;align-items:center;gap:8px;margin-top:16px;font-size:15px;font-weight:800;color:var(--lp-forest)}
   .case .go::after{content:"→";transition:transform .15s}
-  .case:hover .go::after{transform:translateX(4px)}
+  @media (hover:hover){.case:hover .go::after{transform:translateX(4px)}}
   .disclaimer{margin-top:26px;font-size:13px;color:var(--lp-muted);border:1px dashed var(--lp-hair);
     border-radius:12px;padding:14px 18px;background:rgba(179,137,46,.07)}
 
@@ -239,7 +239,7 @@
   footer p{font-size:13.5px;line-height:1.8}
   footer .flinks{display:grid;gap:10px}
   footer .flinks a{text-decoration:none;font-size:13.5px}
-  footer .flinks a:hover{color:#F4EEDC}
+  @media (hover:hover){footer .flinks a:hover{color:#F4EEDC}}
   .fbrand{display:flex;align-items:center;gap:10px;font-weight:800;color:#F4EEDC;font-size:16px;margin-bottom:14px}
   .fbase{margin-top:44px;padding-top:22px;border-top:1px solid rgba(207,200,178,.18);
     display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:12.5px;color:#9A937C}
@@ -254,7 +254,6 @@
       padding:10px;display:none;gap:0}
     .nav-links.open{display:flex}
     .nav-links a{padding:14px 18px;border-radius:10px;font-size:16px}
-    .nav-links a:hover{background:rgba(62,107,79,.07)}
     .nav-links .btn-nav{margin:8px;text-align:center}
     .nav-cta-desktop{display:none}
     .sec{padding:68px 0}
@@ -276,9 +275,14 @@
     .js .reveal{opacity:1;transform:none}
     .hero .anim{opacity:1}
   }
+  @media (max-width: 960px) and (hover:hover){.nav-links a:hover{background:rgba(62,107,79,.07)}}
+/* 跳过导航链接：平时视觉隐藏，键盘聚焦时可见 */
+.skip-link{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+.skip-link:focus{position:fixed;top:12px;left:12px;width:auto;height:auto;overflow:visible;clip:auto;white-space:normal;padding:10px 18px;background:var(--lp-ink);color:#fff;border-radius:10px;z-index:100;text-decoration:none;font-size:14px}
 </style>
 </head>
 <body>
+<a href="#main-content" class="skip-link">跳过导航</a>
 
 <!-- A · 顶部导航 -->
 <nav class="nav" id="nav" aria-label="主导航">
@@ -300,6 +304,7 @@
 </nav>
 
 <!-- B · 首屏 Hero -->
+<main id="main-content" tabindex="-1">
 <header class="hero" id="top">
   <div class="hero-fallback"></div>
   <div class="hero-media" id="heroMedia">
@@ -553,6 +558,8 @@
     </div>
   </div>
 </div>
+
+</main>
 
 <!-- 页脚 -->
 <footer id="about">

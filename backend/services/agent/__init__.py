@@ -1,7 +1,7 @@
 """Phase 2：Agent 工具层（backend/services/agent/）。
 
 - tools：工具定义 / 参数 schema / 注册表 / 白名单 / 工具分级
-- context：上下文装配 + check_user_quota() 桩位
+- context：上下文装配 + check_user_quota()（真实每日限额，与生图接口同一口径）
 - adapters：工具适配器（只调既有 service/repository）+ 统一分派 run_tool
 - planner：结构化 JSON 计划生成与校验（白名单分派路线）
 - conversations（Phase 3）：对话持久化 ORM + CRUD（org 归属校验）

@@ -64,12 +64,17 @@ class AITaskRepository:
         return task
 
     def list_by_org(self, org_id: str, status: str | None = None,
-                    limit: int = 50, offset: int = 0) -> list[AITask]:
+                    limit: int = 50, offset: int = 0,
+                    created_by: str | None = None) -> list[AITask]:
+        """S-1：created_by 非空时只列该用户创建的任务（普通成员口径）；
+        为 None 时列全组织（admin/owner 口径，调用方须先验 admin 身份）。"""
         stmt = select(AITask).where(AITask.org_id == org_id)
         if status is not None:
             if status not in TASK_STATUSES:
                 raise ValueError(f"非法任务状态: {status}")
             stmt = stmt.where(AITask.status == status)
+        if created_by is not None:
+            stmt = stmt.where(AITask.created_by == created_by)
         return list(self.db.scalars(
             stmt.order_by(AITask.created_at.desc()).limit(limit).offset(offset)))
 

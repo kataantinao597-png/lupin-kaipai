@@ -13,6 +13,12 @@ MAX_RETRIES = 3
 CONNECT_TIMEOUT = 15
 READ_TIMEOUT = 120
 TOTAL_TIMEOUT = 600
+#: 轻微 #5：单次调用总墙钟（秒）。requests 的 (connect, read) 超时按
+#: “两次字节到达之间”计时，慢速滴答响应可让单次调用实际耗时远超
+#: READ_TIMEOUT 标称（读超时每次收到字节即重置）。300s 的取舍：远大于
+#: 正常 JSON 生成的耗时，又远小于无界；网关层 TOTAL_TIMEOUT（600s）
+#: 再 bound 全任务多次尝试。实现见 _post 的 daemon 线程 join。
+SINGLE_CALL_TIMEOUT = 300
 
 DEFAULT_CONFIG_PATH = "~/.omp/agent/models.yml"
 
@@ -123,25 +129,57 @@ class AIService:
         self.model = os.environ.get("LUPIN_MODEL", DEFAULT_MODEL)
 
     def _post(self, payload: dict) -> dict:
-        """单次 HTTP 调用，带错误映射。
+        """单次 HTTP 调用，带错误映射 + 单次总墙钟（轻微 #5）。
         Key 仅放在 Authorization 头中发送；本函数不打印、不记录 Key。
+
+        墙钟实现：requests 的 (connect, read) 超时挡不住慢速滴答（每次
+        收到字节即重置读超时），故把 post 放进 daemon 线程 join
+        (SINGLE_CALL_TIMEOUT)：超时即按可重试错误返回（网关层 TOTAL_TIMEOUT
+        再 bound 全任务）。被遗弃的线程随服务端响应或自身读超时自然结束
+        （daemon，不阻塞进程退出）。
+        线程安全（DeepSeek 复查指出）：requests.Session 官方非线程安全，
+        超时后遗弃线程与重试线程共用同一 Session 即构成新增竞态，故本
+        函数每次调用新建独立 Session（不复用 self.session）：各线程的
+        Session 互不干扰，代价是失去 keep-alive（一次握手约百毫秒，相对
+        模型生成秒级可忽略）。残留：遗弃线程若最终成功而重试也成功，服务
+        端可能计费两次——这是任何“超时+重试”都有的固有窗口（既有 ReadTimeout
+        重试亦然），provider 无幂等键可消，属接受的残留而非本修复新增类别。
         """
-        try:
-            r = self.session.post(
-                self.endpoint, json=payload,
-                timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
-                headers={"Authorization": f"Bearer {self.api_key}"},
-            )
-        except requests.ConnectTimeout:
+        import threading
+        _box: dict = {}
+
+        def _do() -> None:
+            try:
+                with requests.Session() as _sess:
+                    _box["resp"] = _sess.post(
+                        self.endpoint, json=payload,
+                        timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                    )
+            except BaseException as e:  # noqa: BLE001  统一在外层映射
+                _box["error"] = e
+
+        _t = threading.Thread(target=_do, daemon=True)
+        _t.start()
+        _t.join(timeout=SINGLE_CALL_TIMEOUT)
+        if _t.is_alive():
             raise AIRetryableError(
-                f"连接超时（{CONNECT_TIMEOUT}s）：无法连接到模型服务，请检查网络或 API 地址")
-        except requests.ReadTimeout:
-            raise AIRetryableError(
-                f"读取超时（{READ_TIMEOUT}s）：模型服务响应过慢，请稍后重试")
-        except requests.Timeout:
-            raise AIRetryableError("请求超时：模型服务未在预期时间内响应")
-        except requests.RequestException as e:
-            raise AIRetryableError(f"网络错误: {type(e).__name__}")
+                f"单次调用总耗时超 {SINGLE_CALL_TIMEOUT}s（慢速响应），"
+                "按可重试处理")
+        if "error" in _box:
+            e = _box["error"]
+            if isinstance(e, requests.ConnectTimeout):
+                raise AIRetryableError(
+                    f"连接超时（{CONNECT_TIMEOUT}s）：无法连接到模型服务，请检查网络或 API 地址")
+            if isinstance(e, requests.ReadTimeout):
+                raise AIRetryableError(
+                    f"读取超时（{READ_TIMEOUT}s）：模型服务响应过慢，请稍后重试")
+            if isinstance(e, requests.Timeout):
+                raise AIRetryableError("请求超时：模型服务未在预期时间内响应")
+            if isinstance(e, requests.RequestException):
+                raise AIRetryableError(f"网络错误: {type(e).__name__}")
+            raise e
+        r = _box["resp"]
         if r.status_code == 200:
             try:
                 data = r.json()

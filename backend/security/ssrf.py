@@ -82,6 +82,13 @@ def validate_outbound_url(url: str, *, purpose: str = "出站请求",
     只打到代理服务器，DNS 由代理侧解析，本机解析结果与真实出口无关，
     在代理出口环境（如沙箱经 egress-proxy 出站）下直接判会误杀合法域名。
     字面量内网 IP 依然拦截（代理也可能被诱导访问内网），纵深防御不断。
+
+    轻微 #3/#4 说明：现全仓库无调用方传 via_proxy=True（唯一用户可控
+    出站路径 poster_image 已改走 via_proxy=False 全量判定），故“本地 DNS
+    与代理出口解析不一致”与“校验后 DNS 重绑定”窗口在现代码中不存在；
+    用户可控域名另有 M-4 白名单兜底（非白名单域名根本到不了校验这步）。
+    将来若有调用方想用 via_proxy=True，必须同时确认代理侧自身做内网
+    拦截，否则等于把 SSRF 判定外包给不可控方——不要静默开启。
     """
     if not url or not isinstance(url, str):
         raise SSRFError(f"{purpose}：URL 为空")

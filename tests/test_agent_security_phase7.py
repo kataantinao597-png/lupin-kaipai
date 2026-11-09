@@ -510,10 +510,15 @@ class TestIdempotencyDB:
 class TestRateLimit:
     def test_agent_routes_in_ai_tier(self):
         from backend.security.rate_limit import _tier_for
-        assert _tier_for("/api/v1/agent/runs") == ("ai", 20)
-        assert _tier_for("/api/v1/agent/runs/abc") == ("ai", 20)
-        assert _tier_for("/api/v1/agent/conversations/x/messages") == (
-            "ai", 20)
+        # V3.2：ai 档只拦生成类 POST；GET 轮询/查询走 default 档
+        # （面板 2.5s 轮询若计入 ai 档 20/min 会自己打满限流，
+        #   把用户后续的发送/取消请求一起挤挂）
+        assert _tier_for("/api/v1/agent/runs", "POST") == ("ai", 20)
+        assert _tier_for("/api/v1/agent/one-shot", "POST") == ("ai", 20)
+        assert _tier_for("/api/v1/agent/runs/abc/cancel", "POST") == ("ai", 20)
+        assert _tier_for("/api/v1/agent/runs/abc", "GET") == ("default", 100)
+        assert _tier_for("/api/v1/agent/conversations/x/messages", "GET") == (
+            "default", 100)
 
     def test_agent_rate_limit_429(self):
         from starlette.applications import Starlette

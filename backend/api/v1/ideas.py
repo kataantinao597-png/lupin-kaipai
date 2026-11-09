@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from ...ai_service import AIFatalError, AIConfigError, AIRetryableError, DEFAULT_MODEL
 from ...ai.gateway import BudgetExceededError, TaskLimitExceededError
+from ...ai.secure_messages import _secure_messages
 from ...auth.database import get_db
 from ...auth.models import User
 from ...core.deps import get_ai_gateway, get_request_model
@@ -35,7 +36,7 @@ from ...prompts import (
     build_storyboard_v2_messages,
 )
 from ...schemas import Idea, Shot
-from ...validator import validate_dict
+from ...validator import _normalize_storyboard_for_validation, validate_dict
 
 router = APIRouter(tags=["ideas"])
 
@@ -185,19 +186,32 @@ def _enqueue_ai_task(task_type: str, payload: dict, request: Request,
     payload = dict(payload or {})
     payload["_org_id"] = org_id
     # V2.1 #3：同 Idempotency-Key + 同请求体 → 直接返回已有任务，不重复建任务
-    idem = idempotency_begin("enqueue:" + task_type, request, payload)
+    # S-2：补 user_id（幂等键按用户隔离）+ 回放分支归属校验
+    idem = idempotency_begin("enqueue:" + task_type, request, payload,
+                             user_id=user.id)
     if idem.replay is not None:
         old_task = repo.get((idem.replay or {}).get("task_id") or "",
                             org_id)
         if old_task is not None:
-            return {"task_id": old_task.id, "status": old_task.status,
-                    "query_url": f"/api/v1/ai-tasks/{old_task.id}",
-                    "idempotent_replay": True}
-        # 任务记录已不在：清掉失效的幂等记录，重新建任务（不静默返回死链接）
+            # 回放归属校验：任务须属于调用者（admin/owner 例外、created_by
+            # 为空的老任务沿用组织口径）；不符则视为失效记录，重建任务，
+            # 绝不把他人 task_id 回放给调用者（结合 S-1 通用路由即跨用户读取）。
+            from ...rbac import ROLE_ADMIN, ROLE_RANK
+            _ms = get_membership(db, user.id, org_id)
+            _is_admin = bool(_ms) and ROLE_RANK.get(
+                _ms.role, 0) >= ROLE_RANK[ROLE_ADMIN]
+            if (not getattr(old_task, "created_by", "")
+                    or old_task.created_by == user.id or _is_admin):
+                return {"task_id": old_task.id, "status": old_task.status,
+                        "query_url": f"/api/v1/ai-tasks/{old_task.id}",
+                        "idempotent_replay": True}
+        # 任务记录已不在或归属不符：清掉失效的幂等记录，重新建任务
+        # （不静默返回死链接、不回放他人任务）
         idempotency_invalidate(
             "enqueue:" + task_type,
-            request.headers.get("Idempotency-Key", ""))
-        idem = idempotency_begin("enqueue:" + task_type, request, payload)
+            request.headers.get("Idempotency-Key", ""), user_id=user.id)
+        idem = idempotency_begin("enqueue:" + task_type, request, payload,
+                                 user_id=user.id)
     try:
         # 137：同步接口转异步（用户在等待结果）→ high 优先级
         task = repo.create(org_id=org_id, task_type=task_type,
@@ -240,14 +254,20 @@ def create_ideas(
             "product_id": req.product_id,
             "org_id": req.org_id,
         }, request, user, db)
+    # S-3：同步接口强制登录。原先未声称 org_id 时可匿名调用，等于公开
+    # 可调的注入通道（单条 user 消息无隔离）且费用走服务端默认 Key；
+    # 匿名试用链路就此关闭（前端工作台本就要求登录，正常用户不受影响）。
+    if user is None:
+        raise HTTPException(status_code=401, detail="创意生成需要登录")
     _model = get_request_model(request)
     # P0：声称了 org_id 就必须登录且是该组织成员。
     # 否则「匿名 + 他人 org_id」可以替别人花 AI 预算（实测 used_cents 会真的增长）。
     _org = enforce_ai_org(request, req.org_id, user, db)
     bind_gateway_org(gw, _org)
     # V2.1 #3：Idempotency-Key 去重——同 key 同体直接回放，不重复调模型扣费
+    # S-2：补 user_id，幂等键按用户隔离
     idem = idempotency_begin("ideas", request, req.model_dump(),
-                             scope=_model or "")
+                             scope=_model or "", user_id=user.id)
     if idem.replay is not None:
         return idem.replay
     try:
@@ -259,7 +279,9 @@ def create_ideas(
             msgs = build_idea_messages(product, facts)
             if feedback:
                 msgs.append({"role": "user", "content": feedback})
-            return msgs
+            # S-3：与异步 runner 同款隔离（system + 定界符 + 净化）。
+            # builder 版本文件禁止原地修改，故在路由层包裹，不动版本文件。
+            return _secure_messages(msgs)
 
         try:
             ideas, meta = gw.generate_with_retry(
@@ -311,6 +333,9 @@ def create_storyboard(
             "product_id": req.product_id,
             "org_id": req.org_id,
         }, request, user, db)
+    # S-3：同步接口强制登录（同 /api/ideas，匿名公开注入通道关闭）
+    if user is None:
+        raise HTTPException(status_code=401, detail="分镜生成需要登录")
     _model = get_request_model(request)
     # P0：声称了 org_id 就必须登录且是该组织成员（同 /api/ideas）
     _org = enforce_ai_org(request, req.org_id, user, db)
@@ -318,8 +343,9 @@ def create_storyboard(
     product = req.product.model_dump()
 
     # V2.1 #3：Idempotency-Key 去重——同 key 同体直接回放，不重复调模型扣费
+    # S-2：补 user_id，幂等键按用户隔离
     idem = idempotency_begin("storyboard", request, req.model_dump(),
-                             scope=_model or "")
+                             scope=_model or "", user_id=user.id)
     if idem.replay is not None:
         return idem.replay
 
@@ -331,11 +357,13 @@ def create_storyboard(
     v2_purpose = req.video_purpose.strip() if use_v2 else "intro"
 
     def make_messages(feedback: Optional[str]):
+        # S-3：与异步 runner 同款隔离（system + 定界符 + 净化）
         if use_v2:
-            return build_storyboard_v2_messages(
+            return _secure_messages(build_storyboard_v2_messages(
                 product, req.direction, v2_purpose, req.available_resources,
-                facts, feedback)
-        return build_storyboard_messages(product, req.direction, facts, feedback)
+                facts, feedback))
+        return _secure_messages(build_storyboard_messages(
+            product, req.direction, facts, feedback))
 
     try:
         try:
@@ -372,18 +400,28 @@ def regenerate_shot(
     user: Optional[User] = Depends(_optional_user),
     db: Session = Depends(get_db),
 ):
+    # S-3：同步接口强制登录（同 /api/ideas，匿名公开注入通道关闭；
+    # regenerate-shot 本就不带 org_id，原先全程可匿名调）
+    if user is None:
+        raise HTTPException(status_code=401, detail="镜头重生成需要登录")
     _model = get_request_model(request)
     # P0：请求头/查询参数声称了 org_id 就必须登录且是该组织成员
     _org = enforce_ai_org(request, None, user, db)
     bind_gateway_org(gw, _org)
     # V2.1 #3：Idempotency-Key 去重——同 key 同体直接回放，不重复调模型扣费
+    # S-2：补 user_id，幂等键按用户隔离
     idem = idempotency_begin("regenerate-shot", request, req.model_dump(),
-                             scope=_model or "")
+                             scope=_model or "", user_id=user.id)
     if idem.replay is not None:
         return idem.replay
     sb = req.storyboard
     shots = sb.get("shots", [])
-    if not any(s.get("shot_number") == req.shot_number for s in shots):
+    # 简化格式用 shot_no，完整格式用 shot_number，两者都要认，否则
+    # Agent 产出的简化分镜在重生成路直接报“镜头不存在”。
+    def _shot_no(s):
+        return s.get("shot_number", s.get("shot_no"))
+    shot_idx = next((i for i, s in enumerate(shots) if _shot_no(s) == req.shot_number), None)
+    if shot_idx is None:
         idem.abort()
         raise HTTPException(status_code=400, detail=f"镜头 {req.shot_number} 不存在")
     if req.shot_number in req.locked:
@@ -391,7 +429,9 @@ def regenerate_shot(
         raise HTTPException(status_code=400, detail=f"镜头 {req.shot_number} 已锁定，不能重生成")
 
     def make_messages(feedback: Optional[str]):
-        return build_regen_shot_messages(sb, req.shot_number, req.instruction, req.locked, feedback)
+        # S-3：与异步 runner 同款隔离（system + 定界符 + 净化）
+        return _secure_messages(build_regen_shot_messages(
+            sb, req.shot_number, req.instruction, req.locked, feedback))
 
     try:
         try:
@@ -410,16 +450,15 @@ def regenerate_shot(
             raise HTTPException(status_code=502, detail="模型返回了错误的镜头序号，已丢弃该结果")
 
         new_sb = json.loads(json.dumps(sb))  # 深拷贝
-        for i, s in enumerate(new_sb["shots"]):
-            if s.get("shot_number") == req.shot_number:
-                new_sb["shots"][i] = new_shot.model_dump()
-                break
-        # 锁定镜头保护：确认 locked 镜头内容未被改动
+        new_sb["shots"][shot_idx] = new_shot.model_dump()
+        # 锁定镜头保护：确认 locked 镜头内容未被改动（简化格式按 shot_no 认）
         for s_old, s_new in zip(sb["shots"], new_sb["shots"]):
-            if s_old.get("shot_number") in req.locked and s_old != s_new:
-                raise HTTPException(status_code=502, detail=f"锁定镜头 {s_old.get('shot_number')} 被意外改动，已中止")
+            if _shot_no(s_old) in req.locked and s_old != s_new:
+                raise HTTPException(status_code=502, detail=f"锁定镜头 {_shot_no(s_old)} 被意外改动，已中止")
 
-        errors, _ = validate_dict(new_sb)
+        # 与其他入口统一：先归一化再校验，混格式不再只报结构错；
+        # warning 只提示，不阻断（与原行为一致）。
+        errors, _ = validate_dict(_normalize_storyboard_for_validation(new_sb))
         warning = "; ".join(errors) if errors else ""
         resp = {"shot": new_shot.model_dump(), "storyboard": new_sb,
                 "warning": warning, "attempts": meta["attempts"]}

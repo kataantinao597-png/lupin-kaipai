@@ -485,7 +485,7 @@ class TestAdapters:
 
 
 # ---------------------------------------------------------------------------
-# 5. context：装配 + quota 桩位
+# 5. context：装配 + 每日限额（2026-10-22 接真实读数，不再是桩位）
 # ---------------------------------------------------------------------------
 
 class TestContext:
@@ -508,9 +508,52 @@ class TestContext:
         ctx2 = assemble_agent_context(db, ident2, work_id=w.id)
         assert ctx2["work"] is None
 
-    def test_quota_stub(self):
+    def test_quota_without_db_fail_open(self):
+        """装配路径宽容：没有 session 时不阻断 run，但必须标"未知"而非"不限"。
+
+        M4 修复：未知额度伪装成"不受限"会让前端显示"配图不限次"，与提交时
+        的 429 拦截口径不一致。fail-open 语义保留（enforced=False、
+        allowed=True），但 reason 须明示未知、unknown=True。
+        """
         q = check_user_quota(user_id="u", org_id="o")
         assert q["enforced"] is False and q["allowed"] is True
+        assert q["unknown"] is True
+        assert "未知" in q["reason"]
+
+    def test_quota_real_limit_for_editor(self, db):
+        """普通用户读真实用量：用满 5 次后 allowed=False、remaining=0。"""
+        from datetime import datetime, timezone
+
+        from backend.models import PosterImageUsage
+        from backend.services.poster_quota import POSTER_IMAGE_DAILY_LIMIT
+
+        org_id, ident = _mk_org(db, role="editor")
+        q0 = check_user_quota(user_id=ident.user_id, org_id=org_id, db=db,
+                              role="editor")
+        assert q0["enforced"] is True
+        assert q0["allowed"] is True
+        assert q0["remaining"] == POSTER_IMAGE_DAILY_LIMIT
+
+        now = datetime.now(timezone.utc)
+        for _ in range(POSTER_IMAGE_DAILY_LIMIT):
+            db.add(PosterImageUsage(user_id=ident.user_id, org_id=org_id,
+                                    created_at=now))
+        db.commit()
+
+        q1 = check_user_quota(user_id=ident.user_id, org_id=org_id, db=db,
+                              role="editor")
+        assert q1["allowed"] is False
+        assert q1["remaining"] == 0
+        assert q1["used"] == POSTER_IMAGE_DAILY_LIMIT
+
+    def test_quota_exempt_for_admin(self, db):
+        """admin 豁免：enforced=False、remaining=None（不受限，而非 0 次）。"""
+        org_id, ident = _mk_org(db, role="admin")
+        q = check_user_quota(user_id=ident.user_id, org_id=org_id, db=db,
+                             role="admin")
+        assert q["enforced"] is False
+        assert q["allowed"] is True
+        assert q["remaining"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -618,13 +661,18 @@ class TestMigration0020:
         reset_engine()
         try:
             from alembic import command
+            from alembic.script import ScriptDirectory
             from sqlalchemy import create_engine
+            # 版本戳不写死：head 随迁移增加（0022/0023…）而变化，写死会变成
+            # 「迁移没错、测试过期」的假失败
+            head = ScriptDirectory.from_config(_alembic_cfg()).get_current_head()
             command.upgrade(_alembic_cfg(), "head")
-            assert _version(scratch) == "0021_idempotency_keys"
+            assert _version(scratch) == head
             eng = create_engine(f"sqlite:///{scratch}")
             try:
                 assert {"conversations", "conversation_messages",
-                        "agent_steps", "idempotency_keys"} <= _tables(eng)
+                        "agent_steps", "idempotency_keys",
+                        "poster_image_usage"} <= _tables(eng)
             finally:
                 eng.dispose()
         finally:

@@ -15,6 +15,21 @@ from ..ai_service import AIFatalError
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# R1 提示词注入隔离（与 S4 同标准，对齐 services/agent/orchestrator.py）
+# ---------------------------------------------------------------------------
+#: 共享实现已抽到 backend/ai/secure_messages.py（无 backend 内部导入，
+#: 不循环）；此处保留原名导入，旧导入方（测试/其他模块）不受影响。
+#: 定界符 token 与替换文本、system 文案与 orchestrator.py 完全一致，
+#: 不另发明一套。
+from ..ai.secure_messages import (
+    _SYSTEM_CONTENT,
+    _DELIM_TOKENS,
+    _secure_messages,
+    _strip_delimiters,
+)
+
+
 def _get_server_ai():
     """取服务端配置的 AIService（环境变量）。未配置抛 RuntimeError。"""
     from ..ai_service import AIService, AIConfigError
@@ -106,7 +121,7 @@ def run_ideas(task_id: str, is_cancelled: Callable[[], bool],
             msgs = build_idea_messages(product, facts)
             if feedback:
                 msgs.append({"role": "user", "content": feedback})
-            return msgs
+            return _secure_messages(msgs)  # R1：system + 净化 + 定界符 + 分消息
 
         ideas, meta = gw.generate_with_retry(
             "ideas", make_messages, _validate_ideas,
@@ -148,9 +163,12 @@ def run_storyboard(task_id: str, is_cancelled: Callable[[], bool],
 
         def make_messages(feedback):
             if _use_v2:
-                return build_storyboard_v2_messages(
+                msgs = build_storyboard_v2_messages(
                     product, direction, _v2_purpose, _resources, facts, feedback)
-            return build_storyboard_messages(product, direction, facts, feedback)
+            else:
+                msgs = build_storyboard_messages(product, direction, facts,
+                                                 feedback)
+            return _secure_messages(msgs)  # R1：system + 净化 + 定界符 + 分消息
 
         sb, meta = gw.generate_with_retry(
             "storyboard", make_messages, validate_dict,
@@ -297,7 +315,7 @@ def run_livestream_script(task_id: str, is_cancelled: Callable[[], bool],
                                              duration, extra)
             if feedback:
                 msgs.append({"role": "user", "content": feedback})
-            return msgs
+            return _secure_messages(msgs)  # R1：system + 净化 + 定界符 + 分消息
 
         # V3.1 P0-3：校验器带上请求时长做时间轴一致性检查；
         # 多次重试仍不合格 → generate_with_retry 抛 AIFatalError → 任务明确失败，
@@ -363,7 +381,7 @@ def run_livestream_regen_segment(task_id: str,
                 product, facts, category, duration, segment, extra)
             if feedback:
                 msgs.append({"role": "user", "content": feedback})
-            return msgs
+            return _secure_messages(msgs)  # R1：system + 净化 + 定界符 + 分消息
 
         seg, meta = gw.generate_with_retry(
             "livestream_regen_segment", make_messages,

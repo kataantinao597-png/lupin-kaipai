@@ -35,6 +35,7 @@ from ...risk import check_fact_grounding
 from ...services import ai_ledger, delivery_service
 from .. import risk_service
 from .context import AgentIdentity
+from ...validator import _normalize_storyboard_for_validation  # 共享入口，定义在 validator.py
 from .tools import (
     PATCHABLE_DATA_KEYS,
     TOOLS_REGISTRY,
@@ -268,6 +269,7 @@ def _adapt_generate_ideas(deps: ToolDeps, p) -> ToolResult:
 def _adapt_generate_storyboard(deps: ToolDeps, p) -> ToolResult:
     _require_action(deps.db, deps.identity, "work:read")
     ai = _require_ai(deps, "generate_storyboard")
+    from ...validator import validate_dict
     prompt = (
         "你是农产品短视频分镜师。生成分镜 JSON："
         "{\"shots\": [{\"shot_no\": int, \"scene\": str, \"shot_type\": str, "
@@ -276,18 +278,50 @@ def _adapt_generate_storyboard(deps: ToolDeps, p) -> ToolResult:
         f"\n目标时长约 {p.duration_sec} 秒，共 {p.shot_count} 个镜头。"
         f"\nbrief：{p.brief}"
         + (f"\n创意方向：{p.idea}" if p.idea else "")
+        + "\n格式一致性要求（否则整份分镜会在校验时失败）：只输出上面"
+          "的简化格式即可；如果你要输出 shoot_steps / acceptance_criteria "
+          "这类 v2 字段，必须给每个镜头都补齐 shoot_steps（至少3步）、"
+          "acceptance_criteria（至少2条）、failure_modes（至少1项，"
+          "{\"symptom\": str, \"fix\": str}）、reshoot_guide，缺一不可。"
+          "不要混格式：不要有的镜头有 v2 字段、有的镜头没有。"
     )
-    try:
-        result = ai(prompt)
-    except _CONTROL_FLOW_EXCEPTIONS:
-        raise
-    except Exception as e:
-        return _fail("model_error", f"分镜生成模型调用失败: {e}")
-    shots = result.get("shots") if isinstance(result, dict) else None
-    if not isinstance(shots, list) or not shots:
-        return _fail("model_error", "模型返回结构非法：缺少 shots 数组")
-    return _ok({"storyboard": {"shots": shots}},
-               warnings=["结果未落盘：如需保存，请用 patch_work 写回作品"])
+    # 第6步即校验+重试：此前这里不校验，缺字段的分镜要到第7步拍摄清单
+    # 才以“分镜未通过校验”失败。简化格式本身能通过校验（不触发 v2 规则），
+    # 所以正常路径不增加模型调用；只有触发 v2 规则又缺字段时才重试，
+    # 仍失败则在本步明确失败，不再进入拍摄清单。
+    last_errors: list[str] = []
+    for attempt in range(3):
+        use_prompt = prompt
+        if attempt:
+            use_prompt = (
+                prompt
+                + "\n修正要求：上次输出未通过校验，请修正后重新输出完整 JSON"
+                  "（只输出 JSON，不要加解释文字），不要丢镜头：\n"
+                + "\n".join(f"- {e}" for e in last_errors)
+                + "\n上次输出（请在此基础上补齐缺失字段）：\n"
+                + json.dumps({"shots": last_shots}, ensure_ascii=False)
+            )
+        try:
+            result = ai(use_prompt)
+        except _CONTROL_FLOW_EXCEPTIONS:
+            raise
+        except Exception as e:
+            return _fail("model_error", f"分镜生成模型调用失败: {e}")
+        shots = result.get("shots") if isinstance(result, dict) else None
+        if not isinstance(shots, list) or not shots:
+            return _fail("model_error", "模型返回结构非法：缺少 shots 数组")
+        last_shots = shots
+        errors, _ = validate_dict(
+            _normalize_storyboard_for_validation({"shots": shots}))
+        if not errors:
+            return _ok({"storyboard": {"shots": shots}},
+                       warnings=["结果未落盘：如需保存，请用 patch_work 写回作品"])
+        last_errors = errors
+    suffix = f"（等共 {len(last_errors)} 条）" if len(last_errors) > 5 else ""
+    return _fail("validation",
+                 "分镜生成未通过校验（第6步即失败，不再进入拍摄清单）: "
+                 + "; ".join(last_errors[:5]) + suffix,
+                 data={"errors": last_errors})
 
 
 def _adapt_check_risk(deps: ToolDeps, p) -> ToolResult:
@@ -329,57 +363,6 @@ def _adapt_check_risk(deps: ToolDeps, p) -> ToolResult:
 # ---------------------------------------------------------------------------
 
 #: validator Shot.shot_type 的枚举值
-_SHOT_TYPE_ENUM = ("特写", "近景", "中景", "中远景", "全景", "远景")
-
-
-def _normalize_storyboard_for_validation(sb: Any) -> Any:
-    """把 generate_storyboard 工具的简化分镜格式归一化为 validator 完整 schema。
-
-    背景：``backend.validator.Storyboard`` 要求 product_summary /
-    target_audience / creative_direction / target_duration_seconds / shoot /
-    shot_number / duration_seconds 等完整字段，而工具链产出的是简化格式
-    （shot_no / duration_sec / scene）。直接校验会误报"结构非法"。
-    本函数只做字段映射与兜底填充，不改变镜头实质内容；checklist 条目仍按
-    原始简化数据组装。已是完整 schema 的输入原样返回（幂等）。
-    非法输入（非 dict / shots 非 list）原样返回，让 validator 按原逻辑报错。
-    """
-    if not isinstance(sb, dict):
-        return sb
-    shots = sb.get("shots")
-    if not isinstance(shots, list):
-        return sb
-    if shots and isinstance(shots[0], dict) and "shot_number" in shots[0]:
-        return sb  # 已是完整 schema，幂等返回
-    norm_shots = []
-    for i, s in enumerate(shots):
-        if not isinstance(s, dict):
-            norm_shots.append(s)
-            continue
-        st = s.get("shot_type")
-        norm_shots.append({
-            "shot_number": s.get("shot_no", i + 1),
-            "duration_seconds": s.get("duration_sec", 0),
-            "shot_type": st if st in _SHOT_TYPE_ENUM else "中景",
-            "scene_description": s.get("scene") or "",
-            "shooting_action": s.get("shoot_notes") or s.get("scene") or "",
-            "voiceover": s.get("voiceover") or "",
-            "subtitle": s.get("subtitle") or "",
-            "camera_movement": "固定机位",
-        })
-    total = sum(float(x.get("duration_seconds") or 0) for x in norm_shots
-                if isinstance(x, dict))
-    normalized = {
-        "product_summary": "AI 助手生成",
-        "target_audience": "目标用户",
-        "creative_direction": "AI 创意",
-        "target_duration_seconds": total if total > 0 else 1,
-        "shoot": {"device": "手机", "people": 1},
-    }
-    for k, v in sb.items():
-        if k != "shots":
-            normalized[k] = v
-    normalized["shots"] = norm_shots
-    return normalized
 
 
 def _adapt_shooting_checklist(deps: ToolDeps, p) -> ToolResult:
@@ -389,8 +372,10 @@ def _adapt_shooting_checklist(deps: ToolDeps, p) -> ToolResult:
     # 接校验会误报结构非法）；checklist 条目仍按原始简化数据组装。
     errors, _ = validate_dict(_normalize_storyboard_for_validation(p.storyboard))
     if errors:
+        # 此前只截前 5 条，截图里只看到镜头 1、2 的问题，容易误以为只有这两镜有问题。
+        suffix = f"（等共 {len(errors)} 条）" if len(errors) > 5 else ""
         return _fail("validation",
-                     "分镜未通过校验: " + "; ".join(errors[:5]),
+                     "分镜未通过校验: " + "; ".join(errors[:5]) + suffix,
                      data={"errors": errors})
     shots = p.storyboard.get("shots") or []
     shoot_state = p.shoot_state or {}

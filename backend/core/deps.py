@@ -50,6 +50,22 @@ def check_rate_limit(request: Request):
     bucket.append(now)
 
 
+#: M-4：自带 Key 可信域名白名单（与前端 TRUSTED_API_HOSTS 同列表，
+#: 精确匹配或子域名后缀，大小写不敏感）。
+TRUSTED_API_HOSTS = ("deepkey.top", "api.openai.com")
+
+
+def _api_host_allowed(base: str) -> bool:
+    """base URL 的 hostname 是否在可信列表内（前端 _apiHostAllowed 同款）。"""
+    from urllib.parse import urlsplit
+    try:
+        host = (urlsplit(base).hostname or "").lower()
+    except ValueError:
+        return False
+    return any(host == d or host.endswith("." + d)
+               for d in TRUSTED_API_HOSTS)
+
+
 def get_ai_service(request: Request):
     """023：AI 服务依赖。
 
@@ -69,6 +85,24 @@ def get_ai_service(request: Request):
                 validate_outbound_url(user_base, purpose="自定义 API 地址")
             except SSRFError as e:
                 raise HTTPException(status_code=400, detail=f"自定义 API 地址被拦截: {e}")
+            # M-4：后端域名白名单（与前端 getApiConfig 的 TRUSTED_API_HOSTS
+            # 同列表）。此前白名单只在前端生效，直接调 API 带任意公网域名
+            # 即可让服务端把用户 Key 发往任意主机；现后端强制执行。
+            # 轻微 #6：同时强制 https——http 明文会让 Key 裸奔。
+            from urllib.parse import urlsplit
+            try:
+                _scheme = (urlsplit(user_base).scheme or "").lower()
+            except ValueError:
+                _scheme = ""
+            if _scheme != "https":
+                raise HTTPException(
+                    status_code=400,
+                    detail="自定义 API 地址必须使用 https（明文传输会泄露 Key）")
+            if not _api_host_allowed(user_base):
+                raise HTTPException(
+                    status_code=400,
+                    detail="自定义 API 地址域名不在可信列表内（仅支持 "
+                           "deepkey.top、api.openai.com 及其子域名）")
         try:
             return AIService(api_key=user_key, base_url=user_base)
         except AIConfigError as e:

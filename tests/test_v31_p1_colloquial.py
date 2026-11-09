@@ -181,7 +181,10 @@ class TestColloquialAPIFacts:
         assert body["prompt_version"] == "colloquial_v2"
         assert body["facts_used"] == 1  # 只有 confirmed 那条
         # prompt 里确实注入了已确认事实，且 draft 的没进去
-        prompt = colloq_env.gw.last_messages[0]["content"]
+        # S-3 安全形态：messages[0] 现为安全 system，事实在 user 数据块里查
+        prompt = "\n".join(
+            m["content"] for m in colloq_env.gw.last_messages
+            if m["role"] == "user")
         assert "产地：山东烟台" in prompt
         assert "销量全国第一" not in prompt
 

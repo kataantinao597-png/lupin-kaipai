@@ -268,14 +268,36 @@ function newIdempotencyKey() {
   return "auto";
 }
 
+/* S3 修复：自带 Key 只允许发往可信域名。白名单：deepkey.top、
+   api.openai.com 及其子域名。校验放在读取侧（getApiConfig）而非仅
+   保存侧：sessionStorage 是同源全局键，任何路径写入的旧值/脏值
+   （含白名单实施前已存的恶意 base）都必须在真正发 Key 之前被拦下；
+   只在 saveCfg 校验等于只锁前门。 */
+const TRUSTED_API_HOSTS = ["deepkey.top", "api.openai.com"];
+function _apiHostAllowed(base) {
+  try {
+    const h = new URL(base).hostname.toLowerCase();
+    return TRUSTED_API_HOSTS.some(d => h === d || h.endsWith("." + d));
+  } catch (e) { return false; }
+}
 /* 用户自带 Key（只存 sessionStorage，关闭标签页清除）——ApiClient 会自动读取 */
 function getApiConfig() {
   try {
-    return {
-      base: sessionStorage.getItem("lupin_api_base") || "",
-      key: sessionStorage.getItem("lupin_api_key") || "",
-      model: sessionStorage.getItem("lupin_api_model") || "",
-    };
+    const base = sessionStorage.getItem("lupin_api_base") || "";
+    const key = sessionStorage.getItem("lupin_api_key") || "";
+    const model = sessionStorage.getItem("lupin_api_model") || "";
+    // 发送侧二次校验：非白名单 base 一律视为未配置，Key 绝不发出。
+    // 即使旧会话里残留恶意 base（白名单实施前写入、或绕过 saveCfg 写入），
+    // 到真正调用时仍会被拦下；同时清掉脏值，避免下次继续命中。
+    if (base && !_apiHostAllowed(base)) {
+      try {
+        sessionStorage.removeItem("lupin_api_base");
+        sessionStorage.removeItem("lupin_api_key");
+        sessionStorage.removeItem("lupin_api_model");
+      } catch (e) { /* 忽略 */ }
+      return { base: "", key: "", model: "" };
+    }
+    return { base, key, model };
   } catch (e) { return { base: "", key: "", model: "" }; }
 }
 window.getApiConfig = getApiConfig;
@@ -357,17 +379,68 @@ const AGENT_TOOL_LABEL = {
   rewrite_copy:"文案改写", check_delivery:"交付检查", parse_brief:"解析需求",
   patch_work:"更新作品（需确认）", get_task_status:"查询任务状态", query_usage:"查询用量",
   regenerate_shot:"重新生成镜头", delete_work:"删除作品（需确认）",
+  generate_strategy:"制定营销策略", generate_platform_copy:"生成平台文案",
 };
 const AGENT = {
   state:"idle", taskId:null, convId:null, lastBriefText:"",
   ctx:null, timer:null, log:[], renderedConfirmFor:null, renderedResultFor:null,
   lastState:null, pollFails:0, pendingSend:"",
+  cancelReq:false, startedAt:null, // V3.2：取消请求标记 + 开始时间（前端耗时反馈）
+  evSeq:0, // V3.3：过程事件流已重放到的 seq
+  restoreKey:"lupin_agent_run", restoredFor:null, // V3.5：刷新恢复（sessionStorage 快照 + 防重复恢复）
 };
+
+/* V3.3：把后端过程事件流重放进聊天区。
+   started → 亮"正在X…"气泡；done → 原位替换为结果摘要（找不到 running
+   气泡（刷新恢复/乱序）时直接渲染完成气泡）。增量消费，幂等可重放。 */
+function renderAgentEvents(st) {
+  const evs = (st && st.events) || [];
+  if (!evs.length) return;
+  let dirty = false;
+  for (const ev of evs) {
+    if (ev.seq < AGENT.evSeq) continue;
+    AGENT.evSeq = ev.seq + 1;
+    if (ev.type === "step_started") {
+      agentLog("step", { running: true, tool: ev.tool_id, id: "ev-" + ev.seq });
+    } else if (ev.type === "step_done") {
+      let idx = -1;
+      for (let i = AGENT.log.length - 1; i >= 0; i--) {
+        const x = AGENT.log[i];
+        if (x.kind === "step" && x.running && x.tool === ev.tool_id) { idx = i; break; }
+      }
+      if (idx >= 0) {
+        AGENT.log[idx] = { kind: "step", tool: ev.tool_id, running: false,
+          status: ev.status, note: ev.note || "", duration_ms: ev.duration_ms };
+        dirty = true;
+      } else {
+        agentLog("step", { running: false, tool: ev.tool_id,
+          status: ev.status, note: ev.note || "", duration_ms: ev.duration_ms });
+      }
+    } else if (ev.type === "artifact" && (ev.items || []).length) {
+      AGENT.log.push({ kind: "artifact", tool: ev.tool_id, items: ev.items });
+      dirty = true;
+    }
+  }
+  if (dirty) renderAgentLog();
+}
+/* V3.3：从事件流推导"正在进行中的工具"（侧栏当前步骤行） */
+function agentRunningTools(st) {
+  const cnt = {};
+  for (const ev of (st && st.events) || []) {
+    if (ev.type === "step_started") cnt[ev.tool_id] = (cnt[ev.tool_id] || 0) + 1;
+    else if (ev.type === "step_done") {
+      cnt[ev.tool_id] = (cnt[ev.tool_id] || 1) - 1;
+      if (cnt[ev.tool_id] <= 0) delete cnt[ev.tool_id];
+    }
+  }
+  return Object.keys(cnt);
+}
 const AGENT_TERMINAL = ["completed", "partial", "failed", "cancelled"];
 const AGENT_STATE_META = {
   idle:["空闲","gray"], sending:["发送中","blue"], queued:["排队中","amber"],
   running:["运行中","blue"], waiting_user:["等待确认","amber"], paused:["已暂停","amber"], partial:["部分完成","amber"],
   failed:["失败","red"], cancelled:["已取消","gray"], completed:["已完成","green"], saved:["已保存","green"],
+  cancelling:["取消中","amber"], // V3.2：已发出取消请求、等待当前步骤结束
 };
 const AGENT_STEP_META = {
   pending:["待执行","gray"], running:["执行中","blue"], succeeded:["已完成","green"],
@@ -375,13 +448,23 @@ const AGENT_STEP_META = {
 };
 
 function agentNormStatus(st) {
+  /* V3.2：task.status 终态优先。取消/失败落库时 payload.run_status 可能
+     仍停留在创建时的 queued/running（取消路径不回写 payload），
+     优先信它会导致轮询永远看不到终态——点取消后 UI 一直"卡在取消中"的根因。 */
+  const ts = st && st.status;
+  if (ts === "cancelled") return "cancelled";
+  if (ts === "failed") return "failed";
+  if (ts === "succeeded") {
+    const rs0 = st && st.run_status;
+    return (rs0 === "partial" || rs0 === "completed") ? rs0 : "completed";
+  }
   const m = { queued:"queued", running:"running", waiting_user:"waiting_user", paused:"paused", partial:"partial",
               completed:"completed", failed:"failed", cancelled:"cancelled" };
-  if (st && m[st.run_status]) return m[st.run_status];
-  const ts = st && st.status;
-  if (ts === "succeeded") return "completed";
-  if (ts === "failed") return "failed";
-  if (ts === "cancelled") return "cancelled";
+  if (st && m[st.run_status]) {
+    /* 执行中：run_status 可能滞留创建初值 queued，任务实际已 running——按 running 显示 */
+    if (st.run_status === "queued" && ts === "running") return "running";
+    return m[st.run_status];
+  }
   if (ts === "running") return "running";
   return "queued";
 }
@@ -404,10 +487,23 @@ function setAgentButtons(disp) {
   const resumable = disp === "paused";
   const bc = $("btn_agent_cancel"), br = $("btn_agent_retry");
   const bp = $("btn_agent_pause"), brs = $("btn_agent_resume");
-  if (bc) bc.style.display = cancellable ? "" : "none";
+  if (bc) bc.style.display = (cancellable && !AGENT.cancelReq) ? "" : "none"; // V3.2：取消中不重复可点
   if (br) br.style.display = retryable ? "" : "none";
-  if (bp) bp.style.display = pausable ? "" : "none";
+  if (bp) bp.style.display = (pausable && !AGENT.cancelReq) ? "" : "none";
   if (brs) brs.style.display = resumable ? "" : "none";
+}
+/* V3.2：耗时格式化——执行中/取消中给用户明确的时间预期 */
+function agentFmtElapsed(sec) {
+  if (sec == null || !isFinite(sec) || sec < 0) return "";
+  if (sec < 60) return sec + " 秒";
+  return Math.floor(sec / 60) + " 分 " + (sec % 60) + " 秒";
+}
+/* V3.3：步骤耗时（毫秒）人性化显示，修"用时 0ms"的假数据观感 */
+function agentFmtDur(ms) {
+  if (ms == null || !isFinite(ms) || ms < 0) return "";
+  if (ms < 1000) return "瞬间";
+  if (ms < 60000) return (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + " 秒";
+  return agentFmtElapsed(Math.round(ms / 1000));
 }
 
 /* ---------- 对话区 ---------- */
@@ -436,7 +532,26 @@ function renderAgentLog() {
   }
   box.innerHTML = AGENT.log.map((e) => {
     if (e.kind === "user") return `<div class="agent-msg user"><div class="agent-bubble">${esc(e.text)}</div></div>`;
+    /* V3.6：寒暄直答气泡（assistant 样式 + 可点示例） */
+    if (e.kind === "ai") return `<div class="agent-msg assistant"><div class="agent-bubble">${esc(e.text)}
+      ${e.suggests ? `<div class="agent-suggest">${e.suggests.map((s) => `<button data-act="suggest" data-text="${esc(s)}">${esc(s)}</button>`).join("")}</div>` : ""}</div></div>`;
     if (e.kind === "sys") return `<div class="agent-msg sys"><span class="agent-sysline${e.live ? " live" : ""}"><span class="dot"></span>${esc(e.text)}</span></div>`;
+    /* V3.3：过程步骤气泡——running 亮"正在…"，完成原位替换为结果摘要 */
+    if (e.kind === "step") {
+      const label = esc(agentToolLabel(e.tool));
+      if (e.running) return `<div class="agent-msg sys"><span class="agent-sysline live" id="${esc(e.id || "")}"><span class="dot"></span>正在${label}…</span></div>`;
+      const ok = e.status === "succeeded";
+      const dur = agentFmtDur(e.duration_ms);
+      const body = e.note ? esc(e.note) : (label + (ok ? " 完成" : " 失败"));
+      return `<div class="agent-msg sys"><span class="agent-sysline${ok ? "" : " err"}">${ok ? "✓" : "✕"} ${body}${dur ? `<span class="dim">${dur}</span>` : ""}</span></div>`;
+    }
+    /* V3.4：成果卡片——每步产出内容逐条渐入（创意标题/分镜/策略要点） */
+    if (e.kind === "artifact") {
+      return `<div class="agent-msg sys"><div class="agent-artifact">
+        <div class="t">${esc(agentToolLabel(e.tool))} · 成果</div>
+        ${e.items.map((x, i) => `<div class="it" style="animation-delay:${(i * 0.12).toFixed(2)}s">${esc(x)}</div>`).join("")}
+      </div></div>`;
+    }
     if (e.kind === "confirm") return agentConfirmHtml(e);
     if (e.kind === "result") return agentResultHtml(e);
     if (e.kind === "error") return agentErrorHtml(e);
@@ -520,8 +635,18 @@ function renderAgentPlan(st) {
   const prog = Math.max(0, Math.min(100, st.progress || 0));
   const pend = st.pending_step;
   const steps = st.steps || [];
-  let html = `<div class="agent-progress"><div class="meta"><span><span class="pill ${meta[1]}" style="margin-right:6px">${esc(meta[0])}</span></span><span>${prog}%</span></div>
+  /* V3.2：执行中显示真实耗时（后端每步推进度，前端补时间维度） */
+  const liveDisp = ["queued", "running", "cancelling"].includes(disp);
+  const elapsedTxt = (liveDisp && AGENT.startedAt)
+    ? agentFmtElapsed(Math.round((Date.now() - AGENT.startedAt) / 1000)) : "";
+  const metaLine = elapsedTxt ? `${prog}% · ${elapsedTxt}` : `${prog}%`;
+  let html = `<div class="agent-progress"><div class="meta"><span><span class="pill ${meta[1]}" style="margin-right:6px">${esc(meta[0])}</span></span><span>${esc(metaLine)}</span></div>
     <div class="progress"><i style="width:${prog}%"></i></div></div>`;
+  /* V3.3：进行中的步骤（事件流推导）——侧栏不再只有干巴巴的已完成列表 */
+  const curTools = agentRunningTools(st);
+  if (curTools.length && !AGENT_TERMINAL.includes(agentNormStatus(st))) {
+    html += `<div class="agent-step cur"><span class="n">⚙</span><div class="tx"><b>正在${esc(agentToolLabel(curTools[0]))}…</b><span>当前步骤进行中，完成会自动记入下方列表</span></div><span class="pill blue">进行中</span></div>`;
+  }
   if (pend) {
     html += `<div class="agent-step cur"><span class="n">!</span><div class="tx"><b>${esc(agentToolLabel(pend.tool_id))}</b><span>步骤 ${(pend.step_idx || 0) + 1} · 等待你在左侧确认${pend.optional ? "（可选）" : ""}</span></div><span class="pill amber">待确认</span></div>`;
   }
@@ -531,14 +656,27 @@ function renderAgentPlan(st) {
       return `<div class="agent-step${s.status === "running" || s.status === "waiting_user" ? " cur" : ""}">
         <span class="n">${i + 1}</span>
         <div class="tx"><b>${esc(agentToolLabel(s.tool_id))}</b>
-        ${s.error ? `<span>✕ ${esc(String(s.error).slice(0, 120))}</span>` : (s.duration_ms != null ? `<span>用时 ${s.duration_ms}ms</span>` : `<span>${esc(s.tool_id)}</span>`)}</div>
+        ${s.error ? `<span>✕ ${esc(String(s.error).slice(0, 120))}</span>` : (s.duration_ms != null ? `<span>用时 ${agentFmtDur(s.duration_ms)}</span>` : `<span>${esc(s.tool_id)}</span>`)}</div>
         <span class="pill ${sm[1]}">${sm[0]}</span></div>`;
     }).join("");
   } else if (!pend) {
-    html += `<div class="agent-plan-empty">计划生成中…步骤出现后会列在这里。</div>`;
+    /* V3.2：首步编排期（无任何步骤落库）给出明确预期，不再像卡死 */
+    html += `<div class="agent-plan-empty">正在解析需求并编排执行步骤…<br><span style="font-size:12px">首次编排通常需要 10–60 秒（取决于模型网关速度），出现步骤后这里会实时更新。</span></div>`;
   }
   if ((st.confirmed_steps || []).length) html += `<div class="agent-plan-empty" style="padding-top:8px">已确认 ${st.confirmed_steps.length} 个步骤</div>`;
   if (st.error && agentNormStatus(st) === "failed") html += `<div class="agent-plan-empty" style="color:#B03232">✕ ${esc(String(st.error).slice(0, 160))}</div>`;
+  /* V3.6：生成结果查看区——成果写回了哪个作品、去哪看，一目了然 */
+  const wid = st.work_id;
+  if (wid && AGENT_TERMINAL.includes(agentNormStatus(st))) {
+    html += `<div class="agent-results-box">
+      <div class="t">📦 生成结果</div>
+      <div class="d">本次全部成果已写入作品，点下方直接查看：</div>
+      <button class="btn primary sm" data-act="open-result" data-wid="${esc(wid)}" data-view="v1" style="margin:8px 0 6px">打开作品台查看 →</button>
+      <div class="agent-quick">
+        <button data-act="open-result" data-wid="${esc(wid)}" data-view="v3">分镜 / 创意</button>
+        <button data-act="open-result" data-wid="${esc(wid)}" data-view="v5">拍摄清单</button>
+      </div></div>`;
+  }
   body.innerHTML = html;
 }
 
@@ -565,12 +703,20 @@ async function agentPollTick() {
   if (!st) return;
   AGENT.lastState = st;
   const norm = agentNormStatus(st);
-  const disp = agentDisplayState(st);
+  let disp = agentDisplayState(st);
+  /* V3.2：已请求取消但任务仍在收尾时，显示"取消中"而非"运行中"，
+     避免用户以为取消没生效 */
+  if (AGENT.cancelReq && !AGENT_TERMINAL.includes(norm)) disp = "cancelling";
   if (disp !== AGENT.state) {
     AGENT.state = disp;
-    agentLog("sys", { text: "状态更新：" + (AGENT_STATE_META[disp] || [])[0], live: !AGENT_TERMINAL.includes(norm), id: "run-lifecycle" });
+    agentLog("sys", { text: disp === "cancelling"
+      ? "正在取消…等待当前步骤结束（已 " + agentFmtElapsed(Math.round((Date.now() - (AGENT.startedAt || Date.now())) / 1000)) + "）"
+      : "状态更新：" + (AGENT_STATE_META[disp] || [])[0],
+      live: !AGENT_TERMINAL.includes(norm), id: "run-lifecycle" });
   }
-  renderAgentPill(disp); setAgentButtons(disp); renderAgentPlan(st);
+  renderAgentPill(disp); setAgentButtons(disp);
+  renderAgentEvents(st); // V3.3：过程事件先于计划面板入聊天流
+  renderAgentPlan(st);
   if (norm === "waiting_user" && st.pending_step) agentMaybeConfirm(st);
   if (AGENT_TERMINAL.includes(norm)) { stopAgentPoll(); agentOnTerminal(st); }
 }
@@ -582,14 +728,82 @@ function agentMaybeConfirm(st) {
 function agentOnTerminal(st) {
   if (AGENT.renderedResultFor === AGENT.taskId) return;
   AGENT.renderedResultFor = AGENT.taskId;
+  agentClearSnapshot(); // V3.5：终态后清刷新恢复快照
   const norm = agentNormStatus(st);
+  AGENT.cancelReq = false; AGENT.startedAt = null; // V3.2：终态清标记
   agentLog("sys", { text: "状态更新：" + (AGENT_STATE_META[agentDisplayState(st)] || [])[0], id: "run-lifecycle" });
   if (norm === "failed") agentLog("error", { state: st });
   else if (norm === "cancelled") agentLog("sys", { text: "任务已取消" });
   else agentLog("result", { state: st });
 }
 
+/* ---------- V3.5：刷新恢复（sessionStorage 快照，同标签页刷新不丢任务） ---------- */
+function agentSaveSnapshot() {
+  try {
+    sessionStorage.setItem(AGENT.restoreKey, JSON.stringify({
+      taskId: AGENT.taskId, convId: AGENT.convId,
+      briefText: AGENT.lastBriefText || "", ctx: AGENT.ctx || null,
+      startedAt: AGENT.startedAt || null,
+    }));
+  } catch (e) { /* 存储满/隐私模式：恢复功能降级，不影响主流程 */ }
+}
+function agentClearSnapshot() {
+  try { sessionStorage.removeItem(AGENT.restoreKey); } catch (e) { /* 忽略 */ }
+}
+async function agentRestore() {
+  if (AGENT.taskId || !loggedIn()) return;
+  let snap = null;
+  try { snap = JSON.parse(sessionStorage.getItem(AGENT.restoreKey) || "null"); } catch (e) { snap = null; }
+  if (!snap || !snap.taskId) return;
+  let st = null;
+  try {
+    st = V1(await ApiClient.get("/api/v1/agent/runs/" + encodeURIComponent(snap.taskId)));
+  } catch (e) {
+    const code = e && (e.status || e.code);
+    if (code === 404 || code === 403 || code === 401) agentClearSnapshot(); // 任务过期/他组织：清快照
+    return; // 网络波动：不清理，下次进视图再试
+  }
+  if (!st) return;
+  /* 恢复内存态：evSeq=0 让事件流全量重放；先补用户那句话让聊天流有上下文 */
+  AGENT.taskId = snap.taskId;
+  AGENT.convId = snap.convId || null;
+  AGENT.lastBriefText = snap.briefText || "";
+  AGENT.ctx = snap.ctx || null;
+  AGENT.startedAt = snap.startedAt || Date.now();
+  AGENT.evSeq = 0; AGENT.pollFails = 0;
+  AGENT.renderedConfirmFor = null; AGENT.renderedResultFor = null;
+  if (snap.briefText && AGENT.restoredFor !== snap.taskId) {
+    AGENT.restoredFor = snap.taskId;
+    agentLog("user", { text: snap.briefText });
+    agentLog("sys", { text: "已恢复上次的任务记录（" + snap.taskId.slice(0, 8) + "…）", live: true, id: "run-lifecycle" });
+  }
+  const norm = agentNormStatus(st);
+  AGENT.state = agentDisplayState(st); // 预置状态，避免恢复首拍打出多余的"状态更新"
+  renderAgentCtx();
+  if (AGENT_TERMINAL.includes(norm)) {
+    AGENT.lastState = st;
+    renderAgentPill(AGENT.state); setAgentButtons(AGENT.state);
+    renderAgentEvents(st); renderAgentPlan(st);
+    agentOnTerminal(st);
+  } else {
+    startAgentPoll(); // 首拍即同步全部过程事件并续轮询
+  }
+}
+
 /* ---------- 发送 / 确认 / 取消 / 重试 ---------- */
+/* V3.6：寒暄识别——纯打招呼/闲聊不建任务不进流水线（用户问"你好"不该触发 11 步） */
+const AGENT_CHITCHAT_RE = /^(?:你好|您好|hi|hello|hey|嗨|哈喽|哈罗|在吗|在不在|在么|谢谢|多谢|感谢|辛苦了|麻烦了|再见|拜拜|晚安|早上好|上午好|中午好|下午好|晚上好|早安|午安|ok|okay|好|嗯|哦|嘿|哈呀?|哟){1,6}[的呀啊哈哇啦!！。~？?，,\s]*$/i;
+const AGENT_CHITCHAT_ID_RE = /^(你是谁|你叫什么(名字)?|你是干啥(的)?|你是做什么的|你能做什么|你能干(什么|嘛|啥)|你会(什么|做啥)|怎么用(你)?|介绍下(你)?自己)[？?！!。~\s]*$/;
+function agentIsChitchat(text) {
+  const t = (text || "").trim();
+  if (!t || t.length > 24) return false; // 长消息不拦
+  if (AGENT_CHITCHAT_ID_RE.test(t)) return true; // 身份/能力问题优先判（"你能做什么"含"做"字）
+  // 只要带创作/任务意图词，一律正常进流水线（"你好帮我做个视频"不是寒暄）
+  if (/[视频文案分镜创意海报脚本口播带货营销推广拍摄写做生成发布产品帮我改剪辑修调抖音快手小红书方案]/.test(t)) return false;
+  return AGENT_CHITCHAT_RE.test(t);
+}
+const AGENT_CHITCHAT_REPLY = "你好呀，我在的！把想做的内容说一句话就行，例如：「给章丘大葱做一条 60 秒抖音带货短视频，突出脆甜」。我会自己安排查事实、出创意、排分镜，关键步骤会先请你确认。";
+const AGENT_CHITCHAT_SUGGESTS = ["给章丘大葱做一条 60 秒抖音带货短视频", "检查当前作品的风险项并给出修改建议", "生成 3 个创意方向"];
 async function agentSend() {
   const ta = $("agent_input");
   const text = (ta.value || "").trim();
@@ -597,6 +811,13 @@ async function agentSend() {
   if (!loggedIn()) { toast("请先登录"); go("v-login"); return; }
   if (!S.org) { toast("尚未加入组织，请先完成注册"); return; }
   if (!text) { toast("先说一句话，描述你想让 AI 做什么"); ta.focus(); return; }
+  /* V3.6：寒暄直答——不建任务、不进流水线、不占配额 */
+  if (AGENT.state === "idle" && agentIsChitchat(text)) {
+    agentLog("user", { text });
+    agentLog("ai", { text: AGENT_CHITCHAT_REPLY, suggests: AGENT_CHITCHAT_SUGGESTS });
+    ta.value = ""; ta.focus();
+    return;
+  }
   AGENT.state = "sending";
   AGENT.lastBriefText = text;
   agentLog("user", { text });
@@ -616,8 +837,11 @@ async function agentSend() {
     AGENT.taskId = r.task_id;
     AGENT.convId = r.conversation_id || null;
     AGENT.renderedConfirmFor = null; AGENT.renderedResultFor = null; AGENT.pollFails = 0;
+    AGENT.cancelReq = false; AGENT.startedAt = Date.now(); // V3.2
+    AGENT.evSeq = 0; // V3.3：新任务事件流从头重放
+    agentSaveSnapshot(); // V3.5：刷新可恢复
     AGENT.state = agentNormStatus(r);
-    agentLog("sys", { text: "任务已创建（" + AGENT.taskId.slice(0, 8) + "…），等待执行", live: true, id: "run-lifecycle" });
+    agentLog("sys", { text: "任务已创建（" + AGENT.taskId.slice(0, 8) + "…），正在排队执行，完成后这里会实时更新", live: true, id: "run-lifecycle" });
     renderAgentPill(AGENT.state); setAgentButtons(AGENT.state); renderAgentPlan(AGENT.lastState);
     ta.value = "";
     startAgentPoll();
@@ -669,12 +893,22 @@ async function agentResume() {
 }
 async function agentCancel() {
   if (!AGENT.taskId) return;
+  if (AGENT.cancelReq) return; // V3.2：已请求过取消，防重复点
   try {
+    /* V3.2：先给即时反馈再发请求——后端是协作式取消（当前模型调用结束后
+       才能真正停止，最长约 1–2 分钟），必须让用户知道"点了就生效，
+       剩下的是等当前步骤收尾"，否则像卡死。 */
+    AGENT.cancelReq = true;
+    renderAgentPill("cancelling"); setAgentButtons("cancelling");
+    agentLog("sys", { text: "已发出取消请求，当前模型调用结束后立即停止（最长约 1–2 分钟）", live: true, id: "run-lifecycle" });
     await ApiClient.post("/api/v1/agent/runs/" + encodeURIComponent(AGENT.taskId) + "/cancel", {});
     toast("取消请求已提交");
-    agentLog("sys", { text: "正在取消…", live: true, id: "run-lifecycle" });
     if (!AGENT.timer) startAgentPoll(); else agentPollTick();
-  } catch (e) { toast("取消失败：" + (e.message || e)); }
+  } catch (e) {
+    AGENT.cancelReq = false;
+    renderAgentPill(AGENT.state); setAgentButtons(AGENT.state);
+    toast("取消失败：" + (e.message || e));
+  }
 }
 function agentRetry() {
   const t = AGENT.lastBriefText;
@@ -682,6 +916,9 @@ function agentRetry() {
   stopAgentPoll();
   AGENT.taskId = null; AGENT.convId = null; AGENT.state = "idle";
   AGENT.lastState = null; AGENT.renderedConfirmFor = null; AGENT.renderedResultFor = null;
+  agentClearSnapshot(); // V3.5：重试是新任务，清旧快照
+  AGENT.cancelReq = false; AGENT.startedAt = null; // V3.2
+  AGENT.evSeq = 0; // V3.3
   $("agent_input").value = t;
   renderAgentPill("idle"); setAgentButtons("idle");
   agentSend();
@@ -753,10 +990,47 @@ function openAgent(src) {
   go("agent");
   setTimeout(() => { const t = $("agent_input"); if (t) t.focus(); }, 350);
 }
+/* 今日配图额度：与 POST /poster/image 同一口径（后端 services/poster_quota.py）。
+   只读展示，不扣额度；读不到就隐藏，不挡使用。 */
+async function loadAgentQuota() {
+  const pill = $("agent_quota_pill");
+  if (!pill) return;
+  if (!S.org || !S.org.id) { pill.style.display = "none"; return; }
+  try {
+    const q = V1(await ApiClient.get(
+      "/api/v1/agent/quota?org_id=" + encodeURIComponent(S.org.id)));
+    if (!q) { pill.style.display = "none"; return; }
+    const left = typeof q.remaining === "number" ? q.remaining : null;
+    // M4：未知额度不伪装成"不限"；时间口径统一为北京时间 8 点恢复。
+    if (q.unknown) {
+      pill.className = "pill gray";
+      pill.textContent = "配图额度未知";
+    } else if (q.enforced === false || left === null) {
+      pill.className = "pill gray";
+      pill.textContent = "配图不限次";
+    } else if (left <= 0) {
+      pill.className = "pill red";
+      pill.textContent = "今日配图已用完 · 明日 8 点（北京时间）恢复";
+    } else {
+      pill.className = "pill " + (left <= 2 ? "amber" : "green");
+      pill.textContent = `今日配图剩余 ${left} 次`;
+    }
+    pill.title = q.reason || "";
+    pill.style.display = "";
+  } catch (e) {
+    // 额度查询失败不再静默隐藏：显示“未知”，不伪装成“不限”也不显示错误数字。
+    pill.className = "pill gray";
+    pill.textContent = "配图额度未知";
+    pill.title = "";
+    pill.style.display = "";
+  }
+}
 function enterAgentView() {
   renderAgentCtx();
+  loadAgentQuota();
   renderAgentPill(AGENT.state); setAgentButtons(AGENT.state);
   renderAgentLog(); renderAgentPlan(AGENT.lastState);
+  agentRestore(); // V3.5：刷新后自动找回上次任务并重放过程记录
   const narrow = window.matchMedia && window.matchMedia("(max-width:960px)").matches;
   const plan = $("agent_plan");
   if (plan) { plan.classList.toggle("open", !narrow); $("btn_agent_plan_toggle").setAttribute("aria-expanded", String(!narrow)); $("btn_agent_plan_toggle").textContent = narrow ? "展开" : "收起"; }
@@ -797,6 +1071,13 @@ function initAgentBindings() {
     b.addEventListener("click", () => openAgent(b.dataset.agentSrc)));
   $("agent_ctx").addEventListener("click", (e) => {
     if (e.target.closest('[data-act="ctx-clear"]')) { AGENT.ctx = null; renderAgentCtx(); }
+  });
+  /* V3.6：生成结果跳转（事件委托，面板随轮询重渲染不影响监听） */
+  $("agent_plan").addEventListener("click", (e) => {
+    const el = e.target.closest('[data-act="open-result"]');
+    if (!el || !el.dataset.wid) return;
+    openWork(el.dataset.wid, el.dataset.view)
+      .catch((er) => toast("打开作品失败：" + (er.message || er)));
   });
   $("agent_msgs").addEventListener("click", (e) => {
     const el = e.target.closest("[data-act]");
@@ -881,6 +1162,7 @@ async function doLogout() {
   await AuthClient.logout();
   S.user = null; S.works = []; S.activeWork = null; S.data = blankData(); S.facts = [];
   setActiveOrg(null); // 必须清空，否则换账号后仍带上一账号的 org_id
+  agentClearSnapshot(); // V3.5：登出清恢复快照，防止换账号恢复出上一账号的任务视图
   renderUser();
   // 登出后回到公开展示页（三层架构）
   location.href = "/";
@@ -1113,9 +1395,12 @@ async function renderWorkbench() {
   if (S.workFilter === "active") items = items.filter((w) => (w.status || "draft") !== "archived");
   if (S.workFilter === "done") items = items.filter((w) => (w.status || "") === "archived");
   if (!items.length) {
+    grid.className = "work-grid stagger";
     grid.innerHTML = '<div style="grid-column:1/-1">' + emptyState("暂无作品", "从一件山东好物开始。", false, { label: "新建作品", fn: () => newWorkFlow() }) + '</div>';
   } else {
-    grid.innerHTML = items.map((w, i) => {
+    // V3.7：按状态归拢分组——进行中 / 已归档 各自成组，组内按更新时间倒序
+    const byRecent = (a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || ""));
+    const workCardHtml = (w, i) => {
       const d = w.data || {};
       const p = workProgress(d);
       const name = (d.product && d.product.product_name) || w.title;
@@ -1132,7 +1417,23 @@ async function renderWorkbench() {
           ${done ? "" : `<button class="btn ghost sm" data-act="arch" title="归档">归档</button>`}
           <button class="btn danger sm" data-act="del" title="删除作品">删除</button>
         </div></div></div>`;
-    }).join("");
+    };
+    const workGroup = (title, cls, list) => list.length ? `
+      <div class="wgroup">
+        <div class="wgroup-head">
+          <h3><span class="wg-name">${title}</span></h3>
+          <span class="pill ${cls}">${list.length} 个作品</span>
+          <span class="wg-line"></span>
+        </div>
+        <div class="work-grid">${list.map(workCardHtml).join("")}</div>
+      </div>` : "";
+    const act = items.filter((w) => (w.status || "draft") !== "archived").sort(byRecent);
+    const done = items.filter((w) => (w.status || "") === "archived").sort(byRecent);
+    // 分组渲染时外层不再是网格，由组内 .work-grid 承担布局
+    grid.classList.remove("work-grid", "stagger");
+    grid.innerHTML =
+      workGroup("进行中", "amber", act) +
+      workGroup("已归档", "gray", done);
   }
   grid.querySelectorAll(".work").forEach((card) => {
     const id = card.dataset.id;
@@ -1380,18 +1681,17 @@ function ensureProductCard() {
   if ($("product_card")) return;
   const factsCard = $("fact_summary") && $("fact_summary").closest(".card");
   const card = document.createElement("div");
-  card.className = "card panel"; card.id = "product_card";
-  card.innerHTML = `<h3>产品档案 <span style="font-size:11.5px;color:var(--muted);font-weight:400" id="product_count"></span></h3>
-    <div class="form-stack">
-      <label class="f">选择产品档案
-        <select id="product_select"><option value="">全部事实（不筛选）</option></select>
-      </label>
-      <div id="product_info" style="font-size:12.5px;color:var(--muted);line-height:1.7"></div>
+  card.className = "p2-prodsub"; card.id = "product_card";
+  card.innerHTML = `<div class="p2-prodsub-head"><b>产品档案</b><span style="font-size:11.5px;color:var(--muted);font-weight:400" id="product_count"></span></div>
+    <div class="p2-prodsub-row">
+      <select id="product_select"><option value="">全部事实（不筛选）</option></select>
+      <button class="btn ghost sm" id="btn_new_product">＋ 新建</button>
     </div>
-    <div style="display:flex;gap:10px;margin-top:12px">
-      <button class="btn ghost sm" id="btn_new_product" style="flex:1;justify-content:center">＋ 新建产品档案</button>
-    </div>`;
-  if (factsCard && factsCard.parentNode) factsCard.parentNode.insertBefore(card, factsCard);
+    <div id="product_info" style="font-size:12.5px;color:var(--muted);line-height:1.7;margin-top:8px"></div>`;
+  const anchor = factsCard && factsCard.querySelector("#fact_stale_warn");
+  if (factsCard && anchor) factsCard.insertBefore(card, anchor);
+  else if (factsCard) factsCard.appendChild(card);
+  else document.getElementById("v2").appendChild(card);
   $("product_select").addEventListener("change", () => {
     S.selectedProductId = $("product_select").value;
     renderProductInfo();
@@ -2526,7 +2826,10 @@ row.querySelector("#exp_editlist").addEventListener("click", exportEditList);
 
 async function pollAiTask(taskId, label, timeoutMs) {
   const t0 = Date.now();
-  timeoutMs = timeoutMs || 180000;
+  // 对齐后端 ai_tasks.TASK_TIMEOUT_SECONDS=600s，再留 30s 余量读终态；
+  // 630s 仍未终态时只报“状态未知”，绝不宣称任务已失败——此前 180s
+  // 就报“已自动标记为失败”是错的：前端停轮询时后端可能还在跑。
+  timeoutMs = timeoutMs || 630000;
   while (Date.now() - t0 < timeoutMs) {
     const t = RAW(await ApiClient.get(`/api/v1/ai-tasks/${taskId}`));
     if (t.status === "succeeded") return t.result || {};
@@ -2535,9 +2838,10 @@ async function pollAiTask(taskId, label, timeoutMs) {
     }
     await new Promise((r) => setTimeout(r, 2500));
   }
-  // V3.1 P1-4：超时文案修正——后端已在 10 分钟时自动标 failed，
-  // 不存在"任务列表"，指引用户直接重试
-  throw new Error((label || "AI 任务") + "超时（超过3分钟未返回），任务已自动标记为失败，请重试");
+  const err = new Error((label || "AI 任务") + "超时（超过10分30秒未返回），任务状态未知、后端可能还在跑，不要重复创建；任务ID：" + taskId + "，刷新页面可继续查询");
+  err.taskTimeout = true;
+  err.taskId = taskId;
+  throw err;
 }
 
 /* V3.1 §3.3：单段重生成的纯合并逻辑（无 DOM 依赖，可被 node 测试）。
@@ -2723,6 +3027,7 @@ async function resumeLivestreamTask() {
   if ((S.data.livestream_script || {}).segments) { clearLiveTaskId(); return; }
   errText("live_err", "");
   aiLoading("正在恢复未完成的场控脚本任务…");
+  let taskTimeout = false;
   try {
     const result = await pollAiTask(taskId, "场控脚本");
     if (result.livestream_script && (result.livestream_script.segments || []).length) {
@@ -2731,10 +3036,12 @@ async function resumeLivestreamTask() {
       toast("已恢复之前生成的场控脚本");
     }
   } catch (e) {
-    // 任务失败/超时/不存在：清掉记录，不打扰用户
+    // 任务失败/不存在：清掉记录；轮询超时只是状态未知，保留任务ID
+    // 供下次刷新继续查询，绝不能清掉后让用户误以为任务已失败。
+    taskTimeout = !!(e && e.taskTimeout);
     errText("live_err", e.message || "");
   } finally {
-    clearLiveTaskId();
+    if (!taskTimeout) clearLiveTaskId();
     renderLivestream();
     aiLoadingDone();
   }
@@ -3090,27 +3397,73 @@ toast("已导出 TXT");
 }
 
 /* ================= 模型配置 ================= */
-function openCfg() {
+function openCfg(triggerEl) {
 const cfg = getApiConfig();
-$("cfg_base").value = cfg.base;
-$("cfg_key").value = "";
-$("cfg_model").value = cfg.model;
-updateCfgStatus();
-$("cfg_modal").classList.add("show");
+// 模型配置改走站内通用弹窗 _openUiModal（与 modalConfirm/modalInput 同一容器规范：
+// role="dialog" + aria-modal 由 _openUiModal 提供；Esc 关闭、点遮罩关闭、_trapTab 焦点陷阱、
+// 关闭后焦点返回由本函数按 modalConfirm 的模式接线，_openUiModal 本身不提供这些行为）。
+// 静态 #cfg_modal 已从 app.html 删除（grep 验证 app.html 无 cfg_ 残留），表单内容原样搬进动态 HTML；
+// 值用 JS 赋值，不拼进 HTML 字符串；所有查询均用 m.querySelector 相对查询，不用全局 ID 查询。
+// 焦点返回：触发元素由点击处理器显式传入（e.currentTarget），不依赖 document.activeElement，
+// 避免 Safari 点击不聚焦、程序化调用等场景下 activeElement 不是触发按钮的问题；未传时回退 activeElement。
+const trigger = (triggerEl && typeof triggerEl.focus === "function") ? triggerEl : document.activeElement;
+const m = _openUiModal(`
+  <h3>模型配置</h3>
+  <div class="page-meander" style="margin:10px 0 2px" aria-hidden="true"></div>
+  <p style="font-size:12.5px;color:var(--muted);margin-bottom:14px">自带 Key 调用 AI（走兼容接口）。Key 只保存在当前浏览器标签页，关闭即清除，不会持久化到本站服务器；但每次调用时都会先发给本站后端、再由后端转发到你填写的 Base URL，请只填可信域名（仅支持 deepkey.top、api.openai.com 及其子域名）。</p>
+  <div class="form-stack">
+    <label class="f">API Base URL<input id="cfg_base" placeholder="留空用服务端默认"></label>
+    <label class="f">API Key<input id="cfg_key" type="password" placeholder="sk-..." autocomplete="off"></label>
+    <label class="f">模型名称<input id="cfg_model" placeholder="留空用服务端默认"></label>
+  </div>
+  <div style="display:flex;gap:10px;margin-top:16px"><button class="btn primary sm" id="btn_save_cfg">保存到当前会话</button><button class="btn ghost sm" id="btn_clear_cfg">清除</button><button class="btn ghost sm" id="btn_close_cfg" style="margin-left:auto">关闭</button></div>
+  <p id="cfg_status" style="font-size:12.5px;color:var(--muted);margin-top:12px"></p>`, "模型配置");
+m._returnFocus = trigger; // 显式覆盖：关闭时 _closeUiModal 用此元素恢复焦点，不依赖调用瞬间 activeElement
+let settled = false;
+const done = () => { if (settled) return; settled = true; document.removeEventListener("keydown", onKey, true); _closeUiModal(m); };
+m._settle = done;
+const onKey = (e) => {
+  if (e.key === "Escape") { e.stopPropagation(); done(); }
+  else if (e.key === "Tab") _trapTab(m, e);
+};
+m.addEventListener("click", (e) => { if (e.target === m) done(); });
+m.querySelector("#btn_close_cfg").addEventListener("click", done);
+m.querySelector("#btn_save_cfg").addEventListener("click", () => saveCfg(m));
+m.querySelector("#btn_clear_cfg").addEventListener("click", () => {
+  try { sessionStorage.removeItem("lupin_api_base"); sessionStorage.removeItem("lupin_api_key"); sessionStorage.removeItem("lupin_api_model"); } catch (e) {}
+  m.querySelector("#cfg_base").value = ""; m.querySelector("#cfg_key").value = ""; m.querySelector("#cfg_model").value = "";
+  updateCfgStatus(m); toast("已清除");
+});
+document.addEventListener("keydown", onKey, true);
+const baseEl = m.querySelector("#cfg_base");
+baseEl.value = cfg.base;
+m.querySelector("#cfg_key").value = "";
+m.querySelector("#cfg_model").value = cfg.model;
+updateCfgStatus(m);
+if (baseEl) baseEl.focus();
 }
-function updateCfgStatus() {
+function updateCfgStatus(modal) {
 const cfg = getApiConfig();
-$("cfg_status").textContent = cfg.key? "✓ 已配置自定义 Key（仅当前标签页有效，关闭即清除）": "当前使用服务端默认配置";
+const el = modal ? modal.querySelector("#cfg_status") : null;
+if (!el) return;
+el.textContent = cfg.key? "✓ 已配置自定义 Key（仅当前标签页有效，关闭即清除）": "当前使用服务端默认配置";
 }
-function saveCfg() {
+/* S3 修复（保存侧）：非白名单域名拒绝保存并明示原因。白名单定义与
+   _apiHostAllowed 见文件前部 getApiConfig 处（发送侧共用同一函数）。
+   拒绝保存时不清除旧配置（旧合法配置继续可用），恶意旧值由发送侧
+   getApiConfig 拦截并清除，两层各司其职。 */
+function saveCfg(modal) {
 try {
-const base = $("cfg_base").value.trim(), key = $("cfg_key").value.trim(), model = $("cfg_model").value.trim();
+const m = modal || document.getElementById("ui_modal");
+if (!m) { toast("模型配置弹窗未打开"); return; }
+const base = m.querySelector("#cfg_base").value.trim(), key = m.querySelector("#cfg_key").value.trim(), model = m.querySelector("#cfg_model").value.trim();
 if (base &&!/^https?:\/\//i.test(base)) { toast("Base URL 必须以 http(s):// 开头"); return;}
+if (base && !_apiHostAllowed(base)) { toast("该 Base URL 域名不在可信列表内（仅支持 deepkey.top、api.openai.com 及其子域名），Key 不会被保存，以免 Key 被发送到不可信域名"); return;}
 if (base) sessionStorage.setItem("lupin_api_base", base); else sessionStorage.removeItem("lupin_api_base");
 if (key) sessionStorage.setItem("lupin_api_key", key); else sessionStorage.removeItem("lupin_api_key");
 if (model) sessionStorage.setItem("lupin_api_model", model); else sessionStorage.removeItem("lupin_api_model");
-$("cfg_key").value = "";
-updateCfgStatus();
+m.querySelector("#cfg_key").value = "";
+updateCfgStatus(m);
 toast("已保存到当前会话");
 } catch (e) { toast("保存失败：浏览器存储不可用");}
 }
@@ -3380,17 +3733,23 @@ Object.assign(POSTER_TPLS, {
 /* ---------- #5 海报 AI 生图 ---------- */
 let IMG_CONFIGURED = null;
 let IMG_QUOTA = null;
+let IMG_QUOTA_UNKNOWN = false;
+let IMG_AUTH_FAILED = false;
 async function checkImageStatus() {
+  IMG_AUTH_FAILED = false;
   try {
     const d = V1(await ApiClient.get("/api/v1/poster/image/status"));
     IMG_CONFIGURED = !!(d && d.configured);
-  } catch (e) { IMG_CONFIGURED = false; }
-  IMG_QUOTA = null;
+  } catch (e) {
+    IMG_CONFIGURED = false;
+    if (e && (e.status === 401 || e.status === 403)) IMG_AUTH_FAILED = true;
+  }
+  IMG_QUOTA = null; IMG_QUOTA_UNKNOWN = false;
   if (IMG_CONFIGURED && S.org) {
     try {
       IMG_QUOTA = V1(await ApiClient.get(
         "/api/v1/poster/image/quota?org_id=" + encodeURIComponent(S.org.id)));
-    } catch (e) { /* 额度查询失败不挡生图，后端会再校验 */ }
+    } catch (e) { /* 额度查询失败不挡生图，后端会再校验；但不在界面上假装已知，改走“未知”文案 */ IMG_QUOTA_UNKNOWN = true; }
   }
   const btn = $("btn_gen_poster"), hint = $("ai_img_status");
   if (!btn || !hint) return;
@@ -3399,22 +3758,63 @@ async function checkImageStatus() {
     let t = "AI 配图服务可用：输入提示词生成海报背景图。";
     if (IMG_QUOTA && IMG_QUOTA.limited) {
       t += `（今日剩余 ${IMG_QUOTA.remaining} 次）`;
+    } else if (IMG_QUOTA_UNKNOWN) {
+      t += "（今日剩余额度未知）";
     }
     hint.textContent = t;
   } else {
     btn.disabled = true; btn.classList.add("qa-disabled");
-    hint.textContent = "未配置图片生成服务（需配置 LUPIN_IMAGE_API_KEY），可先手动排版导出 PNG。";
+    hint.textContent = IMG_AUTH_FAILED
+      ? "登录状态已失效，请重新登录后再生成配图。"
+      : "图片生成服务暂时不可用，可先手动排版导出 PNG。";
   }
 }
+async function generateImageViaJob(prompt) {
+  const body = { org_id: S.org.id, prompt: prompt, size: "1024x1024" };
+  let jobId = "";
+  try {
+    const j = V1(await ApiClient.post("/api/v1/poster/image/jobs", body, { timeoutMs: 30000 }));
+    jobId = (j && j.job_id) || "";
+  } catch (e) {
+    // 老后端没有异步接口（404/405）→ 退回同步接口
+    if (e && (e.status === 404 || e.status === 405)) {
+      const d = V1(await ApiClient.post("/api/v1/poster/image", body, { timeoutMs: 150000 }));
+      return d.image_b64 ? ("data:image/png;base64," + d.image_b64) : (d.image_url || "");
+    }
+    throw e;
+  }
+  if (!jobId) throw new Error("创建生成任务失败，请重试");
+  // 网关对单请求硬超时约 60s，生图常 30-45s：改成轮询，单次请求都很短
+  const deadline = Date.now() + 180000;
+  let lastErr = "";
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2000));
+    let st;
+    try {
+      st = V1(await ApiClient.get("/api/v1/poster/image/jobs/" + encodeURIComponent(jobId),
+        { timeoutMs: 30000 }));
+    } catch (e) {
+      if (e && e.status === 404) throw new Error("生成任务已过期，请重新生成");
+      lastErr = (e && e.message) || lastErr;   // 单次轮询抖动不终止
+      continue;
+    }
+    if (st && st.status === "done") {
+      return st.image_b64 ? ("data:image/png;base64," + st.image_b64) : "";
+    }
+    if (st && st.status === "failed") throw new Error(st.error || "图片生成失败");
+  }
+  throw new Error(lastErr || "生成超时（3 分钟），请稍后重试");
+}
 async function genPosterImage() {
-  if (!IMG_CONFIGURED) { toast("未配置图片生成服务"); return; }
+  if (!IMG_CONFIGURED) {
+    toast(IMG_AUTH_FAILED ? "登录已过期，请重新登录" : "图片生成服务暂时不可用");
+    return;
+  }
   const prompt = $("ai_img_prompt").value.trim();
   if (!prompt) { toast("请先输入配图提示词"); return; }
-  aiLoading("AI 正在作画…");
+  aiLoading("AI 正在作画…（约 30-60 秒）");
   try {
-    const d = V1(await ApiClient.post("/api/v1/poster/image",
-      { org_id: S.org.id, prompt: prompt, size: "1024x1024" }, { timeoutMs: 150000 }));
-    const src = d.image_b64 ? ("data:image/png;base64," + d.image_b64) : d.image_url;
+    const src = await generateImageViaJob(prompt);
     if (!src) throw new Error("图片服务未返回图片");
     $("ai_img_preview").src = src;
     $("ai_img_result").style.display = "";
@@ -3433,7 +3833,7 @@ async function genPosterImage() {
     checkImageStatus();
   } catch (e) {
     const msg = String(e.message || "生成失败");
-    toast(e.status === 429 || /已用完/.test(msg)
+    toast(e.status === 429 || e.code === 2004 || /已用完|次数/.test(msg)
       ? "今日海报生成次数已用完（普通用户每天 5 次），明天再来" : msg);
   }
   finally { aiLoadingDone(); }
@@ -3643,15 +4043,8 @@ if (!needStoryboard()) return;
 await exportDocx(); await exportSrt(); exportTxt();
 });
 
-$("nav_api_cfg").addEventListener("click", openCfg);
-$("btn_save_cfg").addEventListener("click", saveCfg);
-$("btn_clear_cfg").addEventListener("click", () => {
-try { sessionStorage.removeItem("lupin_api_base"); sessionStorage.removeItem("lupin_api_key"); sessionStorage.removeItem("lupin_api_model");} catch (e) {}
-$("cfg_base").value = ""; $("cfg_key").value = ""; $("cfg_model").value = "";
-updateCfgStatus(); toast("已清除");
-});
-$("btn_close_cfg").addEventListener("click", () => $("cfg_modal").classList.remove("show"));
-$("cfg_modal").addEventListener("click", (e) => { if (e.target === $("cfg_modal")) $("cfg_modal").classList.remove("show");});
+$("nav_api_cfg").addEventListener("click", (e) => openCfg(e.currentTarget));
+// 保存/清除/关闭/遮罩点击已由 openCfg 内的动态弹窗绑定（_openUiModal 自带遮罩与 Esc 逻辑），此处不再挂旧静态监听。
 }
 
 /* ================= 初始化 ================= */
@@ -3693,6 +4086,8 @@ function initCopyOptCss() {
   st.id = "copyopt_css";
   st.textContent = `
 .copy-wrap{display:grid;grid-template-columns:290px 1fr;gap:14px;align-items:start}
+/* V3.2 平板适配：961–1240px（iPad 横屏等）收窄左栏，右侧编辑区不再被挤成窄条 */
+@media(max-width:1240px){.copy-wrap{grid-template-columns:250px 1fr}}
 @media(max-width:960px){.copy-wrap{grid-template-columns:1fr}}
 .copy-doc-item{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px}
 .copy-doc-item.active{border-color:var(--primary);box-shadow:var(--shadow)}
@@ -3768,9 +4163,9 @@ function copyRiskBadge(v) {
 function viewSkeleton(headTitle, headSub) {
   return `<div class="page-head"><div class="skel skel-head" aria-hidden="true"></div>
     ${headSub ? `<div class="skel skel-sub" aria-hidden="true"></div>` : ""}<div class="page-meander" style="opacity:.22;margin-bottom:14px" aria-hidden="true"></div></div>
-    <div class="skel-body" role="status" aria-label="加载中">
+    <div class="skel-body" aria-busy="true" aria-label="加载中">
     <div class="skel-flower" aria-hidden="true">${FLOWER_SVG}</div>
-    <div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div>
+    <div class="skel skel-row" aria-hidden="true"></div><div class="skel skel-row" aria-hidden="true"></div><div class="skel skel-row" aria-hidden="true"></div>
     </div>`;
 }
 
@@ -3799,6 +4194,8 @@ async function renderCopyOpt() {
   $("copy_new_btn").addEventListener("click", createCopyDoc);
   renderCopyDocList();
   renderCopyEditor();
+  /* V3.2：有文档但未打开时自动打开第一篇——平板/首屏不再出现"右侧整块空态" */
+  if (!COPY.doc && COPY.docs.length) await openCopyDoc(COPY.docs[0].id);
 }
 
 async function loadCopyDocs() {
@@ -3841,14 +4238,31 @@ function renderCopyDocList() {
   const el = $("copy_doc_list");
   if (!el) return;
   if (!COPY.docs.length) { el.innerHTML = emptyState("还没有文案文档", "新建一篇，从口播稿或发布文案开始。", true, { label: "新建文档", fn: () => { const t = $("copy_new_title"); if (t) { t.focus(); t.scrollIntoView({ block: "center", behavior: "smooth" }); } } }); return; }
-  el.innerHTML = COPY.docs.map((d) => `
+  // V3.7：文档按类型归拢分组（文案文档无作品归属，按 5 种工作类型分组）
+  const groups = [];
+  COPY_KINDS.forEach(([k, label]) => {
+    const items = COPY.docs.filter((d) => (d.kind || "") === k);
+    if (items.length) groups.push({ title: label, items });
+  });
+  const rest = COPY.docs.filter((d) => !COPY_KINDS.some((x) => x[0] === (d.kind || "")));
+  if (rest.length) groups.push({ title: "其他类型", items: rest });
+  const docHtml = (d) => `
     <div class="copy-doc-item ${COPY.doc && COPY.doc.id === d.id ? "active" : ""}" data-id="${d.id}">
-      <div><b>${esc(d.title)}</b> <span class="pill">${esc(copyKindLabel(d.kind))}</span></div>
+      <div><b>${esc(d.title)}</b></div>
       <div class="muted" style="font-size:12.5px">${d.version_count || 0} 个版本${d.current_version_no ? " · 当前 v" + d.current_version_no : ""}</div>
       <div class="row" style="gap:6px;margin-top:6px">
         <button class="btn ghost sm" data-act="open">打开</button>
         <button class="btn ghost sm" data-act="del">删除</button>
-      </div></div>`).join("");
+      </div></div>`;
+  el.innerHTML = groups.map((g) => `
+    <div class="wgroup" style="margin-bottom:16px">
+      <div class="wgroup-head" style="margin-bottom:8px">
+        <h3 style="font-size:13px"><span class="wg-name">${esc(g.title)}</span></h3>
+        <span class="pill gray">${g.items.length} 篇</span>
+        <span class="wg-line"></span>
+      </div>
+      ${g.items.map(docHtml).join("")}
+    </div>`).join("");
   el.querySelectorAll(".copy-doc-item").forEach((item) => {
     const id = item.dataset.id;
     item.querySelector('[data-act="open"]').addEventListener("click", () => openCopyDoc(id));
@@ -4604,9 +5018,10 @@ const PUB_TRANSITIONS = {
   published: ["reviewed", "failed"],
   reviewed: [], failed: ["pending"], postponed: ["pending"], cancelled: [],
 };
-const PUB = { records: [], rec: null, filter: "", busy: false };
+const PUB = { records: [], rec: null, filter: "", works: [], busy: false };
 
 function pubStatusLabel(s) { const f = PUB_STATUSES.find((x) => x[0] === s); return f ? f[1] : s; }
+const PUB_STATUS_PILL = { pending: "amber", review: "blue", ready: "green", reviewed: "blue", failed: "red", postponed: "gray", cancelled: "gray" };
 function pubPlatformLabel(p) {
   return { douyin: "抖音", kuaishou: "快手", xiaohongshu: "小红书", shipinhao: "视频号" }[p] || p || "未指定";
 }
@@ -4654,23 +5069,52 @@ async function renderPublishCenter() {
   if (!S.org) { sec.innerHTML = '<div class="page-head"><h2>发布中心</h2><p class="muted">请先登录并选择组织</p><div class="page-meander" aria-hidden="true"></div></div>'; return; }
   initPublishView();
   sec.innerHTML = viewSkeleton(); // 先给加载态：线上网关延迟下不能留白
-  await loadPublishRecords();
+  // V3.7：作品列表与发布记录并行拉取（按作品归拢分组需要作品标题）
+  await Promise.all([
+    loadPublishRecords(),
+    ApiClient.get("/api/v1/works?org_id=" + encodeURIComponent(S.org.id))
+      .then((r) => { PUB.works = V1(r) || []; })
+      .catch(() => { /* 保留旧列表，分组降级为未关联 */ }),
+  ]);
   renderPublishList();
+}
+
+/* V3.7：发布记录按源作品归拢；未关联作品的记录排最后 */
+function pubGroupItems() {
+  const byId = new Map();
+  PUB.works.forEach((w) => byId.set(w.id, { key: w.id, title: w.title || "未命名作品", items: [] }));
+  const orphan = [];
+  PUB.records.forEach((r) => {
+    const g = (r.work_id && byId.get(r.work_id)) || null;
+    if (g) g.items.push(r); else orphan.push(r);
+  });
+  const out = Array.from(byId.values()).filter((g) => g.items.length);
+  if (orphan.length) out.push({ key: "_none", title: "未关联作品", items: orphan, unknown: true });
+  return out;
 }
 
 function renderPublishList() {
   const sec = $("v8");
   const opts = ['<option value="">全部状态</option>'].concat(
     PUB_STATUSES.map(([v, l]) => `<option value="${v}"${PUB.filter === v ? " selected" : ""}>${l}</option>`)).join("");
-  const cards = PUB.records.map((r) => `
-    <div class="card pub-card" data-id="${esc(r.id)}">
-      <div class="pub-card-title" title="${esc(r.title)}">${esc(r.title)}</div>
-      <div class="pub-card-meta"><span class="pill">${esc(pubPlatformLabel(r.platform))}</span>
-        ${r.status === "published" ? '<span class="stamp-badge">已发布</span>' : `<span class="pill ${r.status === "reviewed" ? "blue" : ""}">${esc(pubStatusLabel(r.status))}</span>`}
+  // V3.7：按源作品归拢分组（状态筛选结果仍然生效，只改展示方式）
+  const groupsHtml = pubGroupItems().map((g) => `
+    <div class="wgroup">
+      <div class="wgroup-head">
+        <h3><span class="wg-name">${esc(g.title)}</span></h3>
+        <span class="pill ${g.unknown ? "gray" : "blue"}">${g.items.length} 条记录</span>
+        <span class="wg-line"></span>
       </div>
-      <div class="muted small pub-card-link">${r.publish_url ? "链接：" + esc(r.publish_url) : "未发布"}</div>
-      <div class="pub-card-actions"><button class="btn sm" data-act="open">打开</button>
-      ${["pending", "cancelled", "failed", "postponed"].includes(r.status) ? '<button class="btn sm danger" data-act="del">删除</button>' : ""}</div>
+      <div class="pub-list">${g.items.map((r) => `
+        <div class="card pub-card" data-id="${esc(r.id)}">
+          <div class="pub-card-title" title="${esc(r.title)}">${esc(r.title)}</div>
+          <div class="pub-card-meta"><span class="pill gray">${esc(pubPlatformLabel(r.platform))}</span>
+            ${r.status === "published" ? '<span class="stamp-badge">已发布</span>' : `<span class="pill ${PUB_STATUS_PILL[r.status] || "gray"}">${esc(pubStatusLabel(r.status))}</span>`}
+          </div>
+          <div class="muted small pub-card-link">${r.publish_url ? "链接：" + esc(r.publish_url) : "尚未发布，状态流转到「待发布」后填写链接"}</div>
+          <div class="pub-card-actions"><button class="btn sm ghost" data-act="open">打开</button>
+          ${["pending", "cancelled", "failed", "postponed"].includes(r.status) ? '<button class="btn sm danger" data-act="del">删除</button>' : ""}</div>
+        </div>`).join("")}</div>
     </div>`).join("");
   sec.innerHTML = `
     <div class="page-head"><h2>发布中心</h2>
@@ -4688,7 +5132,7 @@ function renderPublishList() {
       <button class="btn primary" id="pub_new_btn">＋ 新建</button>
     </div>
     <div id="pub_detail"></div>
-    <div class="pub-list">${cards || '<div class="card pub-empty">' + emptyState("暂无发布记录", "填好标题、选好平台，建第一条发布记录。", true, { label: "新建发布记录", fn: () => { const t = $("pub_new_title"); if (t) { t.focus(); t.scrollIntoView({ block: "center", behavior: "smooth" }); } } }) + '</div>'}</div>`;
+    ${groupsHtml || '<div class="card pub-empty">' + emptyState("暂无发布记录", "填好标题、选好平台，建第一条发布记录。", true, { label: "新建发布记录", fn: () => { const t = $("pub_new_title"); if (t) { t.focus(); t.scrollIntoView({ block: "center", behavior: "smooth" }); } } }) + '</div>'}`;
   $("pub_filter").addEventListener("change", async (e) => { PUB.filter = e.target.value; await loadPublishRecords(); renderPublishList(); });
   $("pub_new_btn").addEventListener("click", createPublishRecord);
   sec.querySelectorAll(".pub-card").forEach((c) => {
@@ -5130,6 +5574,38 @@ function libIcon(mime) {
   return LIB_ICONS.other;
 }
 
+/* V3.7：素材按作品归拢——同一作品的素材聚在一组；归属不到作品列表的排最后 */
+function libGroupItems() {
+  const byId = new Map();
+  LIB.works.forEach((w) => byId.set(w.id, { key: w.id, title: w.title || "未命名作品", items: [] }));
+  const orphan = [];
+  LIB.items.forEach((a) => {
+    const g = (a.work_id && byId.get(a.work_id)) || null;
+    if (g) g.items.push(a); else orphan.push(a);
+  });
+  const out = Array.from(byId.values()).filter((g) => g.items.length);
+  if (orphan.length) out.push({ key: "_unknown", title: "未归属素材", items: orphan, unknown: true });
+  return out;
+}
+
+function libCardHtml(a, unknown) {
+  return `
+    <div class="card lib-card" data-id="${esc(a.id)}">
+      ${a.mime && a.mime.startsWith("image/") ? `<div class="lib-thumb" data-aid="${esc(a.id)}">${LIB_ICONS.image}</div>`
+        : `<div class="lib-thumb">${libIcon(a.mime)}</div>`}
+      <div class="lib-body">
+        <strong class="lib-name" title="${esc(a.filename)}">${esc(a.filename)}</strong>
+        <div class="muted small">${libMimeLabel(a.mime)} · ${libFmtSize(a.size)} · ${esc((a.created_at || "").slice(0, 16).replace("T", " "))}</div>
+        ${unknown ? `<div class="muted small">所属：${esc(a.work_title || "未知项目")}</div>` : ""}
+        <div class="small">${a.ref_count > 0 ? `<span class="pill blue">被 ${a.ref_count} 个项目引用</span>` : `<span class="pill gray">未被引用</span>`}</div>
+        <div class="lib-actions">
+          <button class="btn sm ghost" data-act="detail">详情</button>
+          <button class="btn sm primary" data-act="quote">引用到当前项目</button>
+        </div>
+      </div>
+    </div>`;
+}
+
 function renderLibView() {
   const sec = $("v9");
   if (!sec) return;
@@ -5139,20 +5615,16 @@ function renderLibView() {
     LIB.works.map((w) => `<option value="${esc(w.id)}"${LIB.destWorkId === w.id ? " selected" : ""}>${esc(w.title || "未命名")}</option>`)).join("");
   const mimeOpts = ["", "image", "video", "audio", "other"].map((m) =>
     `<option value="${m}"${LIB.mime === m ? " selected" : ""}>${m === "" ? "全部类型" : libMimeLabel(m)}</option>`).join("");
-  const cards = LIB.items.map((a) => `
-    <div class="card lib-card" data-id="${esc(a.id)}">
-      ${a.mime && a.mime.startsWith("image/") ? `<div class="lib-thumb" data-aid="${esc(a.id)}">${LIB_ICONS.image}</div>`
-        : `<div class="lib-thumb">${libIcon(a.mime)}</div>`}
-      <div class="lib-body">
-        <strong class="lib-name" title="${esc(a.filename)}">${esc(a.filename)}</strong>
-        <div class="muted small">${libMimeLabel(a.mime)} · ${libFmtSize(a.size)} · ${esc((a.created_at || "").slice(0, 16).replace("T", " "))}</div>
-        <div class="muted small">所属：${esc(a.work_title || "未知项目")}</div>
-        <div class="small">${a.ref_count > 0 ? `<span class="pill blue">被 ${a.ref_count} 个项目引用</span>` : `<span class="pill">未被引用</span>`}</div>
-        <div class="lib-actions">
-          <button class="btn sm" data-act="detail">详情</button>
-          <button class="btn sm primary" data-act="quote">引用到当前项目</button>
-        </div>
+  // V3.7：按作品归拢分组（搜索/筛选结果仍然生效，只改展示方式）
+  const groupsHtml = libGroupItems().map((g) => `
+    <div class="wgroup">
+      <div class="wgroup-head">
+        <h3><span class="wg-name">${esc(g.title)}</span></h3>
+        <span class="pill ${g.unknown ? "gray" : "blue"}">${g.items.length} 个素材</span>
+        ${g.unknown ? "" : `<button class="btn ghost sm wg-filter" data-wg="${esc(g.key)}">${LIB.workFilter === g.key ? "取消只看" : "只看该作品"}</button>`}
+        <span class="wg-line"></span>
       </div>
+      <div class="lib-grid">${g.items.map((a) => libCardHtml(a, g.unknown)).join("")}</div>
     </div>`).join("");
   sec.innerHTML = `
     <div class="page-head"><h2>素材库</h2>
@@ -5167,13 +5639,19 @@ function renderLibView() {
       <select id="lib-dest" class="input" style="flex:1 1 240px">${destOpts}</select>
       <span class="muted small" style="flex:none">默认为当前打开的项目</span>
     </div>
-    <div class="lib-grid">${LIB.busy ? '<div class="card" style="padding:18px;text-align:center"><p class="muted">检索中…</p></div>' : (cards || '<div class="card">' + emptyState("暂无素材", "在「拍摄执行」上传的素材会自动归档到这里。", true, { label: "去上传素材", fn: () => go("v5") }, FRAME_SVG) + '</div>')}</div>`;
+    ${LIB.busy ? '<div class="card" style="padding:18px;text-align:center"><p class="muted">检索中…</p></div>'
+      : (groupsHtml || '<div class="card">' + emptyState("暂无素材", "在「拍摄执行」上传的素材会自动归档到这里。", true, { label: "去上传素材", fn: () => go("v5") }, FRAME_SVG) + '</div>')}`;
   $("lib-q").addEventListener("input", (e) => { LIB.q = e.target.value; });
   $("lib-q").addEventListener("keydown", (e) => { if (e.key === "Enter") doLibSearch(); });
   $("lib-mime").addEventListener("change", (e) => { LIB.mime = e.target.value; doLibSearch(); });
   $("lib-work").addEventListener("change", (e) => { LIB.workFilter = e.target.value; doLibSearch(); });
   $("lib-search").addEventListener("click", () => doLibSearch());
   $("lib-dest").addEventListener("change", (e) => { LIB.destWorkId = e.target.value; });
+  sec.querySelectorAll("[data-wg]").forEach((b) => b.addEventListener("click", () => {
+    LIB.workFilter = LIB.workFilter === b.dataset.wg ? "" : b.dataset.wg;
+    $("lib-work").value = LIB.workFilter;
+    doLibSearch();
+  }));
   sec.querySelectorAll(".lib-card").forEach((el) => {
     el.querySelector('[data-act="detail"]').addEventListener("click", () => showLibDetail(el.dataset.id));
     el.querySelector('[data-act="quote"]').addEventListener("click", () => libQuote(el.dataset.id));

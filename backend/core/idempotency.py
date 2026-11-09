@@ -128,15 +128,59 @@ def reset_idempotency_store() -> None:
         pass
 
 
-def idempotency_invalidate(route: str, key: str) -> None:
-    """删除一条幂等记录（回放目标已失效时用，不抛错）。"""
+def _row_query(db: Session, route: str, key: str,
+               user_id: Optional[str]):
+    """S-2：幂等行查找必须带用户隔离。user_id 非空时只查该用户的行；
+    为空（匿名）时只查 user_id IS NULL 的行——绝不能只按 (route, key)
+    查，否则匿名请求可能命中某登录用户的行（旧约束删除后同 (route, key)
+    可同时存在多用户的行，旧式查找会任意命中一行）。
+    """
+    q = (db.query(IdempotencyKey)
+           .filter(IdempotencyKey.route == route,
+                   IdempotencyKey.key == key))
+    if user_id:
+        q = q.filter(IdempotencyKey.user_id == user_id)
+    else:
+        q = q.filter(IdempotencyKey.user_id.is_(None))
+    return q
+
+
+def _try_adopt_legacy_row(db: Session, route: str, key: str,
+                          user_id: str, digest: str) -> bool:
+    """S-2 过渡认领：迁移 0023 上线前 24h 内建的旧行 user_id 为 NULL，
+    新查找（带 user_id）查不到它们，重试会重复执行。旧行的 body_hash
+    已含用户 scope（effective_scope = scope|u:user_id），故哈希相等即
+    可确认是同一用户同一请求：原子 UPDATE 认领（WHERE user_id IS NULL，
+    行数 1 为成功；并发认领落败方得 0，循环后走精确查找）。
+
+    认领失败/无旧行 → 返回 False，调用方按新行插入。
+    """
+    from sqlalchemy import update
+    stmt = (
+        update(IdempotencyKey)
+        .where(IdempotencyKey.route == route,
+               IdempotencyKey.key == key,
+               IdempotencyKey.user_id.is_(None),
+               IdempotencyKey.body_hash == digest)
+        .values(user_id=user_id)
+    )
+    result = db.execute(stmt)
+    db.commit()
+    return (result.rowcount or 0) == 1
+
+
+def idempotency_invalidate(route: str, key: str,
+                           user_id: Optional[str] = None) -> None:
+    """删除一条幂等记录（回放目标已失效时用，不抛错）。
+
+    S-2：必须带用户隔离——无 user_id 时只删 user_id IS NULL 的行，
+    绝不能按 (route, key) 全删，否则可误删他人的同 key 记录。
+    """
     raw = (key or "").strip()
     if not raw:
         return
     with _db() as db:
-        (db.query(IdempotencyKey)
-           .filter(IdempotencyKey.route == route,
-                   IdempotencyKey.key == raw)
+        (_row_query(db, route, raw, user_id)
            .delete(synchronize_session=False))
         db.commit()
 
@@ -191,7 +235,8 @@ def _replay_of(row: IdempotencyKey) -> Dict[str, Any]:
 
 def idempotency_begin(route: str, request: Request,
                       body: Dict[str, Any], scope: str = "",
-                      org_id: Optional[str] = None) -> _Claim:
+                      org_id: Optional[str] = None,
+                      user_id: Optional[str] = None) -> _Claim:
     """幂等入口（DB 版，语义与内存版一致）。
 
     - 请求头无 ``Idempotency-Key`` → 返回 ``_Claim(replay=None, active=False)``，
@@ -203,26 +248,41 @@ def idempotency_begin(route: str, request: Request,
       失败调 ``abort()`` 再抛错。
     - 并发命中"执行中"记录 → 轮询等待其完成（超时或失败则自动接管执行）。
     - ``org_id`` 为可选归属审计列；不传不影响去重语义。
+    - S-2 彻底隔离（迁移 0023）：行查找按 (route, key, user_id)
+     （匿名走 user_id IS NULL），库约束为两条部分唯一索引；
+      ``user_id`` 同时折叠进 scope 哈希，双重隔离。不同用户的相同 key
+      各建各的行，互不回放、互不冲突（旧 scope 方案下还会 400 冲突，
+      现已消除 key 占用面）。
+    - 过渡：迁移前 24h 的旧行 user_id 为 NULL，同一用户重试时先按
+      body_hash 认领（见 _try_adopt_legacy_row），认领不到才建新行。
     """
+    import re
     raw_key = (request.headers.get(IDEMPOTENCY_HEADER) or "").strip()
     if not raw_key:
         return _Claim(route, "", None, None)
     if len(raw_key) > 128:
         # 错误信息不回显 key 本体（防密钥片段进日志/响应）
         raise BusinessError("幂等键过长（最多 128 字符）")
-    digest = _body_hash(body, scope)
+    if not re.fullmatch(r"[A-Za-z0-9._~\-]+", raw_key):
+        # 轻微 #10：键字符集约束（字母/数字/._~-）。前端 auto key 为 UUID，
+        # 测试 key 均为该字符集；异常字符可能污染日志与 header 解析。
+        raise BusinessError("幂等键仅允许字母、数字及 . _ ~ -")
+    effective_scope = f"{scope}|u:{user_id}" if user_id else scope
+    digest = _body_hash(body, effective_scope)
 
     deadline = time.time() + WAIT_TIMEOUT
     while True:
         with _db() as db:
             _prune_expired(db)
-            row = (db.query(IdempotencyKey)
-                     .filter(IdempotencyKey.route == route,
-                             IdempotencyKey.key == raw_key)
-                     .first())
+            row = _row_query(db, route, raw_key, user_id).first()
             if row is None:
-                # 抢执行权：唯一约束 (route, key) 保证只有一个赢家
+                # 过渡认领：旧 NULL 行哈希相等即同一用户同一请求
+                if user_id and _try_adopt_legacy_row(
+                        db, route, raw_key, user_id, digest):
+                    continue  # 认领成功：循环后精确查找命中该行
+                # 抢执行权：部分唯一索引保证同用户只有一个赢家
                 row = IdempotencyKey(key=raw_key, org_id=org_id,
+                                     user_id=user_id,
                                      route=route, body_hash=digest,
                                      status="running")
                 db.add(row)
@@ -253,10 +313,8 @@ def idempotency_begin(route: str, request: Request,
         if remaining <= 0:
             # 等太久：删掉旧行自己接管（与内存版一致，不静默）
             with _db() as db:
-                old = (db.query(IdempotencyKey)
-                         .filter(IdempotencyKey.route == route,
-                                 IdempotencyKey.key == raw_key,
-                                 IdempotencyKey.status == "running")
+                old = (_row_query(db, route, raw_key, user_id)
+                         .filter(IdempotencyKey.status == "running")
                          .first())
                 if old is not None:
                     db.delete(old)

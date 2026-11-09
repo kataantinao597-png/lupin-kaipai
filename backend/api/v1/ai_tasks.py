@@ -82,6 +82,35 @@ def _require_org_member(db: Session, user_id: str,
     return ms.org_id
 
 
+def _is_org_admin(db: Session, user_id: str, org_id: str) -> bool:
+    """该用户在该组织是否为 admin/owner（S-1 例外判定用，与 agent.py 同口径）。"""
+    from ...rbac import ROLE_ADMIN, ROLE_RANK
+    ms = get_membership(db, user_id, org_id)
+    return bool(ms) and ROLE_RANK.get(ms.role, 0) >= ROLE_RANK[ROLE_ADMIN]
+
+
+def _get_task_or_404(db: Session, task_id: str, user_id: str):
+    """S-1 修复：通用任务路由的 created_by 校验（与 agent.py 的
+    _get_agent_task_or_404 同标准，类型不过滤——通用路由本就管理全类型任务）。
+
+    只验组织成员时，同组织任意成员可读他人 agent_run 结果、取消他人
+    运行中任务，agent.py 的 created_by 校验被完全绕过。现叠加
+    created_by：非管理员只能操作自己创建的任务。
+    admin/owner 例外是明确设计（组织管理需要查看/管理全组织任务），
+    不是遗漏；created_by 为空的老任务（迁移前数据）沿用组织成员口径，
+    避免老任务突然不可访问。
+    """
+    repo = AITaskRepository(db)
+    task = repo.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    _require_org_member(db, user_id, task.org_id)
+    if (getattr(task, "created_by", "") and task.created_by != user_id
+            and not _is_org_admin(db, user_id, task.org_id)):
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return task
+
+
 def _get_queue() -> TaskQueue:
     return TaskQueue(get_session_factory())
 
@@ -120,8 +149,9 @@ def create_task(req: AITaskCreate, request: Request,
             detail=f"任务类型 {req.task_type} 暂不支持异步执行")
     org_id = _require_org_member(db, user.id, req.org_id)
     # V3.1 P0：幂等——双击/重试只建一个任务
+    # S-2 修复：补 user_id，幂等键按用户隔离（同组织不同用户同 key 不再互相回放）
     idem = idempotency_begin("ai-tasks", request, req.model_dump(),
-                             scope=org_id)
+                             scope=org_id, user_id=user.id)
     if idem.replay is not None:
         replay = dict(idem.replay)
         replay["idempotent_replay"] = True  # V3.1 P0：让前端可识别幂等回放
@@ -160,6 +190,9 @@ def get_task(task_id: str,
 
     V3.1 P1-6：租户隔离——任务必须属于调用者所在组织，否则 404。
 
+    S-1：叠加 created_by 校验（见 _get_task_or_404），否则通用路由
+    会绕过 agent.py 的归属校验。
+
     V3.1 P1-4：查询前做一次惰性超时扫描——前端每 2.5s 轮询一次，
     超时任务会在下次轮询时被标记为 failed，前端即停止等待。
     """
@@ -168,11 +201,7 @@ def get_task(task_id: str,
         sweep_timed_out(get_session_factory())
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).warning("超时扫描失败", exc_info=True)
-    repo = AITaskRepository(db)
-    task = repo.get(task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
-    _require_org_member(db, user.id, task.org_id)
+    task = _get_task_or_404(db, task_id, user.id)
     return _task_out(task)
 
 
@@ -183,12 +212,10 @@ def cancel_task(task_id: str,
     """038：取消任务。pending 直接取消；running 协作式标记取消。
 
     V3.1 P1-6：租户隔离同上。
+    S-1：叠加 created_by 校验（见 _get_task_or_404）——取消属破坏性
+    操作，绝不能让同组织任意成员取消他人任务。
     """
-    repo = AITaskRepository(db)
-    task = repo.get(task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
-    _require_org_member(db, user.id, task.org_id)
+    task = _get_task_or_404(db, task_id, user.id)
     if is_terminal(task.status):
         return AITaskCancelOut(id=task.id, status=task.status,
                                cancelled=False,
@@ -210,12 +237,18 @@ def list_tasks(org_id: Optional[str] = Query(default=None),
                offset: int = Query(default=0, ge=0),
                user: User = Depends(get_current_user),
                db: Session = Depends(get_db)):
-    """按组织列出任务（审计/排查用）。"""
+    """按组织列出任务（审计/排查用）。
+
+    S-1：普通成员只能列自己创建的任务（admin/owner 可列全组织）。
+    否则列表本身就是枚举口：拿到他人 task_id 后结合原先无 created_by
+    的 get/cancel 即可读/取消他人任务，形成“枚举→读取/取消”闭环。
+    """
     if not org_id:
         raise HTTPException(status_code=400, detail="请指定 org_id")
     _require_org_member(db, user.id, org_id)
     repo = AITaskRepository(db)
+    created_by = None if _is_org_admin(db, user.id, org_id) else user.id
     tasks = repo.list_by_org(org_id, status=status, limit=limit,
-                             offset=offset)
+                             offset=offset, created_by=created_by)
     return AITaskListOut(items=[_task_out(t) for t in tasks],
                          total=len(tasks))
