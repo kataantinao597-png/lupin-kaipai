@@ -109,11 +109,25 @@ def get_timeline(
             data = json.loads(work.data_json or "{}")
             sb_json = (data.get("storyboard") or {})
             for i, s in enumerate(sb_json.get("shots") or [], start=1):
+                # 兼容 Agent 简化格式 shot_no / duration_sec（与 exporter
+                # be0b7d6 同款）；None 值不进 float，防 TypeError
+                no = s.get("shot_number", s.get("shot_no", i))
+                try:
+                    no = int(no or i)
+                except (TypeError, ValueError):
+                    no = i
+                dur = s.get("duration_seconds")
+                if dur is None:
+                    dur = s.get("duration_sec")
+                try:
+                    dur = float(dur or 0)
+                except (TypeError, ValueError):
+                    dur = 0.0
                 shots.append(TimelineShot(
                     shot_id=str(s.get("id", "")),
-                    shot_no=int(s.get("shot_number", i) or i),
+                    shot_no=no,
                     shot_id_stable=s.get("shot_id_stable"),
-                    duration_seconds=float(s.get("duration_seconds", 0) or 0)))
+                    duration_seconds=dur))
         except (ValueError, TypeError, AttributeError):
             pass
 

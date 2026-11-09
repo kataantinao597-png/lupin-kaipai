@@ -47,6 +47,16 @@ def _shots_v1():
     ]
 
 
+def _shots_simp():
+    # B-01：one-shot 简化分镜——只有 shot_no / duration_sec
+    return [
+        {"shot_no": 1, "duration_sec": 12,
+         "voiceover": "脆甜", "subtitle": "脆甜"},
+        {"shot_no": 2, "duration_sec": 8,
+         "voiceover": "现摘", "subtitle": "现摘"},
+    ]
+
+
 @pytest.fixture()
 def api_client(tmp_path, monkeypatch):
     """带认证覆盖的 TestClient：u_owner 为 org1 的 owner；另建 org2 做隔离测试。"""
@@ -87,6 +97,7 @@ def api_client(tmp_path, monkeypatch):
 
     work_v2 = _mk_work(org1.id, _shots_v2(), "V2作品")
     work_v1 = _mk_work(org1.id, _shots_v1(), "V1老作品")
+    work_simp = _mk_work(org1.id, _shots_simp(), "简化分镜作品")
     work_org2 = _mk_work(org2.id, _shots_v1(), "隔离作品")
 
     asset = Asset(org_id=org1.id, work_id=work_v2, filename="a.png",
@@ -100,7 +111,8 @@ def api_client(tmp_path, monkeypatch):
     db.add(asset_org2)
     db.commit()
     ids = {"org1": org1.id, "org2": org2.id, "work_v2": work_v2,
-           "work_v1": work_v1, "work_org2": work_org2,
+           "work_v1": work_v1, "work_simp": work_simp,
+           "work_org2": work_org2,
            "asset1": asset.id, "asset_org2": asset_org2.id}
     db.close()
 
@@ -284,6 +296,26 @@ def test_edit_list_v1_legacy_no_crash(api_client):
     assert d["items"][0]["acceptance_status"] == "pending"
     assert d["summary"]["total_final_seconds"] == 10
     assert d["summary"]["missing_shots"] == [1, 2]
+
+
+def test_edit_list_simplified_shots_b01(api_client):
+    """B-01：one-shot 简化分镜（shot_no/duration_sec）在剪辑清单与
+    时间轴里与 v1 格式等价：镜号不为 None、总时长 20s。"""
+    client, ids = api_client
+    r = client.get(f"/api/v2/shoot/works/{ids['work_simp']}/edit-list")
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert [i["shot_number"] for i in d["items"]] == [1, 2]
+    assert d["items"][0]["final_seconds"] == 12
+    assert d["items"][1]["final_seconds"] == 8
+    assert d["summary"]["total_final_seconds"] == 20
+    assert d["summary"]["missing_shots"] == [1, 2]
+    # 时间轴回退分支同样认 duration_sec
+    t = client.get(f"/api/v1/works/{ids['work_simp']}/timeline")
+    assert t.status_code == 200, t.text
+    td = t.json()["data"]
+    assert td["total_duration_seconds"] == 20
+    assert [s["shot_no"] for s in td["shots"]] == [1, 2]
 
 
 def test_edit_list_docx_200(api_client):

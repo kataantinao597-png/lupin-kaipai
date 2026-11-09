@@ -136,11 +136,37 @@ def _g(shot: dict, key: str, default: Any = None) -> Any:
     return v if v is not None else default
 
 
+def _shot_no(shot: dict) -> int | None:
+    """镜头编号：优先 shot_number（v1），回退 shot_no（Agent 简化格式，
+    与 exporter.py be0b7d6 同款兼容）。非 int/数字串返回 None。"""
+    for key in ("shot_number", "shot_no"):
+        v = shot.get(key)
+        if isinstance(v, int) and not isinstance(v, bool):
+            return v
+        if isinstance(v, str) and v.strip().isdigit():
+            return int(v.strip())
+    return None
+
+
 def _final_seconds(shot: dict) -> Any:
-    """成片使用时长：优先 final_duration_seconds，回退 duration_seconds。"""
+    """成片使用时长：优先 final_duration_seconds，回退 duration_seconds，
+    再回退 duration_sec（Agent 简化格式，与 exporter.py 同款）。"""
     v = _g(shot, "final_duration_seconds")
     if v is None:
         v = _g(shot, "duration_seconds")
+    if v is None:
+        v = _g(shot, "duration_sec")
+    return v
+
+
+def _plan_seconds(shot: dict) -> Any:
+    """计划时长：优先 record_duration_seconds，再回退 duration_sec
+    （Agent 简化格式）。注意：不回退 duration_seconds——v1 旧数据里
+    duration_seconds 是成片时长，混作录制时长会改写原有语义
+    （test_edit_list_v1_legacy_no_crash 要求此时为 null）。"""
+    v = _g(shot, "record_duration_seconds")
+    if v is None:
+        v = _g(shot, "duration_sec")
     return v
 
 
@@ -159,8 +185,8 @@ def _acceptance_for_shot(acceptance: dict, shot_number: int) -> dict | None:
 
 
 def _shot_map(shots: list[dict]) -> dict[int, dict]:
-    return {s.get("shot_number"): s for s in shots
-            if isinstance(s.get("shot_number"), int)}
+    return {n: s for s in shots
+            if (n := _shot_no(s)) is not None}
 
 
 def _asset_durations(db: Session, org_id: str, asset_ids: list[str]) -> float | None:
@@ -386,18 +412,22 @@ def _build_edit_list(db: Session, work: models.Work) -> dict:
     acceptance = _acceptance(data)
 
     items = []
-    for s in sorted(shots, key=lambda x: x.get("shot_number", 9999)):
-        sn = s.get("shot_number")
-        rec = _acceptance_for_shot(acceptance, sn) if isinstance(sn, int) else None
+    for s in sorted(shots,
+                    key=lambda x: _shot_no(x)
+                    if _shot_no(x) is not None else 9999):
+        sn = _shot_no(s)
+        rec = _acceptance_for_shot(acceptance, sn) if sn is not None else None
         status = (rec or {}).get("status") or "pending"
         asset_ids = (rec or {}).get("asset_ids") or []
         items.append({
             "shot_number": sn,
             "shot_purpose": _g(s, "shot_purpose"),
             "scene_description": _g(s, "scene_description", ""),
-            "record_seconds": _g(s, "record_duration_seconds"),
+            "record_seconds": _plan_seconds(s),
             "raw_asset_seconds": _asset_durations(db, work.org_id, asset_ids),
-            "usable_seconds": _g(s, "usable_duration_seconds"),
+            "usable_seconds": _g(s, "usable_duration_seconds")
+            if _g(s, "usable_duration_seconds") is not None
+            else _plan_seconds(s),
             "final_seconds": _final_seconds(s),
             "voiceover": _g(s, "voiceover", ""),
             "subtitle": _g(s, "subtitle", ""),
