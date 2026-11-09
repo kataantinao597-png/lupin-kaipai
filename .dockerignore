@@ -10,3 +10,10 @@ e2e/
 tests/
 competition-pack/
 PROGRESS.md
+# B-11：业务数据目录与数据库文件绝不进镜像（本地代码上传部署时，
+# 工作区即构建上下文，否则真实业务库会被打进镜像外发）
+backend/data/
+backend/media_files/
+backend/backups/
+*.db
+*.sqlite3
