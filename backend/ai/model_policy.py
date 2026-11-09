@@ -34,6 +34,11 @@ def resolve_model(db, task_type: str,
 
     显式指定的模型优先（122 禁止静默回退：用户指定的就用指定的）；
     否则查策略表；都没有则用 DEFAULT_MODEL。
+
+    注意：本函数不做白名单校验（test_policy_explicit_wins 与 122 锁定
+    了“显式指定即用”语义，网关/策略层改了会反向破坏）。用户传入的
+    model 白名单校验在 HTTP 边界做（validate_explicit_model），
+    内部调用（策略表模型、兜底模型、测试 fake）不受其约束。
     """
     if explicit_model:
         return explicit_model
@@ -42,6 +47,49 @@ def resolve_model(db, task_type: str,
         return pol["model"]
     from ..ai_service import DEFAULT_MODEL
     return DEFAULT_MODEL
+
+
+def list_allowed_models(db) -> set[str]:
+    """B-08：用户可显式指定的模型白名单。
+
+    = 能力注册表（model_capabilities，管理员经 PUT /model-capabilities
+    维护）∪ 策略表主/兜底模型 ∪ DEFAULT_MODEL。db=None 时只认
+    DEFAULT_MODEL。注册表为空的新库也不放空——至少 DEFAULT 可用。
+    """
+    from ..ai_service import DEFAULT_MODEL
+    allowed = {DEFAULT_MODEL}
+    if db is None:
+        return allowed
+    try:
+        from ..models import ModelCapability, TaskModelPolicy
+        for (m,) in db.query(ModelCapability.model).all():
+            if m:
+                allowed.add(m)
+        for row in db.query(TaskModelPolicy.model,
+                            TaskModelPolicy.fallback_model).all():
+            for m in row:
+                if m:
+                    allowed.add(m)
+    except Exception as e:
+        logger.warning("读取可用模型白名单失败: %s", e)
+    return allowed
+
+
+def validate_explicit_model(db, model: Optional[str]) -> None:
+    """B-08：用户传入的 model 非空时必须在白名单内，否则 ValueError。
+
+    None/空串 = 不指定，走服务端默认，不校验。调用方（HTTP 层）把
+    ValueError 转 400。白名单外的模型此前会直达 provider：不存在的
+    模型报 400 失败、高价模型绕过成本预期。
+    """
+    if not model:
+        return
+    allowed = list_allowed_models(db)
+    if model not in allowed:
+        raise ValueError(
+            f"不支持的模型: {model}（可用模型: "
+            f"{', '.join(sorted(allowed))}；如需新增请管理员在模型能力"
+            "注册表登记）")
 
 
 def resolve_fallback(db, task_type: str) -> Optional[str]:

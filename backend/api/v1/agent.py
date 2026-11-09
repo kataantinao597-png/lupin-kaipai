@@ -108,7 +108,8 @@ class AgentOneShot(BaseModel):
     conversation_id: Optional[str] = Field(
         default=None, description="复用的会话 id（不传则新建会话）")
     model: Optional[str] = Field(default=None,
-                                 description="覆盖默认模型（须在允许列表，由 service 层校验）")
+                                 description="覆盖默认模型（须在白名单内，"
+                                 "路由层 validate_explicit_model 校验）")
 
 
 class AgentModify(BaseModel):
@@ -124,7 +125,8 @@ class AgentModify(BaseModel):
     user_text: str = Field(min_length=1, max_length=2000,
                            description="用户修改需求（自然语言）")
     model: Optional[str] = Field(default=None,
-                                 description="覆盖默认模型（由 service 层校验）")
+                                 description="覆盖默认模型（须在白名单内，"
+                                 "路由层 validate_explicit_model 校验）")
 
 
 # ---------------------------------------------------------------------------
@@ -482,6 +484,13 @@ def one_shot(req: AgentOneShot,
     # 函数内导入：避免 api.v1.agent ↔ services.agent.orchestrator 顶层循环导入
     from ...services.agent.orchestrator import run_one_shot_brief
 
+    # B-08：用户传入的 model 须在白名单内（非法值 400，不建任务不入队）
+    try:
+        from ...ai.model_policy import validate_explicit_model
+        validate_explicit_model(db, req.model)
+    except ValueError as e:
+        raise BusinessError(str(e), code=error_codes.INVALID_PARAM,
+                            http_status=400) from e
     idem = idempotency_begin("agent-one-shot", request,
                             req.model_dump(mode="json"),
                             scope=req.org_id, org_id=req.org_id,
@@ -548,6 +557,13 @@ def modify(req: AgentModify,
     )
 
     _require_org_member(db, user.id, req.org_id)
+    # B-08：用户传入的 model 须在白名单内（非法值 400，不执行修改）
+    try:
+        from ...ai.model_policy import validate_explicit_model
+        validate_explicit_model(db, req.model)
+    except ValueError as e:
+        raise BusinessError(str(e), code=error_codes.INVALID_PARAM,
+                            http_status=400) from e
     try:
         result = apply_modification(
             db, user, req.org_id, req.work_id, req.conversation_id,

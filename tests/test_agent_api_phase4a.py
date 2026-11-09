@@ -304,6 +304,39 @@ class TestCreateAndGet:
 
 # ================= execute（B-04） =================
 
+class TestModelAllowlistB08:
+    def test_one_shot_unknown_model_400(self, api_client):
+        """B-08：one-shot 传白名单外模型 → 400，不建任务。"""
+        client, ids, _ = api_client
+        r = client.post("/api/v1/agent/one-shot", json={
+            "org_id": ids["org_a"], "brief_text": "做个视频",
+            "model": "gpt-99-ultra"})
+        assert r.status_code == 400, r.text
+        assert "不支持的模型" in r.text
+
+    def test_one_shot_allowlisted_model_202(self, api_client, monkeypatch):
+        """B-08：白名单内模型（种子 gpt-6-luna）正常入队 202。"""
+        import backend.services.agent.orchestrator as orch_mod
+        monkeypatch.setattr(
+            orch_mod, "run_one_shot_brief",
+            lambda *a, **k: {"run_status": "completed"})
+        client, ids, _ = api_client
+        r = client.post("/api/v1/agent/one-shot", json={
+            "org_id": ids["org_a"], "brief_text": "做个视频",
+            "model": "gpt-6-luna"})
+        assert r.status_code == 202, r.text
+
+    def test_modify_unknown_model_400(self, api_client):
+        """B-08：modify 传白名单外模型 → 400。"""
+        client, ids, _ = api_client
+        r = client.post("/api/v1/agent/modify", json={
+            "org_id": ids["org_a"], "work_id": ids["work_a"],
+            "conversation_id": "no-such-conv", "user_text": "改第 3 镜",
+            "model": "gpt-99-ultra"})
+        assert r.status_code == 400, r.text
+        assert "不支持的模型" in r.text
+
+
 class TestExecute:
     def _run_with_plan(self, client, ids):
         r = client.post("/api/v1/agent/runs",
