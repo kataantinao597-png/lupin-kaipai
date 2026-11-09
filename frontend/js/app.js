@@ -388,6 +388,7 @@ const AGENT = {
   cancelReq:false, startedAt:null, // V3.2：取消请求标记 + 开始时间（前端耗时反馈）
   evSeq:0, // V3.3：过程事件流已重放到的 seq
   restoreKey:"lupin_agent_run", restoredFor:null, // V3.5：刷新恢复（sessionStorage 快照 + 防重复恢复）
+  nextPollAt:0, // S-03/O-07：轮询失败退避后的下次可轮询时刻（0=不退避）
 };
 
 /* V3.3：把后端过程事件流重放进聊天区。
@@ -691,13 +692,20 @@ function stopAgentPoll() {
 }
 async function agentPollTick() {
   if (!AGENT.taskId) return;
+  // S-03/O-07：失败退避期内跳过本拍（2.5s 定时器不停，只是不发请求），
+  // 429/5xx/断网时不再持续 hammer；成功即清退避。
+  if (AGENT.nextPollAt && Date.now() < AGENT.nextPollAt) return;
   let st = null;
   try {
     st = V1(await ApiClient.get("/api/v1/agent/runs/" + encodeURIComponent(AGENT.taskId)));
-    AGENT.pollFails = 0;
+    AGENT.pollFails = 0; AGENT.nextPollAt = 0;
   } catch (e) {
     AGENT.pollFails++;
-    if (AGENT.pollFails === 3) agentLog("sys", { text: "网络波动，正在重试轮询…", id: "poll-warn" });
+    // 指数退避 2.5s → 5s → 10s → 20s，上限 30s
+    const waitMs = Math.min(2500 * Math.pow(2, AGENT.pollFails - 1), 30000);
+    AGENT.nextPollAt = Date.now() + waitMs;
+    if (AGENT.pollFails === 3) agentLog("sys", { text: "网络波动，"
+      + Math.round(waitMs / 1000) + " 秒后重试轮询…", id: "poll-warn" });
     return;
   }
   if (!st) return;
