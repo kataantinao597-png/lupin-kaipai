@@ -123,14 +123,24 @@ class AITaskRepository:
     @transactional_method
     def update_payload(self, task_id: str,
                        payload: dict[str, Any]) -> AITask:
-        """Phase 3：整体替换 payload_json（run_status/pending_step 等扩展
-        字段），不改变任务状态。"""
+        """Phase 3：按 key 合并更新 payload_json（B-10），不改变任务状态。
+
+        原先整体替换：主流程入口读的 payload 快照写回时，会把并发写入
+        （如 pause 置 paused=True）静默覆盖掉。现先 fresh 读库里最新
+        payload（expire 掉本会话缓存），再把传入的 key 逐个覆盖后写回
+        ——每个 key 各自最后写入获胜，其余 key 不受影响。调用方均用显式
+        赋值（paused=False）而非 pop 删 key，故合并语义不破坏“清标记”
+        类操作；嵌套 dict 按顶层 key 整体覆盖，不递归合并。
+        """
         task = self.get(task_id)
         if task is None:
             raise EntityNotFound("AITask", task_id)
+        self.db.expire(task, ["payload_json"])
+        current = dict(task.payload_json or {})
+        merged = {**current, **dict(payload)}
         self.db.execute(
             update(AITask).where(AITask.id == task_id).values(
-                payload_json=payload, updated_at=_utcnow()))
+                payload_json=merged, updated_at=_utcnow()))
         self.db.flush()
         task = self.get(task_id)
         assert task is not None

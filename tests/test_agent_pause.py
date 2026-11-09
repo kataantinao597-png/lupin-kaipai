@@ -92,6 +92,31 @@ def _payload(db, task_id):
 
 
 class TestPauseRun:
+    def test_update_payload_merges_keys_b10(self, db):
+        """B-10：update_payload 按 key 合并——主流程旧快照写回 run_status
+        时，不丢掉并发写入的 paused=True；反向同理。"""
+        org = _org(db)
+        task_id = _make_run(db, org)
+        snap = dict(_payload(db, task_id))
+        # 并发会话模拟用户点暂停（独立会话写 paused=True）
+        db2 = get_session_factory()()
+        try:
+            AITaskRepository(db2).update_payload(
+                task_id, {**snap, "paused": True})
+        finally:
+            db2.close()
+        # 主流程拿旧快照写回 run_status
+        AITaskRepository(db).update_payload(
+            task_id, {**snap, "run_status": "running"})
+        final = _payload(db, task_id)
+        assert final.get("paused") is True
+        assert final.get("run_status") == "running"
+        # resume 的 paused=False 同样是显式赋值，合并后生效
+        AITaskRepository(db).update_payload(
+            task_id, {**final, "paused": False})
+        assert _payload(db, task_id).get("paused") is False
+        assert _payload(db, task_id).get("run_status") == "running"
+
     def test_pause_sets_flag_idempotent(self, db):
         org = _org(db)
         task_id = _make_run(db, org, plan=_plan(
