@@ -731,6 +731,11 @@ function agentOnTerminal(st) {
   agentClearSnapshot(); // V3.5：终态后清刷新恢复快照
   const norm = agentNormStatus(st);
   AGENT.cancelReq = false; AGENT.startedAt = null; // V3.2：终态清标记
+  // B-06：终态也回填 work_id（刷新恢复路径下 one-shot 响应已错过，
+  // 这里补一次，后续追问才能走 /modify）
+  if (st && st.work_id) {
+    AGENT.ctx = { ...(AGENT.ctx || {}), work_id: st.work_id };
+  }
   agentLog("sys", { text: "状态更新：" + (AGENT_STATE_META[agentDisplayState(st)] || [])[0], id: "run-lifecycle" });
   if (norm === "failed") agentLog("error", { state: st });
   else if (norm === "cancelled") agentLog("sys", { text: "任务已取消" });
@@ -804,6 +809,21 @@ function agentIsChitchat(text) {
 }
 const AGENT_CHITCHAT_REPLY = "你好呀，我在的！把想做的内容说一句话就行，例如：「给章丘大葱做一条 60 秒抖音带货短视频，突出脆甜」。我会自己安排查事实、出创意、排分镜，关键步骤会先请你确认。";
 const AGENT_CHITCHAT_SUGGESTS = ["给章丘大葱做一条 60 秒抖音带货短视频", "检查当前作品的风险项并给出修改建议", "生成 3 个创意方向"];
+/* B-06：/modify 返回的修改摘要拼成一句人话（changed 可能是字符串/
+   数组/对象，三种都兜底；不依赖具体字段名以外的结构）。 */
+function agentModifySummaryText(m) {
+  const changed = m.changed;
+  let c = "";
+  if (typeof changed === "string") c = changed;
+  else if (Array.isArray(changed)) c = changed.join("；");
+  else if (changed && typeof changed === "object") c = Object.values(changed).join("；");
+  const shots = (m.impacted_shots || []).map((n) => "镜" + n).join("、");
+  let t = "已按你的要求局部修改完成";
+  if (c) t += "：" + c;
+  if (shots) t += "（涉及" + shots + "）";
+  t += "，作品已更新到 v" + (m.work_version || "?") + "。";
+  return t;
+}
 async function agentSend() {
   const ta = $("agent_input");
   const text = (ta.value || "").trim();
@@ -828,14 +848,52 @@ async function agentSend() {
     product_id: ctx.product_id || null, work_id: ctx.work_id || null,
     shot_id: ctx.shot_id == null ? null : ctx.shot_id };
   try {
+    // B-06：终态后追问——同一会话已有作品时走 /modify 局部修改，
+    // 不再新建 11 步 one-shot（改第 3 镜之类的追问只改局部）。
+    const lastNorm = AGENT.lastState ? agentNormStatus(AGENT.lastState) : null;
+    const modifyWorkId = (AGENT.ctx && AGENT.ctx.work_id)
+      || (AGENT.lastState && AGENT.lastState.work_id) || null;
+    if (AGENT.convId && modifyWorkId
+        && (lastNorm === "completed" || lastNorm === "partial")) {
+      const m = V1(await ApiClient.post("/api/v1/agent/modify", {
+        org_id: S.org.id, work_id: modifyWorkId,
+        conversation_id: AGENT.convId, user_text: text.slice(0, 2000),
+      }, { timeoutMs: ApiClient.AI_TIMEOUT_MS })); // 同步接口，走 AI 超时档
+      ta.value = "";
+      if (m && m.status === "waiting_user" && m.task_id) {
+        AGENT.taskId = m.task_id;
+        AGENT.renderedConfirmFor = null; AGENT.renderedResultFor = null;
+        AGENT.pollFails = 0; AGENT.state = "waiting_user";
+        agentLog("sys", { text: "这次修改需要你确认，确认卡片已生成",
+                         live: true, id: "run-lifecycle" });
+        renderAgentPill("waiting_user"); setAgentButtons("waiting_user");
+        startAgentPoll();
+      } else if (m && m.status === "completed") {
+        AGENT.state = "completed";
+        agentLog("ai", { text: agentModifySummaryText(m) });
+        renderAgentPill("completed"); setAgentButtons("completed");
+      } else {
+        AGENT.state = "idle";
+        agentLog("sys", { text: "修改未完成："
+          + ((m && (m.error || m.status)) || "未知状态") });
+        renderAgentPill("idle"); setAgentButtons("idle");
+      }
+      return;
+    }
     // 一句话生成：调 /one-shot（建 run + 入队异步执行），不再只建不执行
     const body = { org_id: S.org.id, brief_text: text.slice(0, 2000) };
     if (brief.work_id) body.work_id = brief.work_id;
     // Phase 5 多轮串联：同一会话内后续消息复用 conversation（brief 增量更新）
     if (AGENT.convId) body.conversation_id = AGENT.convId;
-    const r = V1(await ApiClient.post("/api/v1/agent/one-shot", body));
+    const r = V1(await ApiClient.post("/api/v1/agent/one-shot", body,
+      { idempotencyKey: "auto" })); // B-05：双击/重试不再建两个 run
     AGENT.taskId = r.task_id;
     AGENT.convId = r.conversation_id || null;
+    // B-06：新建作品 id 写回 AGENT.ctx，后续追问才能走 /modify
+    if (r.work_id) {
+      AGENT.ctx = { ...(AGENT.ctx || {}), work_id: r.work_id };
+      renderAgentCtx();
+    }
     AGENT.renderedConfirmFor = null; AGENT.renderedResultFor = null; AGENT.pollFails = 0;
     AGENT.cancelReq = false; AGENT.startedAt = Date.now(); // V3.2
     AGENT.evSeq = 0; // V3.3：新任务事件流从头重放

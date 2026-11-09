@@ -20,7 +20,7 @@
   // AI 相关路径走更长的超时
   var AI_PATH_HINTS = ["/api/ideas", "/api/storyboard", "/api/regenerate-shot",
     "/api/risk-check", "/api/feasibility-check", "/api/v1/ai-tasks",
-    "/api/v1/plan", "/api/colloquial-rewrite"];
+    "/api/v1/agent", "/api/v1/plan", "/api/colloquial-rewrite"];
 
   function ApiError(status, code, message, details, requestId) {
     this.name = "ApiError";
