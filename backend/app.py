@@ -40,8 +40,24 @@ log = get_logger("app")
 import time as _time
 _START_TIME = _time.time()  # S9.3：uptime 计算基准
 
+
+def _git_version_once() -> str:
+    """O-06：git 短哈希只在启动时算一次（此前 /api/health 每次请求
+    都新开 git 子进程）。"""
+    try:
+        import subprocess
+        return subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=3,
+            cwd=BASE_DIR,
+        ).stdout.strip() or "unknown"
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
+
+_VERSION = _git_version_once()  # O-06：启动时算一次，供 /api/health 复用
 
 app = FastAPI(title="鲁品开拍", version="0.1.0")
 # 注意：不在此处 include_router（FastAPI 0.143.2 bug），统一由下方 _mount() 挂载
@@ -379,17 +395,8 @@ def health():
     from .core import deps as _deps
     ai = getattr(_deps.get_ai_service, "_singleton", None)
 
-    # version：git commit 短哈希（取不到则为 unknown）
-    version = "unknown"
-    try:
-        import subprocess
-        version = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=3,
-            cwd=BASE_DIR,
-        ).stdout.strip() or "unknown"
-    except Exception:
-        pass
+    # version：启动时算好的 git commit 短哈希（取不到则为 unknown）
+    version = _VERSION
 
     # database：连通性
     db_status = "unknown"
