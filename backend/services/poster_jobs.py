@@ -54,6 +54,10 @@ class PosterJob:
     error_code: int = 0
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
+    #: B-09：开始执行时刻（_run 取到任务时写）。看门狗改按它计时——
+    #: 单 worker 串行下排队任务不应把排队时间算进执行超时。
+    #: 为 None 表示尚未开始执行，看门狗回退 created_at 计时。
+    started_at: Optional[float] = None
 
     def public(self) -> dict:
         """对外字段。出图后一次性带上 base64；失败带错误文案与业务码。"""
@@ -85,8 +89,12 @@ def _mark_expired_locked(now: float) -> None:
     “判失败后又被算回来”的路径（_finish 只允许 running → done/failed）。
     """
     for j in _jobs.values():
+        # B-09：看门狗按“开始执行时间”计时（started_at 已写时），
+        # 尚未开始执行的任务仍按 created_at 计——排队过久未启动
+        # 本身也是超时（前端可重试），只是不再误杀“刚启动就超时”。
+        base = j.started_at if j.started_at is not None else j.created_at
         if (j.status == STATUS_RUNNING
-                and now - j.created_at > JOB_TIMEOUT_SECONDS):
+                and now - base > JOB_TIMEOUT_SECONDS):
             j.status = STATUS_FAILED
             j.error = ("图片生成超时（服务器等待超过 %d 秒），请重试"
                        % JOB_TIMEOUT_SECONDS)
@@ -184,6 +192,16 @@ def _finish(job: PosterJob, **kw) -> None:
 def _run(job: PosterJob, work: Callable[[], dict],
          on_success: Optional[Callable[[dict], None]] = None) -> None:
     import logging
+    # B-09：执行前检查任务状态——看门狗已判 failed 的排队任务不再调
+    # 上游出图（烧钱且结果会被丢弃）。同时写 started_at，看门狗自此
+    # 改按执行时长计时。
+    with _lock:
+        if job.status != STATUS_RUNNING:
+            logging.getLogger(__name__).info(
+                "海报任务 %s 执行前已是 %s，跳过上游调用", job.id, job.status)
+            return
+        job.started_at = time.time()
+        job.updated_at = job.started_at
     try:
         first = work()
     except Exception as e:  # BusinessError / 任意异常都收敛成 failed

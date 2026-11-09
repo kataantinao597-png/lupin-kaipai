@@ -318,6 +318,34 @@ class TestImageJobs:
         assert got.status == poster_jobs.STATUS_RUNNING
         assert got.public().get("elapsed") is not None
 
+    def test_run_skips_failed_job_b09(self, db):
+        """B-09：看门狗已判失败的排队任务轮到执行时不再调上游出图。"""
+        import time as _t
+
+        from backend.services import poster_jobs
+        poster_jobs.reset_for_tests()
+        job = poster_jobs.create_job("u1", "org-x")
+        job.created_at = _t.time() - (poster_jobs.JOB_TIMEOUT_SECONDS + 5)
+        poster_jobs.get_job(job.id, user_id="u1")  # 触发看门狗判失败
+        assert job.status == poster_jobs.STATUS_FAILED
+        called = []
+        poster_jobs._run(job,
+                         lambda: called.append(1) or {"b64_json": "x"})
+        assert called == []
+
+    def test_watchdog_uses_started_at_b09(self, db):
+        """B-09：已开始执行的任务按 started_at 计时——创建 300s 前、
+        刚开始执行 10s 的任务不判失败（排队时间不算执行超时）。"""
+        import time as _t
+
+        from backend.services import poster_jobs
+        poster_jobs.reset_for_tests()
+        job = poster_jobs.create_job("u1", "org-x")
+        job.created_at = _t.time() - 300
+        job.started_at = _t.time() - 10
+        got = poster_jobs.get_job(job.id, user_id="u1")
+        assert got.status == poster_jobs.STATUS_RUNNING
+
     def test_job_blocked_at_limit(self, db, monkeypatch):
         from backend.services import poster_jobs
         poster_jobs.reset_for_tests()
