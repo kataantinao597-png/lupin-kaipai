@@ -84,14 +84,40 @@ def _tier_for(path: str, method: str = "GET") -> tuple[str, int] | None:
     return None
 
 
+def _real_ip(request) -> str:
+    """真实客户端 IP：优先 X-Forwarded-For 首跳（生产网关后 client.host
+    只是网关出口 IP），无 XFF 时回退直连 client.host。
+
+    只做身份分桶用，不做鉴权。注意：XFF 可由直连客户端伪造，故 auth
+    档（防撞库）不走本函数，仍用直连 IP；ai/default 档伪造 XFF 只能
+    让伪造者自己换桶，占不到别人的桶。
+    """
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first and len(first) <= 64 and " " not in first:
+            return first
+    return request.client.host if request.client else "unknown"
+
+
 def _identity_for(request, tier: str) -> str:
-    ip = request.client.host if request.client else "unknown"
+    ip = _real_ip(request) if tier != "auth" else (
+        request.client.host if request.client else "unknown")
     if tier == "auth":
         return f"auth:{ip}"
-    # ai/default：IP + 鉴权头哈希，同一 IP 下不同用户分桶
+    # ai/default：IP + 鉴权身份哈希，同一 IP 下不同用户分桶。
+    # B-02：生产网关剥离 Authorization 时回退 lupin_refresh Cookie
+    # （与 backend/auth/deps.py 的回退同名；此处只取哈希做分桶标识，
+    # 不校验、不鉴权——鉴权仍在依赖层做）。
     authz = (request.headers.get("authorization", "")
              or request.headers.get("x-api-key", ""))
-    who = hashlib.sha256(authz.encode()).hexdigest()[:12] if authz else "anon"
+    if authz:
+        who = "hdr:" + hashlib.sha256(authz.encode()).hexdigest()[:12]
+    else:
+        cookies = getattr(request, "cookies", None) or {}
+        cookie = cookies.get("lupin_refresh", "")
+        who = ("ckie:" + hashlib.sha256(cookie.encode()).hexdigest()[:12]
+               if cookie else "anon")
     return f"{tier}:{ip}:{who}"
 
 

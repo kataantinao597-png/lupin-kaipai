@@ -204,6 +204,27 @@ class TestRateLimit:
         c = _identity_for(Req("Bearer AAA"), "ai")
         assert a != b and a == c  # 不同用户分桶
 
+    def test_identity_cookie_fallback_b02(self):
+        """B-02：无 Authorization 时按 lupin_refresh Cookie 分桶；
+        X-Forwarded-For 首跳作真实 IP。"""
+        class Req:
+            client = type("C", (), {"host": "203.0.113.9"})()
+
+            def __init__(self, cookie, xff=None):
+                self.headers = {"x-forwarded-for": xff} if xff else {}
+                self.cookies = {"lupin_refresh": cookie} if cookie else {}
+        a = _identity_for(Req("token-user-A"), "ai")
+        b = _identity_for(Req("token-user-B"), "ai")
+        assert a != b  # 不同 Cookie 用户不再共用 anon 桶
+        assert _identity_for(Req("token-user-A"), "ai") == a
+        assert _identity_for(Req(""), "ai").endswith(":anon")
+        c = _identity_for(Req("token-user-A", "198.51.100.7, 203.0.113.9"),
+                          "ai")
+        assert c.startswith("ai:198.51.100.7:")
+        # auth 档不信任 XFF（防伪造换桶撞库），仍用直连 IP
+        assert _identity_for(
+            Req("token-user-A", "198.51.100.7"), "auth") == "auth:203.0.113.9"
+
     def test_bucket_allows_then_blocks(self):
         mw = RateLimitMiddleware(_dummy_asgi_app())
         for _ in range(5):
