@@ -42,6 +42,19 @@ def _g(d, key, default=""):
     return default if v is None else v
 
 
+#: S-04：validator 归一化填的占位文案（validator._normalize_...），
+#: 不是真实产品信息；导出件里必须标出来，不能当产品信息印。
+_PLACEHOLDER_PRODUCT_SUMMARY = "AI 助手生成"
+
+
+def _product_summary_text(data: dict) -> str:
+    """导出用产品概述：占位值标“（待确认）”，真实值原样印。"""
+    v = str(_g(data, "product_summary"))
+    if v == _PLACEHOLDER_PRODUCT_SUMMARY:
+        return v + "（待确认）"
+    return v
+
+
 def _shot_final_seconds(s: dict) -> float:
     """成片使用时长：优先 final_duration_seconds，缺省回退 duration_seconds（v1 兼容），
     再回退 duration_sec（Agent 工具链简化格式）。"""
@@ -163,7 +176,7 @@ def build_doc(data: dict) -> Document:
 
     # ---------- 一、任务概要 ----------
     heading(doc, "一、任务概要", level=1)
-    para(doc, "产品：" + str(_g(data, "product_summary")))
+    para(doc, "产品：" + _product_summary_text(data))
     para(doc, "目标受众：" + str(_g(data, "target_audience")))
     para(doc, "创意方向：" + str(_g(data, "creative_direction")))
     purpose = _g(data, "video_purpose", "")
@@ -328,7 +341,7 @@ def build_checklist_doc(data: dict, shoot_state: dict) -> Document:
     STATUS_LABEL = {"todo": "待拍摄", "done": "已拍摄", "reshoot": "需要补拍"}
 
     heading(doc, "现场拍摄清单", level=1)
-    para(doc, f"作品：{data.get('product_summary', '')}")
+    para(doc, f"作品：{_product_summary_text(data)}")
     para(doc, f"目标时长：{data.get('target_duration_seconds', '')}秒　镜头总数：{len(shots)}")
 
     done = sum(1 for s in shots if status_map.get(str(s.get("shot_number")), {}).get("status") == "done")
@@ -390,9 +403,10 @@ def storyboard_to_srt(storyboard: dict) -> str:
     entries = []
     cursor = 0.0
     for index, shot in enumerate(storyboard.get("shots", []), start=1):
-        # 兼容 Agent 工具链简化格式（duration_sec）
-        duration = float(shot.get("duration_seconds",
-                                 shot.get("duration_sec", 0)))
+        # 兼容 Agent 工具链简化格式（duration_sec）；S-05：key 存在但
+        # 值为 None 时 float(None) 会报 TypeError，先 or 掉 None。
+        duration = float(shot.get("duration_seconds")
+                         or shot.get("duration_sec") or 0)
         subtitle = str(shot.get("subtitle", "")).strip()
         if duration <= 0:
             raise ValueError(f"shot {index} duration must be positive")
