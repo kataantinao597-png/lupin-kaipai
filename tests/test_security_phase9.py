@@ -176,7 +176,10 @@ class TestRateLimit:
         assert _tier_for("/api/v1/ai-tasks", "POST") == ("ai", 20)
         assert _tier_for("/api/storyboard", "POST") == ("ai", 20)
         assert _tier_for("/api/v1/agent/one-shot", "POST") == ("ai", 20)
-        assert _tier_for("/api/v1/agent/runs/t1", "GET") == ("default", 100)
+        # S-02：agent 面板轮询端点进轮询档（60/min/身份），不再落 default 档
+        assert _tier_for("/api/v1/agent/runs/t1", "GET") == ("poll", 60)
+        # 轮询档只管 GET；POST 仍走 ai 档
+        assert _tier_for("/api/v1/agent/runs/t1", "POST") == ("ai", 20)
         assert _tier_for("/api/ideas", "GET") == ("default", 100)
         assert _tier_for("/api/v1/works") == ("default", 100)
         # 豁免路径
@@ -204,8 +207,7 @@ class TestRateLimit:
         c = _identity_for(Req("Bearer AAA"), "ai")
         assert a != b and a == c  # 不同用户分桶
 
-    def test_identity_cookie_fallback_b02(self):
-        """B-02：无 Authorization 时按 lupin_refresh Cookie 分桶；
+    def test_identity_cookie_fallback_b02(self):        """B-02：无 Authorization 时按 lupin_refresh Cookie 分桶；
         X-Forwarded-For 首跳作真实 IP。"""
         class Req:
             client = type("C", (), {"host": "203.0.113.9"})()

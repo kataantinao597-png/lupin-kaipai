@@ -40,9 +40,12 @@ _TIERS: list[tuple[str, int, tuple[str, ...]]] = [
 #: POST 后，GET 轮询全落 default 档（100/min/IP），配合 S-1/S-2 可做
 #: 任务存在性高频枚举与 DB 读放大。正常面板 2.5s 轮询约 24/min，
 #: 60 留有余量；POST 建任务仍走 ai 档（20/min）。
+#: S-02：agent 面板 2.5s 轮询的正是 /api/v1/agent/runs/{id}，
+#: 此前漏在轮询档外、落在 default 档，补上。
 _POLL_LIMIT = 60
 _POLL_FRAGMENTS = (
     "/api/v1/ai-tasks",
+    "/api/v1/agent/runs/",
     "/api/v1/agent/quota",
     "/api/v1/poster/image/quota",
     "/api/v1/poster/image/jobs",
