@@ -31,7 +31,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ...ai_tasks.queue import TaskQueue
+from ...ai_tasks.queue import TaskQueue, sweep_timed_out
 from ...ai_tasks.repository import AITaskRepository
 from ...ai_tasks.state_machine import is_terminal
 from ...auth.database import get_db, get_session_factory
@@ -275,7 +275,16 @@ def get_run(task_id: str,
     """查询 run 全状态：task + run_status + steps + 待确认步骤（刷新恢复用）。
 
     任务必须属于调用者所在组织，否则 404（防枚举/防 IDOR）。
+
+    B-03：agent 面板 2.5s 轮询本端点，查询前做一次惰性超时扫描
+    （与 GET /ai-tasks/{id} 同口径），卡住的 run 在此路径下也能翻转
+    为 failed，不再无限轮询。
     """
+    import logging
+    try:
+        sweep_timed_out(get_session_factory())
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning("超时扫描失败", exc_info=True)
     task = _get_agent_task_or_404(db, task_id, user.id)
     state = get_run_state(db, task_id, task.org_id)
     if not state.get("found"):

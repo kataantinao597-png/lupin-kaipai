@@ -36,20 +36,24 @@ def _valid_script():
 
 
 class TestTimeoutSweep:
-    def _seed(self, status, age_seconds, org_id):
+    def _seed(self, status, age_seconds, org_id, task_type="livestream_script",
+              started_age_seconds=None):
         from backend.auth.database import get_session_factory
         from backend.ai_tasks.repository import AITaskRepository
         from backend.models import AITask
         s = get_session_factory()()
         try:
             t = AITaskRepository(s).create(org_id=org_id,
-                                          task_type="livestream_script",
+                                          task_type=task_type,
                                           payload={}, created_by="u1")
             tid = t.id
             task = s.get(AITask, tid)
             task.status = status
             task.created_at = (datetime.now(timezone.utc)
                                - timedelta(seconds=age_seconds))
+            if started_age_seconds is not None:
+                task.started_at = (datetime.now(timezone.utc)
+                                   - timedelta(seconds=started_age_seconds))
             s.commit()
             return tid
         finally:
@@ -87,6 +91,28 @@ class TestTimeoutSweep:
         st, err = self._status_of(tid)
         assert st == "failed"
         assert "超时" in (err or "")
+
+    def test_agent_run_running_uses_started_at_b03(self, api_env):
+        """B-03：排队 11 分钟、刚跑 2 分钟的 agent_run 不被误杀
+        （running 超时从 started_at 起算）。"""
+        from backend.ai_tasks.queue import sweep_timed_out
+        from backend.auth.database import get_session_factory
+        tid = self._seed("running", 660, api_env.org1,
+                         task_type="agent_run", started_age_seconds=120)
+        assert sweep_timed_out(get_session_factory()) == 0
+        st, _ = self._status_of(tid)
+        assert st == "running"
+
+    def test_agent_run_running_timeout_1800_b03(self, api_env):
+        """B-03：agent_run 执行超过 30 分钟（run 级预算）才判失败。"""
+        from backend.ai_tasks.queue import sweep_timed_out
+        from backend.auth.database import get_session_factory
+        tid = self._seed("running", 2000, api_env.org1,
+                         task_type="agent_run", started_age_seconds=1860)
+        assert sweep_timed_out(get_session_factory()) == 1
+        st, err = self._status_of(tid)
+        assert st == "failed"
+        assert "30" in (err or "")
 
     def test_young_running_untouched(self, api_env):
         from backend.ai_tasks.queue import sweep_timed_out

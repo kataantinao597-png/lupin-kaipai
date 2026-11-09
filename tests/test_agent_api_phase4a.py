@@ -274,6 +274,33 @@ class TestCreateAndGet:
         assert data["confirmed_steps"] == []
         assert "found" not in data
 
+    def test_get_run_triggers_timeout_sweep_b03(self, api_client):
+        """B-03：agent 面板轮询 GET /runs/{id} 也触发超时扫描——
+        已超 30 分钟 run 预算的 running 任务当场翻转为 failed。"""
+        from datetime import datetime, timedelta, timezone
+
+        from backend.ai_tasks.repository import AITaskRepository
+        from backend.auth.database import get_session_factory
+        from backend.models import AITask
+        client, ids, _ = api_client
+        r = client.post("/api/v1/agent/runs",
+                        json={"org_id": ids["org_a"],
+                              "brief": {"goal": "卡住的任务"}})
+        task_id = _data(r)["task_id"]
+        db = get_session_factory()()
+        try:
+            AITaskRepository(db).set_status(task_id, "running")
+            task = db.get(AITask, task_id)
+            task.started_at = (datetime.now(timezone.utc)
+                               - timedelta(seconds=1860))
+            db.commit()
+        finally:
+            db.close()
+        r = client.get(f"/api/v1/agent/runs/{task_id}")
+        data = _data(r)
+        assert data["status"] == "failed", r.text
+        assert "超时" in (data.get("error") or ""), r.text
+
 
 # ================= plan =================
 

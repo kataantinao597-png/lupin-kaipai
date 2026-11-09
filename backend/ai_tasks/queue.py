@@ -29,13 +29,27 @@ MAX_WORKERS = 4
 # 不再无限等待；后端也不再无声烧钱）。
 TASK_TIMEOUT_SECONDS = 600
 
+#: B-03：agent_run 的 running 超时（秒），与 runner.MAX_RUN_TOTAL_SECONDS
+#: （30 分钟）对齐。one-shot 11 步真模型调用完全可能超过 10 分钟墙钟，
+#: 但 run 级预算允许 30 分钟——running 超时改从 started_at 起算、
+#: 按本值判定，不再与 600s 排队超时混用同一口径。
+AGENT_RUN_TIMEOUT_SECONDS = 1800
+
+
+def _running_timeout_seconds(task_type: str) -> int:
+    """running 态超时上限：agent_run 按 run 级预算，其余任务沿用 600s。"""
+    return (AGENT_RUN_TIMEOUT_SECONDS if task_type == "agent_run"
+            else TASK_TIMEOUT_SECONDS)
+
 
 def sweep_timed_out(session_factory: Callable[[], Any]) -> int:
     """V3.1 P1-4：超时扫描——把超时未终态的任务标记为终态。
 
     - pending 超时（排队超过时限未开始）：→ cancelled（状态机只允许
-      pending→cancelled），error 注明排队超时。
-    - running 超时（执行超过时限）：→ failed。
+      pending→cancelled），error 注明排队超时；从 created_at 起算。
+    - running 超时（执行超过时限）：→ failed；B-03 改从 started_at
+      起算（started_at 为空的老数据回退 created_at），agent_run 上限
+      1800s、其余任务 600s。
     返回本次处理的任务数。幂等，可被多次调用。
     """
     from datetime import datetime, timedelta, timezone
@@ -49,11 +63,9 @@ def sweep_timed_out(session_factory: Callable[[], Any]) -> int:
 
     db = session_factory()
     try:
-        cutoff = (datetime.now(timezone.utc)
-                  - timedelta(seconds=TASK_TIMEOUT_SECONDS))
+        now = datetime.now(timezone.utc)
         stmt = select(AITask).where(
             AITask.status.notin_(TERMINAL_STATUSES),
-            AITask.created_at < cutoff,
         )
         tasks = list(db.scalars(stmt))
         repo = AITaskRepository(db)
@@ -68,6 +80,21 @@ def sweep_timed_out(session_factory: Callable[[], Any]) -> int:
                         in ("waiting_user", "paused")):
                     continue
                 if t.status == TASK_STATUS_PENDING:
+                    base = t.created_at
+                    limit = TASK_TIMEOUT_SECONDS
+                elif t.status == TASK_STATUS_RUNNING:
+                    base = t.started_at or t.created_at
+                    limit = _running_timeout_seconds(t.task_type)
+                else:
+                    continue
+                if base is None:
+                    continue
+                if base.tzinfo is None:
+                    # SQLite 存的是 naive 时间，按 UTC 解读
+                    base = base.replace(tzinfo=timezone.utc)
+                if now - base < timedelta(seconds=limit):
+                    continue
+                if t.status == TASK_STATUS_PENDING:
                     repo.set_status(
                         t.id, TASK_STATUS_CANCELLED,
                         error=f"任务超时（排队超过 {TASK_TIMEOUT_SECONDS // 60}"
@@ -75,7 +102,7 @@ def sweep_timed_out(session_factory: Callable[[], Any]) -> int:
                 elif t.status == TASK_STATUS_RUNNING:
                     repo.set_status(
                         t.id, TASK_STATUS_FAILED,
-                        error=f"任务超时（执行超过 {TASK_TIMEOUT_SECONDS // 60}"
+                        error=f"任务超时（执行超过 {limit // 60}"
                               " 分钟未完成），请重试")
                 else:
                     continue
