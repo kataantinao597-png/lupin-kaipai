@@ -3865,7 +3865,8 @@ async function generateImageViaJob(prompt) {
       continue;
     }
     if (st && st.status === "done") {
-      return st.image_b64 ? ("data:image/png;base64," + st.image_b64) : "";
+      // S-06：上游回 url 时走 image_url 分支，不再把 url 拼进 base64
+      return st.image_b64 ? ("data:image/png;base64," + st.image_b64) : (st.image_url || "");
     }
     if (st && st.status === "failed") throw new Error(st.error || "图片生成失败");
   }

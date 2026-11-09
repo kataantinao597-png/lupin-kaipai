@@ -49,6 +49,9 @@ class PosterJob:
     org_id: str
     status: str = STATUS_RUNNING
     image_b64: Optional[str] = None
+    #: S-06：上游返回 url 时单独存这里（不混进 image_b64，前端按
+    #: image_url 分支展示）；b64_json 时 image_b64 有值、此字段为空。
+    image_url: Optional[str] = None
     mime: str = "image/png"
     error: Optional[str] = None
     error_code: int = 0
@@ -72,6 +75,8 @@ class PosterJob:
         }
         if self.status == STATUS_DONE:
             out["image_b64"] = self.image_b64
+            if self.image_url:
+                out["image_url"] = self.image_url
         return out
 
 
@@ -244,7 +249,8 @@ def _run(job: PosterJob, work: Callable[[], dict],
                 job.updated_at = time.time()
                 return
         job.status = STATUS_DONE
-        job.image_b64 = b64 or url
+        job.image_b64 = b64
+        job.image_url = url
         job.updated_at = time.time()
 
 
