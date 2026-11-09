@@ -47,23 +47,44 @@ class HandoverRegressionTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
     def test_regenerate_shot_declares_request_context(self):
-        """The route must receive Request before using rate limiting or headers."""
-        request = inspect.signature(app_module.regenerate_shot).parameters
-        self.assertIn("request", request)
-        self.assertIs(request["request"].annotation, app_module.Request)
+        """The route must receive Request before using rate limiting or headers.
+
+        B-14（测试陈旧）：旧 app.regenerate_shot 已随路由拆分迁到
+        backend/api/v1/ideas.py；签名本身未变，测试改查新位置。
+        """
+        from backend.api.v1.ideas import regenerate_shot
+        from starlette.requests import Request
+
+        # ideas.py 用 from __future__ import annotations，签名里是
+        # 字符串 "Request"，用 get_type_hints 解析后再比对类型本身。
+        import typing
+
+        params = inspect.signature(regenerate_shot).parameters
+        self.assertIn("request", params)
+        self.assertIs(typing.get_type_hints(regenerate_shot)["request"],
+                      Request)
 
     def test_health_reports_configured_model(self):
-        old_ai = app_module.ai
+        # B-14（测试陈旧）：旧 app.ai 模块级全局已移除；health() 现读
+        # backend.core.deps.get_ai_service 的 _singleton（见 app.py）。
+        # 行为未变：单例的 model 是什么，health 就报什么。
+        from backend.core import deps as core_deps
+
+        old = getattr(core_deps.get_ai_service, "_singleton", None)
+        had = hasattr(core_deps.get_ai_service, "_singleton")
         try:
             class FakeAI:
                 call_count = 0
                 total_tokens = 0
                 model = "custom-model"
 
-            app_module.ai = FakeAI()
+            core_deps.get_ai_service._singleton = FakeAI()
             self.assertEqual(app_module.health()["model"], "custom-model")
         finally:
-            app_module.ai = old_ai
+            if had:
+                core_deps.get_ai_service._singleton = old
+            elif hasattr(core_deps.get_ai_service, "_singleton"):
+                delattr(core_deps.get_ai_service, "_singleton")
 
     def test_non_json_success_response_is_reported_as_fatal_error(self):
         service = AIService(api_key="test-key", base_url="https://example.com/v1")
