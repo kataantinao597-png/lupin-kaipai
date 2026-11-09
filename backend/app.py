@@ -199,6 +199,31 @@ def _startup():
         log.info(f"媒体处理线程启动失败: {e}")
 
 
+#: B-12：路由挂载失败登记表。任一 v1 路由组挂载失败即记入（error 级
+#: 日志 + /api/ready 校验），应用不再“带病启动且健康检查报 ok”。
+#: 启动本身不因此退出——部分组是并行施工中的可选模块；但关键路由
+#: 缺失时 /api/ready 明确报未就绪（见 _missing_critical_routes）。
+_MOUNT_FAILURES: list[str] = []
+
+# 关键路由：/api/ready 校验这些路径已挂载（挂载失败即未就绪）
+_CRITICAL_ROUTES = (
+    "/api/v1/agent/runs",
+    "/api/v1/agent/one-shot",
+    "/api/v1/ai-tasks",
+    "/api/v1/works",
+    "/api/v1/orgs",
+)
+
+
+def _missing_critical_routes() -> list[str]:
+    mounted = set()
+    for r in app.router.routes:
+        path = getattr(r, "path", None)
+        if path:
+            mounted.add(path)
+    return [p for p in _CRITICAL_ROUTES if p not in mounted]
+
+
 # ---------- 业务路由挂载（022） ----------
 # 注意：FastAPI 0.143.2 的 include_router 有 bug（只挂载部分路由），
 # 此处用手动 extend 绕过，保证 API 行为与重构前一致。
@@ -272,7 +297,8 @@ try:
     _mount(enterprise_router, prefix="/api/v1")
     _mount(agent_router, prefix="/api/v1")
 except Exception as e:  # noqa: BLE001
-    log.info(f"API v1 模块加载跳过（并行施工中）: {type(e).__name__}: {e}")
+    _MOUNT_FAILURES.append("API v1 模块")
+    log.error(f"API v1 模块加载失败: {type(e).__name__}: {e}", exc_info=True)
 
 # S6.1：事实库 API（独立 try 块，与审核闭环组解耦）
 try:
@@ -295,14 +321,16 @@ try:
     _mount(asset_library_router, prefix="/api/v1")
     _mount(review_router, prefix="/api/v1")
 except Exception as e:  # noqa: BLE001
-    log.info(f"事实库 API 加载跳过: {type(e).__name__}: {e}")
+    _MOUNT_FAILURES.append("事实库 API")
+    log.error(f"事实库 API 加载失败: {type(e).__name__}: {e}", exc_info=True)
 
 # 海报 AI 生图 API（产品文档导入 5 项补齐）
 try:
     from .api.v1.poster_image import router as poster_image_router  # noqa: E402
     _mount(poster_image_router, prefix="/api/v1")
 except Exception as e:  # noqa: BLE001
-    log.info(f"海报生图 API 加载跳过: {type(e).__name__}: {e}")
+    _MOUNT_FAILURES.append("海报生图 API")
+    log.error(f"海报生图 API 加载失败: {type(e).__name__}: {e}", exc_info=True)
 
 # S8.1/S8.2/S8.3：媒体资产 + 分镜时间轴 API
 try:
@@ -311,7 +339,8 @@ try:
     _mount(assets_router, prefix="/api/v1")
     _mount(timeline_router, prefix="/api/v1")
 except Exception as e:  # noqa: BLE001
-    log.info(f"媒体资产 API 加载跳过: {type(e).__name__}: {e}")
+    _MOUNT_FAILURES.append("媒体资产 API")
+    log.error(f"媒体资产 API 加载失败: {type(e).__name__}: {e}", exc_info=True)
 
 # S6.2-S6.5：审核闭环 API（并行组施工中）
 try:
@@ -322,7 +351,8 @@ try:
     _mount(reviews_mod.waiver_router, prefix="/api/v1")
     _mount(reviews_mod.delivery_router, prefix="/api/v1")
 except Exception as e:  # noqa: BLE001
-    log.info(f"审核闭环 API 加载跳过（并行施工中）: {type(e).__name__}: {e}")
+    _MOUNT_FAILURES.append("审核闭环 API")
+    log.error(f"审核闭环 API 加载失败: {type(e).__name__}: {e}", exc_info=True)
 
 # Phase 9：安全纵深（API Key / 审计 / CSP 上报）
 try:
@@ -333,7 +363,8 @@ try:
     _mount(audit_router, prefix="/api/v1")
     _mount(security_router, prefix="/api/v1")
 except Exception as e:  # noqa: BLE001
-    log.info(f"安全 API 加载跳过: {type(e).__name__}: {e}")
+    _MOUNT_FAILURES.append("安全 API")
+    log.error(f"安全 API 加载失败: {type(e).__name__}: {e}", exc_info=True)
 
 
 # ---------- 基础路由 ----------
@@ -414,7 +445,18 @@ def health():
 
 @app.get("/api/ready")
 def ready():
-    """S9.3：就绪检查 —— DB 可写才算就绪（k8s readiness 用）。"""
+    """S9.3：就绪检查 —— DB 可写才算就绪（k8s readiness 用）。
+
+    B-12：路由挂载失败或关键路由缺失时直接报未就绪（应用带病启动
+    时 /api/health 仍可能报 ok，ready 是部署卡点，以 ready 为准）。
+    """
+    if _MOUNT_FAILURES:
+        return {"ready": False,
+                "reason": "路由挂载失败: " + "、".join(_MOUNT_FAILURES)}
+    missing = _missing_critical_routes()
+    if missing:
+        return {"ready": False,
+                "reason": "关键路由未挂载: " + "、".join(missing)}
     try:
         from sqlalchemy import text
         from .auth.database import get_session_factory
