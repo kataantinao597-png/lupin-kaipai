@@ -516,7 +516,8 @@ class TestRateLimit:
         assert _tier_for("/api/v1/agent/runs", "POST") == ("ai", 20)
         assert _tier_for("/api/v1/agent/one-shot", "POST") == ("ai", 20)
         assert _tier_for("/api/v1/agent/runs/abc/cancel", "POST") == ("ai", 20)
-        assert _tier_for("/api/v1/agent/runs/abc", "GET") == ("default", 100)
+        # S-02：GET 轮询端点进轮询档（60/min/身份），不再落 default 档
+        assert _tier_for("/api/v1/agent/runs/abc", "GET") == ("poll", 60)
         assert _tier_for("/api/v1/agent/conversations/x/messages", "GET") == (
             "default", 100)
 

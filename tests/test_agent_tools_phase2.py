@@ -678,6 +678,7 @@ class TestMigration0020:
         finally:
             reset_engine()
 
-        # 真实库只读：哈希与版本戳不变
+        # 真实库只读：哈希与版本戳不变（版本戳不写死：真实库随开发推进
+        # 已到 0022，硬编码 0019 会变成「迁移没错、测试过期」的假失败）
         assert _sha256(REAL_DB) == before_hash, "真实库被写入！"
-        assert _version(REAL_DB) == before_ver == "0019_ai_call_org"
+        assert _version(REAL_DB) == before_ver
