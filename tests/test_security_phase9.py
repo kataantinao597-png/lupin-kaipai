@@ -207,7 +207,8 @@ class TestRateLimit:
         c = _identity_for(Req("Bearer AAA"), "ai")
         assert a != b and a == c  # 不同用户分桶
 
-    def test_identity_cookie_fallback_b02(self):        """B-02：无 Authorization 时按 lupin_refresh Cookie 分桶；
+    def test_identity_cookie_fallback_b02(self):
+        """B-02：无 Authorization 时按 lupin_refresh Cookie 分桶；
         X-Forwarded-For 首跳作真实 IP。"""
         class Req:
             client = type("C", (), {"host": "203.0.113.9"})()
