@@ -3,6 +3,7 @@
 - POST   /api/v1/agent/runs                        创建 agent_run（202）
 - GET    /api/v1/agent/runs/{task_id}              查询 run 全状态
 - POST   /api/v1/agent/runs/{task_id}/plan         写入/更新执行计划
+- POST   /api/v1/agent/runs/{task_id}/execute      执行 run（B-04：建 run + 写 plan 后的入队入口）
 - POST   /api/v1/agent/runs/{task_id}/confirm      确认等待中的步骤
 - POST   /api/v1/agent/runs/{task_id}/cancel       取消 run（复用 ai-tasks 取消语义）
 - GET    /api/v1/agent/conversations/{conv_id}/messages  会话消息分页
@@ -318,6 +319,53 @@ def set_plan(task_id: str,
         raise BusinessError(str(e), code=error_codes.INVALID_PARAM,
                             http_status=400) from e
     return success({"task_id": task_id, **summarize_plan(v)})
+
+
+@router.post("/runs/{task_id}/execute", response_model=ApiResponse[dict],
+               status_code=202)
+def execute(task_id: str,
+            user: User = Depends(get_current_user),
+            db: Session = Depends(get_db)):
+    """B-04：执行 run——建 run + 写 plan 后的 HTTP 执行入口。
+
+    此前唯一入队点只在 confirm/resume，而进入 waiting_user/paused
+    本身就需要先执行，文档化的 runs/plan 流程在 HTTP 层是死路。
+    - 无 plan → 400（先调 /plan 写入计划）；
+    - 终态 → 400；waiting_user → 请调 confirm；paused → 请调 resume；
+    - 已在队列/执行中 → 幂等 202 返回当前状态，不重复入队；
+    - 其余（pending/queued，或 worker 丢失的 running）→ 入队执行，
+      202 返回，前端轮询 GET /runs/{id} 看进度。
+    """
+    from ...ai_tasks.queue import get_dispatcher
+
+    task = _get_agent_task_or_404(db, task_id, user.id)
+    if is_terminal(task.status):
+        raise BusinessError(f"任务已处于终态 {task.status}，无法执行",
+                            code=error_codes.INVALID_PARAM, http_status=400)
+    payload = dict(task.payload_json or {})
+    run_status = payload.get("run_status")
+    if run_status == "waiting_user":
+        raise BusinessError("任务正在等待用户确认，请调 confirm 接口",
+                            code=error_codes.INVALID_PARAM, http_status=400)
+    if run_status == "paused":
+        raise BusinessError("任务已暂停，请调 resume 接口",
+                            code=error_codes.INVALID_PARAM, http_status=400)
+    plan = payload.get("plan") or {}
+    if not (plan.get("steps") or []):
+        raise BusinessError("缺少执行计划（plan 为空），请先调 /plan 写入计划",
+                            code=error_codes.INVALID_PARAM, http_status=400)
+    if get_dispatcher().is_active(task_id):
+        state = get_run_state(db, task_id, task.org_id)
+        return success({
+            "task_id": task_id, "status": state.get("status"),
+            "run_status": state.get("run_status"),
+            "queued": True, "message": "任务已在执行中"})
+    _enqueue_run_resume(task)
+    state = get_run_state(db, task_id, task.org_id)
+    return success({
+        "task_id": task_id, "status": state.get("status"),
+        "run_status": state.get("run_status"),
+        "queued": True, "message": "任务已入队执行"})
 
 
 @router.post("/runs/{task_id}/confirm", response_model=ApiResponse[dict])

@@ -153,6 +153,11 @@ class _PriorityDispatcher:
         with self._lock:
             return task_id in self._pending
 
+    def is_active(self, task_id: str) -> bool:
+        """B-04：任务是否已在队列或正在执行（execute 幂等判定用）。"""
+        with self._lock:
+            return task_id in self._pending or task_id in self._running
+
     def _worker_loop(self) -> None:
         while True:
             _neg_w, _seq, task_id = self._pq.get()

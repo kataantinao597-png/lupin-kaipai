@@ -302,6 +302,69 @@ class TestCreateAndGet:
         assert "超时" in (data.get("error") or ""), r.text
 
 
+# ================= execute（B-04） =================
+
+class TestExecute:
+    def _run_with_plan(self, client, ids):
+        r = client.post("/api/v1/agent/runs",
+                        json={"org_id": ids["org_a"],
+                              "brief": {"goal": "执行入口"}})
+        task_id = _data(r)["task_id"]
+        r = client.post(f"/api/v1/agent/runs/{task_id}/plan", json={
+            "steps": [{"tool_id": "query_facts", "params": {"limit": 5}}]})
+        assert _data(r)["ok"] is True
+        return task_id
+
+    def test_execute_without_plan_400(self, api_client):
+        """无 plan 的 run 无法执行：400 提示先写 plan。"""
+        client, ids, _ = api_client
+        r = client.post("/api/v1/agent/runs",
+                        json={"org_id": ids["org_a"]})
+        task_id = _data(r)["task_id"]
+        r = client.post(f"/api/v1/agent/runs/{task_id}/execute")
+        assert r.status_code == 400, r.text
+        assert "plan" in r.text
+
+    def test_execute_enqueues_and_idempotent(self, api_client, monkeypatch):
+        """写 plan 后 execute 入队执行；执行中重复调幂等 202，
+        不重复入队；跑完后终态再调 400。"""
+        import threading
+        import time as _time
+
+        import backend.ai_tasks.runners as runners_mod
+        started = threading.Event()
+        release = threading.Event()
+        calls = []
+
+        def _fake(task_id, is_cancelled, payload):
+            calls.append(task_id)
+            started.set()
+            release.wait(timeout=10)
+            return {"run_status": "completed", "task_id": task_id}
+
+        monkeypatch.setitem(runners_mod.RUNNERS, "agent_run", _fake)
+        client, ids, _ = api_client
+        task_id = self._run_with_plan(client, ids)
+        r = client.post(f"/api/v1/agent/runs/{task_id}/execute")
+        assert r.status_code == 202, r.text
+        assert _data(r)["queued"] is True
+        assert started.wait(timeout=10), "worker 未取走任务"
+        # 执行中重复调：幂等 202，不重复入队
+        r = client.post(f"/api/v1/agent/runs/{task_id}/execute")
+        assert r.status_code == 202, r.text
+        assert _data(r)["queued"] is True
+        release.set()
+        for _ in range(50):
+            r = client.get(f"/api/v1/agent/runs/{task_id}")
+            if _data(r)["status"] == "succeeded":
+                break
+            _time.sleep(0.2)
+        assert _data(r)["status"] == "succeeded", r.text
+        assert calls == [task_id]  # 只执行一次
+        r = client.post(f"/api/v1/agent/runs/{task_id}/execute")
+        assert r.status_code == 400, r.text
+
+
 # ================= plan =================
 
 class TestPlan:
