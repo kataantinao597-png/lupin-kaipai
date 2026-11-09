@@ -404,6 +404,21 @@ class TestTaskLifecycle:
         assert repo.get(t1.id, org1.id) is not None
         assert repo.list_by_org(org2.id) == []
 
+    def test_count_by_org_ignores_pagination_b15(self, db):
+        """B-15：count_by_org 返回符合条件的总数，不受 limit/offset 截断；
+        与 list_by_org 同过滤口径（status/created_by）。"""
+        org = _org(db)
+        repo = AITaskRepository(db)
+        for i in range(3):
+            repo.create(org.id, "ideas", {}, created_by="u1")
+        repo.create(org.id, "ideas", {}, created_by="u2")
+        assert len(repo.list_by_org(org.id, limit=2)) == 2
+        assert repo.count_by_org(org.id) == 4
+        assert repo.count_by_org(org.id, created_by="u1") == 3
+        assert repo.count_by_org(org.id, created_by="u2") == 1
+        assert repo.count_by_org(org.id, status="pending") == 4
+        assert repo.count_by_org(org.id, status="succeeded") == 0
+
     def test_set_status_illegal_raises(self, db):
         """036：非法流转在 set_status 入口被拒。"""
         org = _org(db)

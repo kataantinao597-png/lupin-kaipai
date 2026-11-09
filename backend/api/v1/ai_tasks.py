@@ -250,5 +250,7 @@ def list_tasks(org_id: Optional[str] = Query(default=None),
     created_by = None if _is_org_admin(db, user.id, org_id) else user.id
     tasks = repo.list_by_org(org_id, status=status, limit=limit,
                              offset=offset, created_by=created_by)
+    # B-15：total 是符合条件的总数（count 单独查），不是本页条数
+    total = repo.count_by_org(org_id, status=status, created_by=created_by)
     return AITaskListOut(items=[_task_out(t) for t in tasks],
-                         total=len(tasks))
+                         total=total)

@@ -78,6 +78,21 @@ class AITaskRepository:
         return list(self.db.scalars(
             stmt.order_by(AITask.created_at.desc()).limit(limit).offset(offset)))
 
+    def count_by_org(self, org_id: str, status: str | None = None,
+                     created_by: str | None = None) -> int:
+        """B-15：与 list_by_org 同过滤口径的总数（分页 total 用，
+        不受 limit/offset 截断影响）。"""
+        from sqlalchemy import func
+        stmt = select(func.count()).select_from(AITask).where(
+            AITask.org_id == org_id)
+        if status is not None:
+            if status not in TASK_STATUSES:
+                raise ValueError(f"非法任务状态: {status}")
+            stmt = stmt.where(AITask.status == status)
+        if created_by is not None:
+            stmt = stmt.where(AITask.created_by == created_by)
+        return int(self.db.scalar(stmt) or 0)
+
     @transactional_method
     def set_status(self, task_id: str, to_status: str,
                    result: dict[str, Any] | None = None,
