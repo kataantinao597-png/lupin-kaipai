@@ -569,6 +569,18 @@ def execute_run_steps(db: Session, task_id: str,
         return {"run_status": RUN_STATUS_FAILED, "task_id": task_id,
                 "failed_step": failed_idx, "error": failed_error}
 
+    # B-13：取消检查移到落终态之前。执行期间被取消的 run，不再先写
+    # succeeded + run_done（completed）消息、再翻成 cancelled——
+    # 会话与结果里不残留自相矛盾的“已完成”。
+    if is_cancelled():
+        payload["run_status"] = RUN_STATUS_CANCELLED
+        repo.update_payload(task_id, payload)
+        repo.set_status(task_id, "cancelled", error="任务被取消")
+        if conv_id:
+            append_message(db, conv_id, org_id, "assistant",
+                           {"type": "run_cancelled", "task_id": task_id})
+        return {"run_status": RUN_STATUS_CANCELLED, "task_id": task_id}
+
     final_status = RUN_STATUS_PARTIAL if partial else RUN_STATUS_COMPLETED
     payload["run_status"] = final_status
     payload["summary"] = {"partial": partial,
@@ -583,12 +595,6 @@ def execute_run_steps(db: Session, task_id: str,
                        {"type": "run_done", "task_id": task_id,
                         "run_status": final_status,
                         "summary": payload["summary"]})
-    # 取消优先复查：执行期间被取消 → 以 cancelled 落库（绝不误报完成）
-    if is_cancelled():
-        repo.set_status(task_id, "cancelled", error="任务被取消")
-        payload["run_status"] = RUN_STATUS_CANCELLED
-        repo.update_payload(task_id, payload)
-        return {"run_status": RUN_STATUS_CANCELLED, "task_id": task_id}
     return {"run_status": final_status, "task_id": task_id,
             "summary": payload["summary"]}
 

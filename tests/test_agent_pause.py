@@ -168,6 +168,33 @@ class TestExecuteSuspendsOnPause:
         # queue 视角：task 保持 running（由上层 _execute 保证不落终态）
         assert AITaskRepository(db).get(task_id).status == "running"
 
+    def test_cancel_during_last_step_leaves_no_run_done_b13(
+            self, db, monkeypatch):
+        """B-13：最后一步执行期间被取消 → 直接落 cancelled，会话里不留
+        run_done（completed）消息，不残留 succeeded 摘要。"""
+        from backend.services.agent import list_messages
+        org = _org(db)
+        task_id = _make_run(db, org, plan=_plan(
+            {"tool_id": "query_facts", "params": {}}))
+        calls = {"n": 0}
+
+        def _cancel():
+            calls["n"] += 1
+            return calls["n"] > 1  # 步骤边界检查放行，收尾复查命中取消
+
+        monkeypatch.setattr("backend.services.agent.runner.run_tool",
+                            _ok_tool([]))
+        out = execute_run_steps(db, task_id, _cancel)
+        assert out["run_status"] == "cancelled"
+        task = AITaskRepository(db).get(task_id)
+        assert task.status == "cancelled"
+        assert not (task.result_json or {}).get("run_status")
+        conv_id = _payload(db, task_id).get("conversation_id")
+        types = [(m.content_json or {}).get("type")
+                 for m in list_messages(db, conv_id, org.id, limit=50)]
+        assert "run_done" not in types
+        assert "run_cancelled" in types
+
     def test_pause_mid_run_full_cycle(self, db, monkeypatch):
         """跑一步 → 暂停 → 挂起 → 继续 → 跑完剩余。"""
         org = _org(db)
