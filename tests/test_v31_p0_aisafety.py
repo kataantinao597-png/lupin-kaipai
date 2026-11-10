@@ -126,6 +126,45 @@ class FakeGateway:
         raise AssertionError("测试不应走到模型调用")
 
 
+class _FakeRunnerGateway:
+    """livestream runner 用的网关替身：返回合法脚本，不调真实模型。
+
+    runner 不走 FastAPI 依赖注入（`get_ai_gateway` 的 override 够不着
+    它），而是在 backend/ai_tasks/runners.py 模块内直接调
+    `_gateway_for_runner`，后者经 `_get_server_ai()` 建真实网关走
+    deepkey 调用，落终态耗时看真实网络/模型延迟，30s drain 在临界线
+    上抖动。这里替身的 generate_with_retry 与真实网关同签名：
+    先把候选数据过一遍 runner 传进来的 validate_fn，校验通过才返回，
+    这样跑的仍是同一条校验链路，只是省掉了模型调用。
+    """
+
+    def generate_with_retry(self, task_type, make_messages, validate_fn,
+                            **kw):
+        # 关键：不能立刻返回。runner 跑在 dispatcher 工作线程里，POST
+        # 处理线程在 submit 之后还要做 repo.get + idem.finish（写幂等表）
+        # 才结束请求、关闭会话；worker 若在同一瞬间写回终态，两边会在
+        # 同一份 tmp SQLite 上互等写锁，5s busy timeout 一到 POST 就
+        # 500 "database is locked"（r1 的幂等行还会卡 running，r2 再等
+        # 满 WAIT_TIMEOUT=180s 才接管）。真实模型慢，写回落在 POST 结束
+        # 几分钟后才没事；替身必须人工错开这个窗口。3s 相对 POST 收尾
+        # （本地毫秒级）有十倍以上余量，相对原来的 325s 仍可忽略。
+        import time as _time
+        _time.sleep(3)
+        data = _full_script(30)  # 测试 payload 的 duration_minutes=30
+        errs, out = validate_fn(data)
+        assert not errs, errs
+        return out, {"attempts": 1, "usage": []}
+
+
+def _fake_gateway_for_runner(task_id, payload, service=None):
+    """替身版 _gateway_for_runner：返回 (_FakeRunnerGateway, 真实 db 会话)。
+
+    runner 在 finally 里调 `_gw_db.close()`，所以第二元必须是真实会话。
+    """
+    from backend.auth.database import get_session_factory
+    return _FakeRunnerGateway(), get_session_factory()()
+
+
 
 
 def _drain_task(client, task_id, timeout=30):
@@ -157,7 +196,12 @@ class TestCreateTaskAuth:
         r = api_env.as_user("u1").post("/api/v1/ai-tasks", json=body)
         assert r.status_code == 404
 
-    def test_idempotent_double_submit(self, api_env):
+    def test_idempotent_double_submit(self, api_env, monkeypatch):
+        # runner 走后台线程：先把网关替身接进 runner 路径，否则走真实
+        # 模型调用，_drain_task 的 30s 上限在临界线上抖动。
+        import backend.ai_tasks.runners as _runners
+        monkeypatch.setattr(_runners, "_gateway_for_runner",
+                            _fake_gateway_for_runner)
         c = api_env.as_user("u1")
         h = {"Idempotency-Key": "v31-p0-double-1"}
         r1 = c.post("/api/v1/ai-tasks", json=_task_body(api_env.org1),
@@ -170,7 +214,11 @@ class TestCreateTaskAuth:
         assert _count_tasks(api_env.org1) == 1
         _drain_task(c, r1.json()["id"])
 
-    def test_created_by_is_server_user(self, api_env):
+    def test_created_by_is_server_user(self, api_env, monkeypatch):
+        # 同上：接替身进 runner 路径，防真实模型调用导致 drain 抖动。
+        import backend.ai_tasks.runners as _runners
+        monkeypatch.setattr(_runners, "_gateway_for_runner",
+                            _fake_gateway_for_runner)
         c = api_env.as_user("u1")
         body = _task_body(api_env.org1)
         body["created_by"] = "attacker"
