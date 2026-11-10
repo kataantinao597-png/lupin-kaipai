@@ -1,16 +1,18 @@
 # 鲁品开拍 - 生产 Dockerfile（多阶段构建，非 root 运行）
 # 用法：docker build -f Dockerfile.prod -t lupin-kaipai .
 # 运行：docker run -p 8080:8080 --env-file .env lupin-kaipai
+# O-11（2026-11-10）：与 Dockerfile 收敛——Python 3.12、非 root 用户
+# appuser、健康检查参数与启动命令形式均已对齐。迁移唯一落点在下方 CMD。
 
 # ---------- 构建阶段：装依赖 ----------
-FROM python:3.11-slim AS builder
+FROM python:3.12-slim AS builder
 
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # ---------- 运行阶段 ----------
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # 非 root 用户
 RUN useradd -m -u 10001 appuser
@@ -39,7 +41,14 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD python -c "import urllib.request,os; urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','8080')+'/api/health', timeout=4)" || exit 1
 
-# 生产启动前先跑 alembic 迁移（LUPIN_DB_AUTO_CREATE=0 时必须）
+# 生产启动前先跑 alembic 迁移（LUPIN_DB_AUTO_CREATE=0 时必须）。
+# 这是全项目迁移的唯一落点：Dockerfile（CloudBase）刻意不跑迁移——其库
+# 由 create_all 建表、无 alembic_version 戳，跑迁移会以
+# "table task_model_policy already exists" 失败（2026-11-10 已验证）。
+# 0022 -> 0023 核实（2026-11-10）：单步线性链、迁移内含幂等守卫，
+# 在真实库副本上 upgrade head 成功（戳变 0023、user_id 列与两条部分
+# 唯一索引建成、旧 ix_idem_route_key 已删、数据无损），重跑无操作；
+# 空库全链 0001 -> 0023 亦成功，故空数据卷冷启动也能跑通。
 # S1 单 worker 硬要求：配额提交锁与 poster 在途计数均为进程内状态，
 # 多 worker 下锁与计数全部失效、额度竞态回归。扩容前必须先把在途计数
 # 与占位行收进 DB 约束，届时再改 workers；此前禁止改回 2。
