@@ -301,6 +301,11 @@ def _drain_task(client, task_id, timeout=30):
 
 
 class TestRegenTaskTypeAPI:
+    # O-12：本用例把真实任务交给 dispatcher，后台 runner 走真实网关
+    # （_gateway_for_runner → _get_server_ai → AIService，key 可来自
+    # ~/.omp/agent/models.yml 配置文件，fixture 只删 LUPIN_API_KEY 挡不住），
+    # 有 key 时真调模型；默认集跳过，需真调时用 -m needs_model 显式跑。
+    @pytest.mark.needs_model
     def test_create_regen_task(self, api_env):
         c = api_env.as_user("u1")
         r = c.post("/api/v1/ai-tasks", json={

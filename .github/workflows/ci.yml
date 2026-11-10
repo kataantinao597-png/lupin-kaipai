@@ -26,6 +26,10 @@ jobs:
           pip install pytest
 
       - name: 运行 pytest（跳过需真实模型的用例）
+        env:
+          # O-12：tests/conftest.py fail-fast 护栏要求测试库不得指向
+          # 业务库；CI 上显式给 scratch 库（runner.temp 每次运行全新）。
+          DATABASE_URL: "sqlite:///${{ runner.temp }}/lupin_ci.db"
         run: |
           python -m pytest tests/ -v --tb=short \
             --ignore=tests/test_retry_drill.py \
