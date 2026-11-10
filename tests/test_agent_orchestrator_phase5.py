@@ -804,3 +804,79 @@ class TestConversationHttp:
         assert data["resumed"] is False
         assert calls == []  # HTTP 内未执行
         assert enqueued == [task_id]  # 已入队，worker 恢复
+
+
+# ---------------------------------------------------------------------------
+# O-01 / O-02：过程事件独立落表 + get_run_state 增量游标
+# ---------------------------------------------------------------------------
+
+class TestEventsTableO01O02:
+    def test_push_event_single_row_no_payload_rewrite(self, db):
+        """O-02 彻底方案：完整一句话 run 后，事件在 agent_events 表里
+        单行落盘、seq 连续从 0 开始；payload 不再含 "events"（不再全
+        量重写 payload JSON）。"""
+        org = _org(db)
+        _member(db, org.id)
+        out = _run(db, org.id, "给烟台苹果做条抖音带货视频，60秒，预算2000，2个人",
+                   ai_generate=_fake_brain(_happy_scenario()))
+        assert out["run_status"] == "completed", out["summary"]
+        from backend.services.agent import AgentEvent
+        rows = (db.query(AgentEvent)
+                  .filter_by(task_id=out["task_id"])
+                  .order_by(AgentEvent.seq).all())
+        assert rows, "事件应单行落表"
+        assert [r.seq for r in rows] == list(range(len(rows)))
+        assert rows[0].type == "step_started"
+        assert any(r.type == "step_done" for r in rows)
+        assert any(r.type == "artifact" for r in rows)
+        from backend.ai_tasks.repository import AITaskRepository
+        t = AITaskRepository(db).get(out["task_id"])
+        assert "events" not in (t.payload_json or {})
+
+    def test_get_run_state_after_seq(self, db):
+        """O-01：get_run_state 全量返回与 after_seq 增量过滤；总量与
+        最大 seq 不受游标影响；游标到末尾返回空事件。"""
+        org = _org(db)
+        _member(db, org.id)
+        out = _run(db, org.id, "给烟台苹果做条抖音带货视频，60秒，预算2000，2个人",
+                   ai_generate=_fake_brain(_happy_scenario()))
+        assert out["run_status"] == "completed", out["summary"]
+        from backend.services.agent.runner import get_run_state
+        st = get_run_state(db, out["task_id"], org.id)
+        n = st["events_total"]
+        assert n > 0
+        assert st["events_max_seq"] == n - 1
+        assert [e["seq"] for e in st["events"]] == list(range(n))
+        mid = n // 2
+        st2 = get_run_state(db, out["task_id"], org.id, after_seq=mid)
+        assert [e["seq"] for e in st2["events"]] == list(range(mid + 1, n))
+        assert st2["events_total"] == n
+        assert st2["events_max_seq"] == n - 1
+        st3 = get_run_state(db, out["task_id"], org.id, after_seq=n - 1)
+        assert st3["events"] == []
+        assert st3["events_total"] == n
+
+    def test_get_run_state_legacy_payload_fallback(self, db):
+        """O-02 回退：迁移前旧 run 只有 payload["events"]、本表无行时，
+        get_run_state 仍能读出事件且 after_seq 照常过滤。"""
+        org = _org(db)
+        _member(db, org.id)
+        from backend.services.agent import create_agent_run
+        from backend.services.agent.runner import get_run_state
+        from backend.ai_tasks.repository import AITaskRepository
+        tid = create_agent_run(db, "u1", org.id,
+                               brief_json={"text": "给苹果做视频"})
+        repo = AITaskRepository(db)
+        payload = dict(repo.get(tid).payload_json or {})
+        payload["events"] = [
+            {"seq": 0, "type": "step_started", "tool_id": "parse_brief",
+             "status": None, "duration_ms": None, "note": ""},
+            {"seq": 1, "type": "step_done", "tool_id": "parse_brief",
+             "status": "succeeded", "duration_ms": 5, "note": ""},
+        ]
+        repo.update_payload(tid, payload)
+        st = get_run_state(db, tid, org.id)
+        assert [e["seq"] for e in st["events"]] == [0, 1]
+        assert st["events_total"] == 2 and st["events_max_seq"] == 1
+        st2 = get_run_state(db, tid, org.id, after_seq=0)
+        assert [e["seq"] for e in st2["events"]] == [1]

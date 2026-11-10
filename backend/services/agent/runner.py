@@ -247,11 +247,42 @@ def set_run_plan(db: Session, task_id: str, org_id: str,
     return v
 
 
+def _read_run_events(db: Session, task_id: str,
+                      payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """读 run 的过程事件流（O-02 彻底方案：主源为 agent_events 表）。
+
+    本表有行 → 按 seq 升序返回；无行 → 回退读旧 run 的
+    payload["events"]（迁移前已落盘的事件，不做数据迁移）。
+    """
+    rows = (db.query(AgentEvent)
+              .filter(AgentEvent.task_id == task_id)
+              .order_by(AgentEvent.seq.asc()).all())
+    if rows:
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            ev: dict[str, Any] = {
+                "seq": r.seq, "type": r.type, "tool_id": r.tool_id,
+                "status": r.status, "duration_ms": r.duration_ms,
+                "note": r.note or "",
+            }
+            if r.items_json:
+                ev["items"] = list(r.items_json)
+            out.append(ev)
+        return out
+    return [dict(e) for e in (payload.get("events") or [])]
+
+
 def get_run_state(db: Session, task_id: str,
-                  org_id: Optional[str] = None) -> dict[str, Any]:
+                  org_id: Optional[str] = None,
+                  after_seq: Optional[int] = None) -> dict[str, Any]:
     """读 run 全状态（刷新恢复用）：task + run_status + steps + 待确认步骤。
 
     org_id 非空时做租户隔离；不匹配返回 {"found": False}（404 防枚举）。
+
+    O-01：after_seq 非空时只返回 seq > after_seq 的事件（增量轮询）；
+    步骤列表只有 11 步，原样全量返回。无论是否增量，都回传
+    events_max_seq（全部事件的最大 seq，无事件为 -1）与 events_total
+    （全部事件数），供前端判断游标是否落后/断档。
     """
     repo = AITaskRepository(db)
     task = repo.get(task_id, org_id)
@@ -263,6 +294,10 @@ def get_run_state(db: Session, task_id: str,
                .order_by(AgentStep.started_at.asc().nullsfirst(),
                          AgentStep.id.asc())
                .all())
+    all_events = _read_run_events(db, task_id, payload)
+    max_seq = max((e.get("seq", -1) for e in all_events), default=-1)
+    events = ([e for e in all_events if e.get("seq", -1) > after_seq]
+              if after_seq is not None else all_events)
     return {
         "found": True,
         "task_id": task.id,
@@ -275,7 +310,9 @@ def get_run_state(db: Session, task_id: str,
         "confirmed_steps": payload.get("confirmed_steps") or [],
         "error": task.error,
         "summary": payload.get("summary"),
-        "events": payload.get("events") or [],
+        "events": events,
+        "events_max_seq": max_seq,
+        "events_total": len(all_events),
         "steps": [
             {"tool_id": s.tool_id, "status": s.status,
              "output_ref": s.output_ref, "error": s.error,

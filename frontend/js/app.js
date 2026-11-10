@@ -387,6 +387,7 @@ const AGENT = {
   lastState:null, pollFails:0, pendingSend:"",
   cancelReq:false, startedAt:null, // V3.2：取消请求标记 + 开始时间（前端耗时反馈）
   evSeq:0, // V3.3：过程事件流已重放到的 seq
+  allEvents:[], // O-01：增量轮询下本地合并的完整事件流（供侧栏“进行中步骤”推导用）
   restoreKey:"lupin_agent_run", restoredFor:null, // V3.5：刷新恢复（sessionStorage 快照 + 防重复恢复）
   nextPollAt:0, // S-03/O-07：轮询失败退避后的下次可轮询时刻（0=不退避）
 };
@@ -697,7 +698,11 @@ async function agentPollTick() {
   if (AGENT.nextPollAt && Date.now() < AGENT.nextPollAt) return;
   let st = null;
   try {
-    st = V1(await ApiClient.get("/api/v1/agent/runs/" + encodeURIComponent(AGENT.taskId)));
+    // O-01：增量轮询——只拉 seq > 上次已消费 seq 的事件（evSeq 为下个
+    // 待消费 seq，故 after_seq = evSeq - 1；新任务 evSeq=0 时传 -1 全量）。
+    const url = "/api/v1/agent/runs/" + encodeURIComponent(AGENT.taskId)
+      + "?after_seq=" + (AGENT.evSeq - 1);
+    st = V1(await ApiClient.get(url));
     AGENT.pollFails = 0; AGENT.nextPollAt = 0;
   } catch (e) {
     AGENT.pollFails++;
@@ -723,8 +728,16 @@ async function agentPollTick() {
       live: !AGENT_TERMINAL.includes(norm), id: "run-lifecycle" });
   }
   renderAgentPill(disp); setAgentButtons(disp);
-  renderAgentEvents(st); // V3.3：过程事件先于计划面板入聊天流
-  renderAgentPlan(st);
+  // O-01：增量事件本地合并（按 seq 去重排序）后再渲染；renderAgentEvents
+  // 本身按 evSeq 幂等重放，agentRunningTools（侧栏“进行中步骤”）需要
+  // 完整事件流推导，故传合并后的状态而非本拍增量。
+  for (const ev of (st.events || [])) {
+    if (!AGENT.allEvents.some((x) => x.seq === ev.seq)) AGENT.allEvents.push(ev);
+  }
+  AGENT.allEvents.sort((a, b) => (a.seq || 0) - (b.seq || 0));
+  const mst = { ...st, events: AGENT.allEvents };
+  renderAgentEvents(mst); // V3.3：过程事件先于计划面板入聊天流
+  renderAgentPlan(mst);
   if (norm === "waiting_user" && st.pending_step) agentMaybeConfirm(st);
   if (AGENT_TERMINAL.includes(norm)) { stopAgentPoll(); agentOnTerminal(st); }
 }
@@ -777,13 +790,15 @@ async function agentRestore() {
     return; // 网络波动：不清理，下次进视图再试
   }
   if (!st) return;
+  // O-01：恢复首拍为全量事件， seeding 本地合并缓存，后续增量轮询才完整
+  AGENT.allEvents = (st.events || []).slice();
   /* 恢复内存态：evSeq=0 让事件流全量重放；先补用户那句话让聊天流有上下文 */
   AGENT.taskId = snap.taskId;
   AGENT.convId = snap.convId || null;
   AGENT.lastBriefText = snap.briefText || "";
   AGENT.ctx = snap.ctx || null;
   AGENT.startedAt = snap.startedAt || Date.now();
-  AGENT.evSeq = 0; AGENT.pollFails = 0;
+  AGENT.evSeq = 0; AGENT.allEvents = []; AGENT.pollFails = 0;
   AGENT.renderedConfirmFor = null; AGENT.renderedResultFor = null;
   if (snap.briefText && AGENT.restoredFor !== snap.taskId) {
     AGENT.restoredFor = snap.taskId;
@@ -870,6 +885,7 @@ async function agentSend() {
       ta.value = "";
       if (m && m.status === "waiting_user" && m.task_id) {
         AGENT.taskId = m.task_id;
+        AGENT.evSeq = 0; AGENT.allEvents = []; // O-01：新 task 的事件流从头开始
         AGENT.renderedConfirmFor = null; AGENT.renderedResultFor = null;
         AGENT.pollFails = 0; AGENT.state = "waiting_user";
         agentLog("sys", { text: "这次修改需要你确认，确认卡片已生成",
@@ -904,7 +920,7 @@ async function agentSend() {
     }
     AGENT.renderedConfirmFor = null; AGENT.renderedResultFor = null; AGENT.pollFails = 0;
     AGENT.cancelReq = false; AGENT.startedAt = Date.now(); // V3.2
-    AGENT.evSeq = 0; // V3.3：新任务事件流从头重放
+    AGENT.evSeq = 0; AGENT.allEvents = []; // V3.3：新任务事件流从头重放
     agentSaveSnapshot(); // V3.5：刷新可恢复
     AGENT.state = agentNormStatus(r);
     agentLog("sys", { text: "任务已创建（" + AGENT.taskId.slice(0, 8) + "…），正在排队执行，完成后这里会实时更新", live: true, id: "run-lifecycle" });
@@ -984,7 +1000,7 @@ function agentRetry() {
   AGENT.lastState = null; AGENT.renderedConfirmFor = null; AGENT.renderedResultFor = null;
   agentClearSnapshot(); // V3.5：重试是新任务，清旧快照
   AGENT.cancelReq = false; AGENT.startedAt = null; // V3.2
-  AGENT.evSeq = 0; // V3.3
+  AGENT.evSeq = 0; AGENT.allEvents = []; // V3.3
   $("agent_input").value = t;
   renderAgentPill("idle"); setAgentButtons("idle");
   agentSend();

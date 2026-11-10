@@ -274,11 +274,45 @@ class TestCreateAndGet:
         assert data["confirmed_steps"] == []
         assert "found" not in data
 
-    def test_get_run_triggers_timeout_sweep_b03(self, api_client):
-        """B-03：agent 面板轮询 GET /runs/{id} 也触发超时扫描——
-        已超 30 分钟 run 预算的 running 任务当场翻转为 failed。"""
+    def test_get_run_state_after_seq_o01(self, api_client):
+        """O-01：GET /runs/{id}?after_seq= 只返回 seq 更大的事件；
+        events_max_seq / events_total 不受游标影响。"""
+        from backend.auth.database import get_session_factory
+        from backend.services.agent import AgentEvent
+        client, ids, _ = api_client
+        r = client.post("/api/v1/agent/runs",
+                        json={"org_id": ids["org_a"],
+                              "brief": {"goal": "增量查状态"}})
+        task_id = _data(r)["task_id"]
+        db = get_session_factory()()
+        try:
+            for i, typ in enumerate(["step_started", "step_done",
+                                     "artifact"]):
+                db.add(AgentEvent(task_id=task_id, seq=i, type=typ,
+                                  tool_id="parse_brief",
+                                  status="succeeded" if typ == "step_done"
+                                  else None))
+            db.commit()
+        finally:
+            db.close()
+        data = _data(client.get(f"/api/v1/agent/runs/{task_id}"))
+        assert [e["seq"] for e in data["events"]] == [0, 1, 2]
+        assert data["events_total"] == 3 and data["events_max_seq"] == 2
+        data = _data(client.get(
+            f"/api/v1/agent/runs/{task_id}?after_seq=0"))
+        assert [e["seq"] for e in data["events"]] == [1, 2]
+        assert data["events_total"] == 3 and data["events_max_seq"] == 2
+        data = _data(client.get(
+            f"/api/v1/agent/runs/{task_id}?after_seq=2"))
+        assert data["events"] == []
+
+    def test_get_run_no_lazy_sweep_o04(self, api_client):
+        """O-04：惰性扫描已移出 GET /runs/{id}，改为后台超时扫描线程
+        （每 60s 一次）——轮询只读状态，不再当场翻转超时任务；后台
+        sweep 翻转后，再轮询即见 failed。"""
         from datetime import datetime, timedelta, timezone
 
+        from backend.ai_tasks.queue import sweep_timed_out
         from backend.ai_tasks.repository import AITaskRepository
         from backend.auth.database import get_session_factory
         from backend.models import AITask

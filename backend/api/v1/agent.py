@@ -273,6 +273,7 @@ def create_run(req: AgentRunCreate,
 
 @router.get("/runs/{task_id}", response_model=ApiResponse[dict])
 def get_run(task_id: str,
+            after_seq: Optional[int] = Query(default=None, ge=-1),
             user: User = Depends(get_current_user),
             db: Session = Depends(get_db)):
     """查询 run 全状态：task + run_status + steps + 待确认步骤（刷新恢复用）。
@@ -282,14 +283,16 @@ def get_run(task_id: str,
     B-03：agent 面板 2.5s 轮询本端点，查询前做一次惰性超时扫描
     （与 GET /ai-tasks/{id} 同口径），卡住的 run 在此路径下也能翻转
     为 failed，不再无限轮询。
+
+    O-04：惰性扫描已移出本接口，改为应用启动的超时扫描后台线程
+    （backend/ai_tasks/sweeper.py，每 60s 一次）。本接口只读状态，
+    超时翻转最长延迟一个扫描周期。
+
+    O-01：after_seq 非空时只返回 seq > after_seq 的过程事件（增量
+    轮询）；不传则全量返回。步骤列表始终全量。
     """
-    import logging
-    try:
-        sweep_timed_out(get_session_factory())
-    except Exception:  # noqa: BLE001
-        logging.getLogger(__name__).warning("超时扫描失败", exc_info=True)
     task = _get_agent_task_or_404(db, task_id, user.id)
-    state = get_run_state(db, task_id, task.org_id)
+    state = get_run_state(db, task_id, task.org_id, after_seq=after_seq)
     if not state.get("found"):
         raise BusinessError("任务不存在",
                             code=error_codes.RESOURCE_NOT_FOUND,
