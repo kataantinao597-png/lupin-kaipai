@@ -47,6 +47,10 @@ from ...services.poster_quota import (  # noqa: F401  (常量对外仍可见)
     get_quota as get_poster_quota,
     get_quota_with_inflight as get_poster_quota_inflight,
 )
+from ...core.timeouts import (  # O-09：集中常量表
+    POSTER_REQUEST_TIMEOUT_SECONDS,
+    POSTER_SYNC_TOTAL_TIMEOUT_SECONDS,
+)
 from ...services import poster_jobs
 
 router = APIRouter(prefix="/poster", tags=["v1-poster-image"])
@@ -65,11 +69,12 @@ _quota_submit_lock = threading.Lock()
 DEFAULT_BASE = "https://api.openai.com"
 DEFAULT_MODEL = "gpt-image-1"
 DEFAULT_FALLBACK_MODEL = "gpt-image-2"
-REQUEST_TIMEOUT = 90.0  # 单通道上限（异步任务路径）：主+备最坏 180s，与任务看门狗 200s 对齐
+#: O-09：以下两名是旧名 alias（对外仍可见），数值见集中常量表。
+REQUEST_TIMEOUT = POSTER_REQUEST_TIMEOUT_SECONDS  # 单通道上限（异步任务路径）：主+备最坏 180s，与任务看门狗 200s 对齐
 #: M5：同步接口总预算。网关约 60s 即 504，同步路径主+备绝不能再各 90s。
 #: 同步调用方传 total_timeout=SYNC_TOTAL_TIMEOUT，主备共享这 55s 预算
 #: （主失败快则备选剩得多，主超时则不再切备选），总墙钟 ≤55s + 少量开销。
-SYNC_TOTAL_TIMEOUT = 55.0
+SYNC_TOTAL_TIMEOUT = POSTER_SYNC_TOTAL_TIMEOUT_SECONDS
 
 
 class _RetryableUpstreamError(Exception):

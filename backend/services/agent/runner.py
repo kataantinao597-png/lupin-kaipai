@@ -117,8 +117,10 @@ _SUSPENDED = RUN_STATUS_WAITING_USER
 #:   （可选步骤 → partial；必需步骤 → failed；已有成果保留）
 #: - run 总执行时间上限（秒）：超时后不再启动新步骤 → partial 并保留成果
 #: run 级步数/模型步数上限见 planner.MAX_PLAN_STEPS / MAX_MODEL_STEPS_PER_RUN
-STEP_TIMEOUT_SECONDS = 5 * 60
-MAX_RUN_TOTAL_SECONDS = 30 * 60
+#: O-09：数值与起算口径见 backend/core/timeouts.py（集中常量表），
+#: 此处只 re-export（tests 会 monkeypatch 本模块属性，import 绑定
+#: 保证 monkeypatch 仍对本模块内的引用生效）。
+from ...core.timeouts import MAX_RUN_TOTAL_SECONDS, STEP_TIMEOUT_SECONDS  # noqa: E402
 
 
 def _utcnow() -> datetime:

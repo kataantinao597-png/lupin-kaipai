@@ -27,13 +27,12 @@ MAX_WORKERS = 4
 # V3.1 P1-4：任务超时（秒）。pending/running 超过此时限仍未终态，
 # 视为超时，由 sweep_timed_out() 标记为 failed（前端轮询到 failed 即停止，
 # 不再无限等待；后端也不再无声烧钱）。
-TASK_TIMEOUT_SECONDS = 600
-
-#: B-03：agent_run 的 running 超时（秒），与 runner.MAX_RUN_TOTAL_SECONDS
-#: （30 分钟）对齐。one-shot 11 步真模型调用完全可能超过 10 分钟墙钟，
-#: 但 run 级预算允许 30 分钟——running 超时改从 started_at 起算、
-#: 按本值判定，不再与 600s 排队超时混用同一口径。
-AGENT_RUN_TIMEOUT_SECONDS = 1800
+# O-09：数值与起算口径见 backend/core/timeouts.py（集中常量表），
+# 此处只 re-export，防旧 import 路径（tests 等）断裂。
+from ..core.timeouts import (  # noqa: E402
+    AGENT_RUN_TIMEOUT_SECONDS,
+    TASK_TIMEOUT_SECONDS,
+)
 
 
 def _running_timeout_seconds(task_type: str) -> int:
