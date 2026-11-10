@@ -249,6 +249,42 @@ class TestStoreUnit:
         c3 = idempotency_begin("r-abort", self._req("k-abort-1"), {"a": 1})
         assert c3.replay == {"ok": 2, "idempotent_replay": True}
 
+    def test_prune_expired_sql_delete_o03(self):
+        """O-03：一条 SQL 时间过滤删除过期 done 行；新鲜 done 行与
+        running 行（无论多旧）都不动。"""
+        from datetime import datetime, timedelta, timezone
+
+        from backend.core.idempotency import (
+            _db, _prune_expired, TTL_SECONDS, reset_idempotency_store)
+        from backend.models import IdempotencyKey
+        now = datetime.now(timezone.utc)
+        try:
+            with _db() as db:
+                db.add(IdempotencyKey(
+                    key="k-old", route="r-prune-o03", body_hash="h",
+                    status="done",
+                    created_at=now - timedelta(
+                        seconds=TTL_SECONDS + 3600)))
+                db.add(IdempotencyKey(
+                    key="k-fresh", route="r-prune-o03", body_hash="h",
+                    status="done",
+                    created_at=now - timedelta(seconds=60)))
+                db.add(IdempotencyKey(
+                    key="k-run", route="r-prune-o03", body_hash="h",
+                    status="running",
+                    created_at=now - timedelta(
+                        seconds=TTL_SECONDS + 3600)))
+                db.commit()
+            with _db() as db:
+                _prune_expired(db)
+            with _db() as db:
+                left = sorted(
+                    r.key for r in db.query(IdempotencyKey).filter(
+                        IdempotencyKey.route == "r-prune-o03").all())
+            assert left == ["k-fresh", "k-run"]
+        finally:
+            reset_idempotency_store()
+
 
 if __name__ == "__main__":
     import pytest as _p

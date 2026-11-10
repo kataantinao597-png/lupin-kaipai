@@ -31,7 +31,7 @@ import hashlib
 import json
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterator, Optional
 
 from fastapi import Request
@@ -101,20 +101,24 @@ def _stale_running(row: IdempotencyKey) -> bool:
 
 
 def _prune_expired(db: Session) -> None:
-    """顺手清理过期 done 行（TTL 到期即删，替代内存版的 MAX_RECORDS 淘汰）。"""
-    cutoff = _utcnow()
-    # 用 _age_seconds 口径比较：created_at 早于 TTL 秒前
-    rows = (db.query(IdempotencyKey.id, IdempotencyKey.created_at)
-              .filter(IdempotencyKey.status == "done")
-              .limit(200).all())
-    dead = [r.id for r in rows
-            if _age_seconds(r.created_at) > TTL_SECONDS]
-    if dead:
-        (db.query(IdempotencyKey)
-           .filter(IdempotencyKey.id.in_(dead))
-           .delete(synchronize_session=False))
-        db.commit()
-    _ = cutoff  # 占位：保持将来按时间列裁剪的可扩展性
+    """顺手清理过期 done 行（TTL 到期即删，替代内存版的 MAX_RECORDS 淘汰）。
+
+    O-03：一条 SQL 时间过滤删除，替代旧的“拉 200 行 + Python 逐行
+    算 _age_seconds + 按 id 删”。旧实现还有个隐患：limit(200) 无排序，
+    done 行超过 200 行且前 200 行都是新鲜的，过期行可能永远排不上
+    清理，表会无界增长；SQL delete 同时修掉该问题。
+    时区口径（2026-11-10 已核实，见验证日志）：created_at 在 SQLite
+    下存为 naive UTC 文本，无时区后缀；ORM 读回为 naive datetime，
+    _age_seconds 同样按 UTC 解读。故 cutoff 取 naive UTC 再减 TTL，
+    与 _age_seconds 的 `age > TTL`（即 created_at < now - TTL）严格
+    对齐。running 行与 _stale_running 接管逻辑完全不动。
+    """
+    cutoff = _utcnow().replace(tzinfo=None) - timedelta(seconds=TTL_SECONDS)
+    (db.query(IdempotencyKey)
+       .filter(IdempotencyKey.status == "done",
+               IdempotencyKey.created_at < cutoff)
+       .delete(synchronize_session=False))
+    db.commit()
 
 
 def reset_idempotency_store() -> None:
