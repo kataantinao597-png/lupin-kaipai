@@ -330,6 +330,12 @@ class TestCreateAndGet:
             db.commit()
         finally:
             db.close()
+        # O-04：轮询不再当场翻转超时任务，只读状态
+        r = client.get(f"/api/v1/agent/runs/{task_id}")
+        data = _data(r)
+        assert data["status"] == "running", r.text
+        # 后台扫描线程做的事（此处直接调一次，等价于一个扫描周期）
+        sweep_timed_out(get_session_factory())
         r = client.get(f"/api/v1/agent/runs/{task_id}")
         data = _data(r)
         assert data["status"] == "failed", r.text

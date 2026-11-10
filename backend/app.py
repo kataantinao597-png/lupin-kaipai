@@ -214,6 +214,15 @@ def _startup():
     except Exception as e:  # noqa: BLE001
         log.info(f"媒体处理线程启动失败: {e}")
 
+    # O-04：启动超时扫描后台线程（每 60s 一次；失败不阻断启动。
+    # 轮询接口不再惰性触发 sweep，超时翻转最长延迟一个扫描周期。）
+    try:
+        from .ai_tasks.sweeper import start_timeout_sweeper
+        start_timeout_sweeper()
+        log.info("超时扫描线程已启动")
+    except Exception as e:  # noqa: BLE001
+        log.info(f"超时扫描线程启动失败: {e}")
+
 
 #: B-12：路由挂载失败登记表。任一 v1 路由组挂载失败即记入（error 级
 #: 日志 + /api/ready 校验），应用不再“带病启动且健康检查报 ok”。

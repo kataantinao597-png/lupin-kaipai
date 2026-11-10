@@ -32,7 +32,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ...ai_tasks.queue import TaskQueue, sweep_timed_out
+from ...ai_tasks.queue import TaskQueue
 from ...ai_tasks.repository import AITaskRepository
 from ...ai_tasks.state_machine import is_terminal
 from ...auth.database import get_db, get_session_factory

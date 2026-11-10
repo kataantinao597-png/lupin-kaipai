@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ...ai_tasks.queue import TaskQueue, sweep_timed_out
+from ...ai_tasks.queue import TaskQueue
 from ...ai_tasks.repository import AITaskRepository
 from ...ai_tasks.runners import RUNNERS
 from ...ai_tasks.state_machine import is_terminal
@@ -195,12 +195,11 @@ def get_task(task_id: str,
 
     V3.1 P1-4：查询前做一次惰性超时扫描——前端每 2.5s 轮询一次，
     超时任务会在下次轮询时被标记为 failed，前端即停止等待。
+
+    O-04：惰性扫描已移出本接口，改为应用启动的超时扫描后台线程
+    （backend/ai_tasks/sweeper.py，每 60s 一次）。本接口只读状态，
+    超时翻转最长延迟一个扫描周期。
     """
-    import logging
-    try:
-        sweep_timed_out(get_session_factory())
-    except Exception:  # noqa: BLE001
-        logging.getLogger(__name__).warning("超时扫描失败", exc_info=True)
     task = _get_task_or_404(db, task_id, user.id)
     return _task_out(task)
 
