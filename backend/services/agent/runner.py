@@ -51,6 +51,7 @@ from .adapters import ToolDeps, ToolResult, run_tool
 from .brief import merge_brief_dict
 from .context import AgentIdentity
 from .conversations import (
+    AgentEvent,
     AgentStep,
     append_message,
     create_conversation,

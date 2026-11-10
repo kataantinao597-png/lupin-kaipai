@@ -39,6 +39,7 @@ __all__ = [
     "Conversation",
     "ConversationMessage",
     "AgentStep",
+    "AgentEvent",
     "create_conversation",
     "get_conversation",
     "get_conversation_or_404",
@@ -129,6 +130,43 @@ class AgentStep(Base):
     started_at = Column(DateTime(timezone=True), nullable=True)
     finished_at = Column(DateTime(timezone=True), nullable=True)
     duration_ms = Column(Integer, nullable=True)
+
+
+class AgentEvent(Base):
+    """O-02：过程事件独立落表（替代原来每次 _push_event 全量重写
+    payload_json["events"]）。
+
+    - 一行事件 = 一次 INSERT，不再读写整个 payload JSON；11 步约 30
+      余次全量 payload 写回降为 30 余次单行插入，且与 B-10 的
+      update_payload 合并语义（fresh 读再写）不再有交互——事件写
+      完全不走 update_payload。
+    - seq 在同一 task 内单调递增，(task_id, seq) 唯一；恢复执行（新
+      _Ctx）时 _push_event 从表里取 MAX(seq) 续号。
+    - 旧 run 的事件仍在 payload["events"] 里，get_run_state 在本表
+      无行时回退读 payload（见 runner._read_run_events），不做数据
+      迁移、不丢历史。
+    表结构由迁移 0024 创建（migrations/versions/0024_agent_events.py）。
+    """
+
+    __tablename__ = "agent_events"
+    __table_args__ = (
+        Index("ix_agent_events_task_seq", "task_id", "seq", unique=True),
+    )
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    task_id = Column(String(32),
+                     ForeignKey("ai_tasks.id", ondelete="CASCADE"),
+                     nullable=False)
+    seq = Column(Integer, nullable=False)
+    # step_started | step_done | artifact
+    type = Column(String(32), nullable=False)
+    tool_id = Column(String(64), nullable=False)
+    status = Column(String(16), nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    note = Column(Text, nullable=True)
+    items_json = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False,
+                        default=_now)
 
 
 # ---------------------------------------------------------------------------

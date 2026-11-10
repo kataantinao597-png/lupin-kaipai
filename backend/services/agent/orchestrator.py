@@ -38,6 +38,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ...ai_tasks.repository import AITaskRepository
@@ -58,7 +59,7 @@ from .brief import (
     parse_brief_from_text,
 )
 from .context import AgentIdentity
-from .conversations import AgentStep, Conversation, append_message
+from .conversations import AgentEvent, AgentStep, Conversation, append_message
 from .planner import MAX_MODEL_STEPS_PER_RUN, MAX_PLAN_STEPS
 from .quality_gates import (
     check_fact_grounding,
@@ -335,6 +336,8 @@ class _Ctx:
         self.tool_steps = 0          # run 级工具步计数（上限 25）
         self.step_log: list[dict] = []
         self.events: list[dict] = []  # 过程事件流（前端聊天流实时呈现）
+        self.next_seq: Optional[int] = None  # O-02：下个事件 seq，首推
+        # 时从 agent_events 表 MAX(seq) 续号（恢复执行不重号），见 _push_event
 
 
 def _event_note(tool_id: str, result: Optional["ToolResult"]) -> str:
@@ -446,26 +449,56 @@ def _artifact_items(tool_id: str, result: Optional["ToolResult"]) -> list[str]:
         return []
 
 
+def _next_event_seq(ctx: "_Ctx") -> int:
+    """O-02：下个事件 seq。优先从 agent_events 表取 MAX(seq)+1（恢复
+    执行的新 _Ctx 不与已落盘事件重号）；表里无行时回退到旧 run 的
+    payload["events"] 长度（迁移前已落盘的事件）；都查不到则用内存
+    长度。查不到也不影响主流程（_push_event 会兜底）。"""
+    try:
+        mx = (ctx.db.query(func.max(AgentEvent.seq))
+                .filter(AgentEvent.task_id == ctx.task_id).scalar())
+        if mx is not None:
+            return int(mx) + 1
+        cur = AITaskRepository(ctx.db).get(ctx.task_id)
+        if cur is not None:
+            legacy = (cur.payload_json or {}).get("events") or []
+            return len(legacy)
+    except Exception:  # noqa: BLE001  续号失败不影响主流程
+        logger.debug("事件 seq 续号查询失败 task=%s", ctx.task_id,
+                     exc_info=True)
+    return len(ctx.events)
+
+
 def _push_event(ctx: "_Ctx", ev_type: str, tool_id: str,
                 status: Optional[str] = None, duration_ms: Optional[int] = None,
                 note: str = "", items: Optional[list[str]] = None) -> None:
-    """追加过程事件并落 payload（前端轮询 2.5s 内可见）。"""
+    """追加过程事件并单行落表（O-02 彻底方案：事件独立落表）。
+
+    原来每次事件都读 task → 改 payload["events"] → update_payload
+    全量写回整个 payload JSON；现为一次 INSERT 进 agent_events，不
+    再读写 payload JSON，与 B-10 的 update_payload 合并语义（fresh
+    读再写）不再有交互。事件仍在 2.5s 轮询内可见（step_started 不等
+    步骤结束才落盘），进程中途崩溃已落盘的事件也不丢。落盘失败不
+    影响主流程（事件只用于前端过程展示，不丢业务结果）。
+    """
+    if ctx.next_seq is None:
+        ctx.next_seq = _next_event_seq(ctx)
     ev: dict[str, Any] = {
-        "seq": len(ctx.events), "type": ev_type, "tool_id": tool_id,
+        "seq": ctx.next_seq, "type": ev_type, "tool_id": tool_id,
         "status": status, "duration_ms": duration_ms, "note": note,
     }
     if items:
         ev["items"] = [str(x) for x in items][:8]
     ctx.events.append(ev)
+    ctx.next_seq += 1
     try:
-        repo = AITaskRepository(ctx.db)
-        cur = repo.get(ctx.task_id)
-        if cur is None:
-            return
-        payload = dict(cur.payload_json or {})
-        payload["events"] = [dict(e) for e in ctx.events]
-        repo.update_payload(ctx.task_id, payload)
+        ctx.db.add(AgentEvent(
+            task_id=ctx.task_id, seq=ev["seq"], type=ev_type,
+            tool_id=tool_id, status=status, duration_ms=duration_ms,
+            note=note, items_json=ev.get("items")))
+        ctx.db.commit()
     except Exception:  # noqa: BLE001  事件落盘失败不影响主流程
+        ctx.db.rollback()
         logger.debug("事件落盘失败 task=%s", ctx.task_id, exc_info=True)
 
 

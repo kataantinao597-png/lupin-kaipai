@@ -33,6 +33,7 @@ from .brief import (
 from .context import AgentIdentity, assemble_agent_context, check_user_quota
 from .conversations import (
     MESSAGE_ROLES,
+    AgentEvent,
     AgentStep,
     Conversation,
     ConversationMessage,
