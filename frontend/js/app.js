@@ -3851,12 +3851,35 @@ async function checkImageStatus() {
       : "图片生成服务暂时不可用，可先手动排版导出 PNG。";
   }
 }
+/* O-08：海报排队位置与预计等待展示。eta_seconds 是区间
+ * {"min": .., "max": ..}，只作“预计”展示；缺字段时（老后端）
+ * 回退通用文案，不报错。 */
+function formatEtaSeconds(s) {
+  s = Math.max(0, Math.round(s));
+  if (s < 60) return s + " 秒";
+  const m = Math.floor(s / 60), r = s % 60;
+  return r ? m + " 分 " + r + " 秒" : m + " 分钟";
+}
+function posterQueueText(st) {
+  const pos = (st && typeof st.position === "number") ? st.position : null;
+  const eta = st && st.eta_seconds;
+  if (pos === null || !eta || typeof eta.min !== "number" || typeof eta.max !== "number") {
+    return "AI 正在作画…";
+  }
+  const range = eta.min === eta.max
+    ? "约 " + formatEtaSeconds(eta.min)
+    : "约 " + formatEtaSeconds(eta.min) + "～" + formatEtaSeconds(eta.max);
+  if (pos <= 0) return "AI 正在作画…（" + range + "）";
+  return "AI 正在作画…（前面还有 " + pos + " 个任务，" + range + "）";
+}
 async function generateImageViaJob(prompt) {
   const body = { org_id: S.org.id, prompt: prompt, size: "1024x1024" };
   let jobId = "";
   try {
     const j = V1(await ApiClient.post("/api/v1/poster/image/jobs", body, { timeoutMs: 30000 }));
     jobId = (j && j.job_id) || "";
+    // O-08：提交后立刻按创建响应里的排队位置/预计等待更新提示
+    if (jobId) aiLoading(posterQueueText(j));
   } catch (e) {
     // 老后端没有异步接口（404/405）→ 退回同步接口
     if (e && (e.status === 404 || e.status === 405)) {
@@ -3885,6 +3908,8 @@ async function generateImageViaJob(prompt) {
       return st.image_b64 ? ("data:image/png;base64," + st.image_b64) : (st.image_url || "");
     }
     if (st && st.status === "failed") throw new Error(st.error || "图片生成失败");
+    // O-08：轮询中按后端返回的排队位置/预计等待更新提示，替代固定文案
+    if (st && st.status === "running") aiLoading(posterQueueText(st));
   }
   throw new Error(lastErr || "生成超时（3 分钟），请稍后重试");
 }
@@ -3895,7 +3920,9 @@ async function genPosterImage() {
   }
   const prompt = $("ai_img_prompt").value.trim();
   if (!prompt) { toast("请先输入配图提示词"); return; }
-  aiLoading("AI 正在作画…（约 30-60 秒）");
+  // O-08：固定文案“约 30-60 秒”已去掉；提交后由 generateImageViaJob
+  // 按后端排队位置/预计等待实时更新提示。
+  aiLoading("AI 正在作画…");
   try {
     const src = await generateImageViaJob(prompt);
     if (!src) throw new Error("图片服务未返回图片");

@@ -35,7 +35,16 @@ MAX_WORKERS = 1  # 串行出图：上游对同 key 并发不友好，并发会�
 MAX_INFLIGHT_PER_USER = 3
 #: 任务看门狗：超过这个时长还停在 running，就判失败并释放等待
 #: （上游偶发挂住时，不能让前端永远等一个不动的任务）
-JOB_TIMEOUT_SECONDS = 200
+#: O-09：数值与起算口径见 backend/core/timeouts.py（集中常量表），
+#: 此处只 re-export；与上游 2×90s=180s 紧配合，勿改数值。
+from ..core.timeouts import JOB_TIMEOUT_SECONDS  # noqa: E402
+
+#: O-08：单任务典型耗时区间（秒）——ETA 估算用。上游单通道实测
+#: 约 30～90s；ETA 只给区间不给精确秒数（波动大，排队任务还可能
+#: 被看门狗判失败）。已开始执行的任务按已耗时折算，上限受看门狗
+#: JOB_TIMEOUT_SECONDS 约束。
+POSTER_SINGLE_MIN_SECONDS = 30
+POSTER_SINGLE_MAX_SECONDS = 90
 
 STATUS_RUNNING = "running"
 STATUS_DONE = "done"
@@ -63,7 +72,16 @@ class PosterJob:
     started_at: Optional[float] = None
 
     def public(self) -> dict:
-        """对外字段。出图后一次性带上 base64；失败带错误文案与业务码。"""
+        """对外字段。出图后一次性带上 base64；失败带错误文案与业务码。
+
+        O-08：另带排队位置 ``position``（前面有几个未完成任务，全局
+        FIFO，单 worker 串行）与预计等待区间 ``eta_seconds``
+        （``{"min": .., "max": ..}``，只给区间不给精确秒数）。
+        终态任务 position=0、eta 为 0。
+        """
+        with _lock:
+            _gc_locked()
+            position, eta = _queue_info_locked(self, time.time())
         out = {
             "job_id": self.id,
             "status": self.status,
@@ -72,6 +90,8 @@ class PosterJob:
             "error_code": self.error_code,
             "elapsed": round(max(0.0, (self.updated_at if self.status != STATUS_RUNNING
                                         else time.time()) - self.created_at), 1),
+            "position": position,
+            "eta_seconds": eta,
         }
         if self.status == STATUS_DONE:
             out["image_b64"] = self.image_b64
@@ -105,6 +125,55 @@ def _mark_expired_locked(now: float) -> None:
                        % JOB_TIMEOUT_SECONDS)
             j.error_code = 2006
             j.updated_at = now
+
+
+def _queue_info_locked(job: PosterJob, now: float) -> tuple[int, dict]:
+    """必须持锁调用：O-08 排队位置与预计等待区间。
+
+    position：前面有几个未完成（running）任务。单 worker 串行、
+    全局按 created_at 先后执行，故按全局 FIFO 数，不按用户分
+    （排在别用户后面的任务同样要等）。
+    eta_seconds：{"min": .., "max": ..}。每个未完成任务按单通道
+    典型 30～90s 估算；已开始执行的任务按已耗时折算（下限
+    max(0, 30-elapsed)；上限 90s 内按首通道折算，超过 90s 后
+    受看门狗 200s 约束）。终态任务 position=0、eta 为 0。
+    区间是估算：上游挂住时看门狗会判失败、实际等待可能超出上限，
+    前端只作“预计”展示，不得当作精确承诺。
+    """
+    if job.status != STATUS_RUNNING:
+        return 0, {"min": 0, "max": 0}
+
+    def _remaining(j: PosterJob) -> tuple[float, float]:
+        if j.started_at is not None:
+            elapsed = max(0.0, now - j.started_at)
+            low = max(0.0, POSTER_SINGLE_MIN_SECONDS - elapsed)
+            # 上限分两段：90s 内仍在首通道，按首通道上限（90s）折算；
+            # 超过 90s 说明首通道已超时（在走备选或已挂住），上限改受
+            # 看门狗 200s 约束。刚启动的任务仍给 [30, 90]，不因“可能
+            # 挂到看门狗”就报 200s——否则新任务永远显示 3 分多钟。
+            if elapsed < POSTER_SINGLE_MAX_SECONDS:
+                high = max(0.0, POSTER_SINGLE_MAX_SECONDS - elapsed)
+            else:
+                high = max(0.0, JOB_TIMEOUT_SECONDS - elapsed)
+            return (low, high)
+        return (float(POSTER_SINGLE_MIN_SECONDS),
+                float(POSTER_SINGLE_MAX_SECONDS))
+
+    lo = hi = 0.0
+    position = 0
+    for j in _jobs.values():
+        if j.status != STATUS_RUNNING:
+            continue
+        if j.id == job.id:
+            a, b = _remaining(j)
+            lo += a
+            hi += b
+        elif j.created_at < job.created_at:
+            position += 1
+            a, b = _remaining(j)
+            lo += a
+            hi += b
+    return position, {"min": int(lo), "max": int(hi)}
 
 
 def _gc_locked() -> None:

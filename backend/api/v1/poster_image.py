@@ -346,6 +346,10 @@ def generate_poster_image(
 class ImageJobOut(BaseModel):
     job_id: str
     status: str
+    #: O-08：排队位置（前面有几个未完成任务）与预计等待区间
+    #: {"min": .., "max": ..}（只给区间，不给精确秒数）。
+    position: int = 0
+    eta_seconds: dict = Field(default_factory=lambda: {"min": 0, "max": 0})
 
 
 @router.post("/image/jobs", response_model=ApiResponse[ImageJobOut],
@@ -386,8 +390,15 @@ def create_image_job(
         finally:
             sess.close()
 
+    # O-08：创建响应也带排队位置与预计等待（前端提交后立刻可展示）。
+    # 先算 public() 再 run()：run() 一提交，后台线程就可能写
+    # started_at，eta 会按“已执行”折算（刚启动也扣掉零点几秒），
+    # 创建响应的区间就不再是干净的 [30, 90]。
+    info = job.public()
     poster_jobs.run(job, _work, _record_usage)
-    return success({"job_id": job.id, "status": job.status})
+    return success({"job_id": job.id, "status": job.status,
+                    "position": info["position"],
+                    "eta_seconds": info["eta_seconds"]})
 
 
 @router.get("/image/jobs/{job_id}", response_model=ApiResponse[dict])
