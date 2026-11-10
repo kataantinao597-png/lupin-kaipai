@@ -124,6 +124,39 @@ class CopyRepository:
         ).order_by(models.CopyVersion.version_no.desc()).limit(1)
         return self.db.execute(q).scalar_one_or_none()
 
+    # ---------- O-05：列表批量聚合（list_docs 的 N+1 改 2 次查询） ----------
+    # 只取聚合值，不拉版本全量行（含正文）：current_version_no 用
+    # MAX(version_no) GROUP BY doc_id，version_count 用 COUNT(*) GROUP
+    # BY doc_id。返回 dict 缺 key 即该文档无对应行（无已确认版本 /
+    # 无任何版本），调用方按 None / 0 处理。
+
+    def current_version_nos(self, org_id: str,
+                            doc_ids: list[str]) -> dict[str, int]:
+        """批量：每文档最大已确认 version_no。"""
+        if not doc_ids:
+            return {}
+        rows = self.db.execute(
+            select(models.CopyVersion.doc_id,
+                   func.max(models.CopyVersion.version_no)).where(
+                models.CopyVersion.org_id == org_id,
+                models.CopyVersion.doc_id.in_(doc_ids),
+                models.CopyVersion.status == models.COPY_STATUS_CONFIRMED,
+            ).group_by(models.CopyVersion.doc_id)).all()
+        return {doc_id: mx for doc_id, mx in rows}
+
+    def version_counts(self, org_id: str,
+                       doc_ids: list[str]) -> dict[str, int]:
+        """批量：每文档版本总数。"""
+        if not doc_ids:
+            return {}
+        rows = self.db.execute(
+            select(models.CopyVersion.doc_id,
+                   func.count()).where(
+                models.CopyVersion.org_id == org_id,
+                models.CopyVersion.doc_id.in_(doc_ids),
+            ).group_by(models.CopyVersion.doc_id)).all()
+        return {doc_id: n for doc_id, n in rows}
+
     @transactional_method
     def confirm_version(self, org_id: str, doc_id: str,
                         version_id: str) -> models.CopyVersion:

@@ -292,15 +292,17 @@ def list_docs(org_id: str = Query(...),
                             code=error_codes.INVALID_PARAM, http_status=400)
     repo = CopyRepository(db)
     docs = repo.list_docs(org_id, kind)
+    # O-05：一次 in 查询批量取聚合值（2 次查询），不再逐文档
+    # current_version + list_versions（2N 次，且 list_versions 拉全量
+    # 版本行含正文只为数个数）。
+    cur_nos = repo.current_version_nos(org_id, [d.id for d in docs])
+    counts = repo.version_counts(org_id, [d.id for d in docs])
     out = []
     for d in docs:
-        cur = repo.current_version(org_id, d.id)
-        n = len(repo.list_versions(org_id, d.id))
         out.append({"id": d.id, "title": d.title or "", "kind": d.kind,
                     "product_id": d.product_id,
-                    "version_count": n,
-                    "current_version_no":
-                        cur.version_no if cur else None,
+                    "version_count": counts.get(d.id, 0),
+                    "current_version_no": cur_nos.get(d.id),
                     "updated_at": d.updated_at.isoformat()
                     if d.updated_at else None})
     return success({"docs": out})

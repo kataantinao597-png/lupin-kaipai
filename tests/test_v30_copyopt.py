@@ -469,3 +469,58 @@ class TestPromptDiscipline:
         assert errs
         errs, _ = _validate_copyopt("platform", {"title": "题"})
         assert errs
+
+
+class TestListDocsBatchO05:
+    """O-05：GET /copy/docs 用批量聚合（2 次查询）替代逐文档 N+1。
+
+    覆盖三种形态：多版本且有已确认高版本 / 只有草稿 / 零版本。
+    与旧逐文档实现逐项对照：version_count 与 current_version_no
+    必须和 get_doc（单文档读路径）一致。
+    """
+
+    def _optimize(self, client, org_id, doc_id, source="原文：这苹果真甜。"):
+        r = client.post(f"/api/v1/copy/docs/{doc_id}/optimize",
+                        params={"org_id": org_id},
+                        json={"mode": "natural",
+                              "source_text": source})
+        assert r.status_code == 200, r.text
+        return r.json()["data"]["version"]
+
+    def test_list_docs_batch_counts(self, api_env, fake_gw):
+        client = api_env.as_user("u1")
+        # A：v1 confirmed → optimize v2 draft → 确认 v2 → 再 optimize v3 draft
+        a = _doc(client, api_env.org1, title="A").json()["data"]["id"]
+        v2 = self._optimize(client, api_env.org1, a)
+        r = client.post(
+            f"/api/v1/copy/docs/{a}/versions/{v2['id']}/confirm",
+            params={"org_id": api_env.org1})
+        assert r.status_code == 200, r.text
+        self._optimize(client, api_env.org1, a,
+                       source="原文：这苹果真甜。第二版。")
+        # B：零版本
+        b = _doc(client, api_env.org1, title="B",
+                 original_text="").json()["data"]["id"]
+        # C：v1 confirmed + v2 draft（未确认）
+        c = _doc(client, api_env.org1, title="C").json()["data"]["id"]
+        self._optimize(client, api_env.org1, c)
+
+        r = client.get("/api/v1/copy/docs",
+                       params={"org_id": api_env.org1})
+        assert r.status_code == 200, r.text
+        by_title = {d["title"]: d for d in r.json()["data"]["docs"]}
+        assert by_title["A"]["version_count"] == 3
+        assert by_title["A"]["current_version_no"] == 2
+        assert by_title["B"]["version_count"] == 0
+        assert by_title["B"]["current_version_no"] is None
+        assert by_title["C"]["version_count"] == 2
+        assert by_title["C"]["current_version_no"] == 1
+        # 与单文档读路径逐项对照
+        for doc_id, want_n, want_cur in (
+                (a, 3, 2), (b, 0, None), (c, 2, 1)):
+            d = client.get(f"/api/v1/copy/docs/{doc_id}",
+                           params={"org_id": api_env.org1}
+                           ).json()["data"]
+            assert len(d["versions"]) == want_n
+            cur = d["current_version"]
+            assert (cur["version_no"] if cur else None) == want_cur
